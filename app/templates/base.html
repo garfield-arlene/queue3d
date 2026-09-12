@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}queue3d{% endblock %}</title>
+  <script src="/static/htmx.min.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 2rem 1rem;
+      line-height: 1.5;
+    }
+    header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2rem; }
+    header a { text-decoration: none; }
+    h1 { font-size: 1.25rem; }
+    form { display: grid; gap: 0.75rem; max-width: 320px; }
+    label { font-size: 0.9rem; opacity: 0.8; }
+    input { font-size: 1rem; padding: 0.5rem; }
+    button { font-size: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
+    .error { color: #c0392b; }
+    .muted { opacity: 0.7; font-size: 0.9rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #8883; }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/"><h1>queue3d</h1></a>
+    {% block nav %}{% endblock %}
+  </header>
+  {% block content %}{% endblock %}
+</body>
+</html>

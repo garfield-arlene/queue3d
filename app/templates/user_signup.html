@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Sign up - queue3d{% endblock %}
+{% block content %}
+  <h2>Sign up</h2>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/signup">
+    <label>Name<br><input name="name" value="{{ name or '' }}" required autofocus></label>
+    <label>Choose a PIN (4+ digits)<br><input name="pin" type="password" inputmode="numeric" minlength="4" required></label>
+    <button type="submit">Sign up</button>
+  </form>
+  <p class="muted">Already signed up? <a href="/login">Log in</a> instead.</p>
+{% endblock %}
