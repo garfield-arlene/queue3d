@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Admin - queue3d{% endblock %}
+{% block nav %}
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Signed in as {{ admin.username }}</h2>
+
+  <p{% if backup_stale %} class="error"{% else %} class="muted"{% endif %}>
+    {% if last_backup %}
+      Last successful backup: {{ last_backup.started_at.strftime('%Y-%m-%d %H:%M UTC') }}
+      (drive {{ last_backup.target_label }}){% if backup_stale %} - overdue, check the backup cron job{% endif %}
+    {% else %}
+      No successful backup on record yet{% if backup_stale %} - check the backup cron job{% endif %}.
+    {% endif %}
+  </p>
+
+  {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
+
+  <h3>Queue</h3>
+  {% if not rows %}
+    <p class="muted">Nothing in the queue.</p>
+  {% else %}
+    <table>
+      <tr><th>User</th><th>File</th><th>Status</th><th>Est.</th><th>Actions</th></tr>
+      {% for row in rows %}
+        {% set job = row.job %}
+        <tr>
+          <td>{{ row.user_name }}</td>
+          <td>{{ job.original_filename }}</td>
+          <td>{{ job.status.value }}</td>
+          <td class="muted">
+            {% if job.duration_estimate_s %}{{ (job.duration_estimate_s / 60) | round | int }} min{% endif %}
+          </td>
+          <td>
+            {% if job.status.value == 'queued' %}
+              <form method="post" action="/admin/jobs/{{ job.id }}/approve" style="display:inline">
+                <button type="submit">Approve</button>
+              </form>
+              <form method="post" action="/admin/jobs/{{ job.id }}/reject" style="display:inline">
+                <input type="text" name="note" placeholder="reason" required size="16">
+                <button type="submit">Reject</button>
+              </form>
+            {% elif job.status.value == 'approved' %}
+              <form method="post" action="/admin/jobs/{{ job.id }}/release" style="display:inline">
+                <button type="submit">Release to printer</button>
+              </form>
+              <form method="post" action="/admin/jobs/{{ job.id }}/reject" style="display:inline">
+                <input type="text" name="note" placeholder="reason" required size="16">
+                <button type="submit">Reject</button>
+              </form>
+            {% elif job.status.value == 'printing' %}
+              <form method="post" action="/admin/jobs/{{ job.id }}/mark_done" style="display:inline">
+                <button type="submit">Mark done</button>
+              </form>
+              <form method="post" action="/admin/jobs/{{ job.id }}/mark_failed" style="display:inline">
+                <button type="submit">Mark failed</button>
+              </form>
+            {% elif job.status.value == 'slice_failed' %}
+              <span class="muted" title="{{ job.slice_error }}">slicing failed - hover for detail</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+{% endblock %}

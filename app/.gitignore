@@ -1,0 +1,10 @@
+.venv/
+data/*.db
+data/session_secret_key
+data/printer_auth.json
+data/scratch/
+data/queue/
+data/archive/
+data/backups/
+__pycache__/
+*.pyc
