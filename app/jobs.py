@@ -38,6 +38,21 @@ def active_jobs(session: Session) -> list[Job]:
     ).all()
 
 
+def user_has_active_jobs(session: Session, user_id: int) -> bool:
+    """Used to guard deleting a user - see routers/admin.py's user
+    management actions. Deleting someone with a job still in flight would
+    either orphan a queue entry mid-review or, worse, leave a printing job
+    with no owner to attribute it to."""
+    return (
+        session.exec(
+            select(Job)
+            .where(Job.user_id == user_id)
+            .where(Job.status.not_in(list(TERMINAL_STATUSES)))
+        ).first()
+        is not None
+    )
+
+
 def queue_position(session: Session, job: Job) -> int | None:
     """1-based position among jobs waiting their turn (queued/approved),
     oldest-first across all users - None if this job isn't in that

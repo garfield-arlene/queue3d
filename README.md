@@ -16,11 +16,23 @@ are supported yet.
 - **Admin accounts** provisioned separately (no self-service admin
   signup) - reviewing and releasing jobs is a position of trust over
   shared printer time.
+- **User account management** - any admin can disable/re-enable or
+  permanently delete a user's account, individually or all at once;
+  disabling blocks login immediately, even from an already-open session.
+  Deleting is blocked while that user still has an unfinished job.
 - **Upload and automatic slicing** - submit an STL, it's sliced
   server-side (OrcaSlicer + a patched `mbotmake`) into a print-ready file,
   no separate slicer software needed on the user's end.
 - **Live duration estimate and queue position** shown to the submitter as
   soon as slicing finishes.
+- **Interactive 3D preview** - rotate and zoom a model on the real build
+  plate before submitting (entirely in the browser, no upload needed just
+  to look at it), and again afterward on the job's own page (for the
+  submitter and for an admin reviewing it), this time showing generated
+  support material as an overlay if supports were enabled for that job.
+- **Choice of support style** - Automatic, Grid, Snug, Organic, or one of
+  two tree-support variants, matching the shapes PrusaSlicer users would
+  recognize by the same names.
 - **One shared queue** - submissions land directly in it; there's no
   separate pre-review step before something counts as queued.
 - **Admin review** - approve, or reject with a required note explaining
@@ -41,28 +53,50 @@ Basic functionality works end to end (accounts, upload/slicing, the queue,
 admin review/release) - these are the gaps between that and the
 functionality this is meant to have:
 
+**Before merging to main**
+- An app version number, shown as a footer on every page. Belongs in
+  `app/templates/base.html` so it applies everywhere automatically without
+  repeating it per-template - every page already extends that one file.
+  Where the number itself comes from (a hardcoded constant, a version
+  file, tied to the git branch naming already in use here - `1.0`, `2.0`)
+  is still an open choice.
+
 **Security & CI**
 - A pipeline to run security checks automatically (e.g. dependency
   vulnerability scanning, static analysis, secret scanning) rather than
   relying on manual review.
 
 **Upload**
+- Separate "slice" from "submit to the queue" as two distinct actions.
+  Right now clicking Upload & slice does both - the job is added to the
+  queue the moment slicing succeeds. Instead, slicing should render the
+  result (model + supports, if enabled) without committing anything to the
+  queue yet, so a user can change support settings and re-slice the same
+  draft in place as many times as they want before deciding to actually
+  submit it - right now, iterating means spamming the shared,
+  admin-visible queue with abandoned attempts just to preview a different
+  support style. This is a real change to the documented job state machine
+  (`submitted -> (sliced) -> queued`, treated as confirmed/settled
+  elsewhere - see project memory queue3d-purpose and app/README.md's "The
+  job queue"), not just a UI tweak: it needs a genuine pre-queue "draft"
+  state, and a decision on what happens to a draft nobody ever submits
+  (left alone indefinitely as harmless clutter, or cleaned up after a
+  while).
 - A progress bar or other "receiving/slicing" indicator during upload.
   Right now the request blocks silently until slicing finishes entirely
   (which can take a while) - the only sign anything is happening is the
   browser's own loading state (e.g. the reload button turning into an
   "X"), which looks identical whether it's working or stuck.
+- Accept file types beyond `.stl` - `.3mf`, `.obj`, and `.zip` (presumably
+  a zipped model file) were specifically asked for.
+- Model repair (like PrusaSlicer/OrcaSlicer's "Fix through Netfabb") -
+  confirmed OrcaSlicer's CLI has no repair flag to lean on (that's a
+  GUI-only feature there), so this would mean a dedicated repair pass
+  before slicing - `trimesh` (Python, fill holes/fix normals/fix winding)
+  or `admesh` (a small purpose-built STL repair CLI) are the two realistic
+  options to build it on.
 
 **Job review & feedback**
-- Extend the pre-submission 3D preview to the admin's view of a job too -
-  same rotate/zoom view, so an admin can judge fit/print-worthiness (and
-  whether a model is appropriate to print at all) without that being a
-  blind approve/reject on a filename.
-- Enable/disable auto-generated supports from the UI (some models don't
-  need them), and show the resulting support shapes in the 3D view once
-  generated - as simplified shapes, not a full toolpath/layer view (out of
-  scope - no G-code path or per-layer slider, just enough to see roughly
-  where supports will be).
 - Show failure reasons to the user, not just rejection notes - rejection
   notes already display (required, and shown on the user's dashboard); a
   failed print currently has no reason at all (`mark_failed` only flips
@@ -70,11 +104,84 @@ functionality this is meant to have:
   visible to an admin (as a hover tooltip), never shown to the user.
 - Break the estimated print duration into days/hours/minutes - it's
   currently total minutes only.
-- Let a user modify and resubmit a job that ended unsuccessfully
-  (`slice_failed`, `rejected`, or `failed`) instead of only being able to
-  start over from scratch. A resubmission goes to the end of the queue,
-  not back to where the original was - it's a new submission, and the
-  admin still decides when to release it like any other.
+- Show the date/time a job was submitted, and how long it's been sitting
+  in the queue since (days/hours/minutes) - the timestamp is already
+  recorded (`Job.submitted_at`), it's just not displayed anywhere yet.
+- Let admins configure an age threshold (e.g. 30 days) and split
+  still-waiting jobs into two separate views by it: the normal queue view
+  for anything younger than the threshold, and a separate "old jobs" view
+  for anything at or past it - mutually exclusive, not shown in both.
+  Builds directly on the submitted-at timestamp/duration-in-queue item
+  above. Open question: does this apply only to `queued`/`approved` jobs
+  (still awaiting a decision), or also to ones that are `printing` (already
+  being acted on, so arguably shouldn't count as stale backlog). Jobs in
+  this "old jobs" view should have an admin delete option - see "Audit
+  log" below, since that delete has to be logged like any other change.
+- Give admins a way to browse finished jobs (`rejected`/`done`/`failed`) -
+  confirmed by testing that there currently isn't one: the admin queue
+  view only ever lists active jobs, so the moment a job leaves that list
+  its "View 3D" link disappears along with the row, even though the page
+  and its data are completely unaffected (a rejected job's model and
+  supports still load fine at its direct URL - this was mistaken for a
+  support-rendering bug before realizing the row itself was just gone, not
+  the feature). Distinct from "old jobs" above (which is about stale
+  *active* jobs) and from the audit log (which is about the event history,
+  not browsing a specific past job's files/preview).
+- Let a user restore an archived model (`slice_failed`, `rejected`,
+  `failed`, or `done` - any job whose files ended up in `archive/`) back
+  into their working space to modify and resubmit, rather than only being
+  able to start over from scratch - useful both for fixing a failed/rejected
+  submission and for reprinting or tweaking a past successful one. A
+  restored resubmission goes to the end of the queue, not back to where the
+  original was - it's a new submission, and the admin still decides when to
+  release it like any other. Should copy the archived files rather than
+  move them, so the original archived record/history isn't lost.
+- The "View 3D" page (`/jobs/{id}/preview`) is view-only today - no way to
+  resize a model or change its support settings (enable/style) from there,
+  only at initial upload. This is really the same gap as the resize
+  controls and restore-a-model items above, just noting where users will
+  actually look for it: on the job's own page, not just at upload time or
+  after it's already failed/been rejected. Open question this raises: for
+  a job that's still active (`queued`/`approved`, not yet released) should
+  changing something here re-slice it in place, keeping its position in
+  the queue, or does any edit count as a new submission that goes to the
+  end like a restored one does - those are different user expectations and
+  worth deciding deliberately rather than defaulting to whichever is
+  easier to build.
+- Let a user delete their own model from the queue (they may no longer
+  want it) - with a clear warning first that this is permanent: it removes
+  the job from the queue/list and deletes the model files, with no undo.
+  Only allowed while a job is still `queued`/`approved` (before release) -
+  once it's released and `printing`, the delete action is disabled/removed
+  from the list; the job's status just updates normally from there
+  (`done`/`failed`) like any other. Deleting does not need to also remove
+  the job from any backup already taken before the delete. Like any other
+  change to a job, this needs to be recorded in the job log - see "Audit
+  log" below.
+
+**Audit log**
+- A "job log" view for admins: what status a job is currently in, and a
+  full history of when each change happened, by whom, and what the change
+  actually was - not just the current single snapshot (`Job.reviewed_at`/
+  `reviewed_by_admin_id`/`admin_note` today only capture the *latest*
+  review action, nothing earlier). Every job-affecting action gets an
+  entry with a date/time stamp, who did it (a user or an admin), and what
+  it was: submitted, approved, rejected (with the note), released,
+  done/failed, and both delete paths above (the user's own, and an admin
+  deleting an old job) - deletion specifically must say who deleted it.
+  This is genuinely for every change, by either a user or an admin, not
+  just admin actions. Likely needs its own log/event table rather than
+  cramming a full history into single fields on `Job` the way today's
+  reviewed_at/admin_note pair does.
+
+**Backups & recovery**
+- Let admins see a list of backups taken and a manifest of what's actually
+  in each one. Presentation undecided (a subpage, a pop-up list, something
+  else). Restoring an individual model doesn't need this - see "restore an
+  archived model" under Job review & feedback, which works directly off
+  `archive/` instead; this is about visibility into the database-level
+  backups themselves (see `backup.py`), for confirming they're actually
+  capturing what's expected.
 
 **Print options**
 - Color selection for users - 1st/2nd/3rd preference, chosen from a
@@ -104,11 +211,29 @@ functionality this is meant to have:
 - Support for printer models/brands beyond the MakerBot Replicator+.
 
 **Accounts**
-- An in-app way for an existing admin to promote a regular user to admin,
-  instead of requiring direct server/CLI access for every new admin.
 - Rate-limiting or lockout on login attempts - PINs are short by design
   for low signup friction, which also makes them easier to guess; nothing
   currently slows down repeated attempts.
+- ~~Let admins manage user accounts from the UI~~ **Done** - any admin can
+  disable/re-enable or permanently delete a user, individually or all at
+  once, from `/admin/users`. Disabling blocks login immediately, even from
+  an already-open session (re-checked on every request, not just at
+  login). Deleting is blocked outright - with a clear reason, naming who -
+  if the user (or, for "delete all", any user) still has a job that isn't
+  finished yet (`queued`/`approved`/`printing`); a finished job's history
+  is left alone either way. Both delete actions require a confirm dialog
+  first.
+- Extend the above to admins managing *other admins* too, not just users -
+  deliberately left out of what was just built, since it raises a real
+  safety question the users-only version didn't: what stops an admin from
+  disabling or deleting the only remaining admin account, including
+  themselves, locking everyone out of admin access. Also open: does
+  "add an admin" mean creating a fresh admin credential (today's design -
+  a separate username+password, unrelated to any user account) or
+  promoting/converting an existing user's account, since those are two
+  different tables today; and what happens to a deleted admin's existing
+  references on past jobs (`reviewed_by_admin_id`/`admin_note`) - kept but
+  orphaned, or removed too.
 
 **Deployment**
 - A fixed IP or mDNS hostname for the server so users don't have to type

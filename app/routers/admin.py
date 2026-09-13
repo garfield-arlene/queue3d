@@ -7,12 +7,12 @@ admin signup would defeat the whole point of the review gate."""
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from auth import admin_by_username, require_admin, verify_secret
 from backup import get_last_successful_backup, is_stale
 from db import get_session
-from jobs import JobActionError, active_jobs, approve, mark_finished, reject, release
+from jobs import JobActionError, active_jobs, approve, mark_finished, reject, release, user_has_active_jobs
 from models import Admin, Job, User
 
 router = APIRouter(prefix="/admin")
@@ -146,3 +146,96 @@ def mark_failed_job(
     session: Session = Depends(get_session),
 ):
     return _perform_action(request, session, admin, job_id, mark_finished, False)
+
+
+# ---- user account management ----
+# Scoped to users only for now, not other admins - see README.md's To do
+# list ("Accounts") for why admin-managing-admins is a separate item: it
+# raises its own safety question (what stops the last admin account from
+# being disabled/deleted, including by itself) that deserves its own
+# design pass rather than reusing this code as-is.
+
+
+def _users_context(session: Session, admin: Admin, action_error: str | None = None):
+    users = session.exec(select(User).order_by(User.name)).all()
+    return {"admin": admin, "users": users, "action_error": action_error}
+
+
+@router.get("/users")
+def users_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    return templates.TemplateResponse(request, "admin_users.html", _users_context(session, admin))
+
+
+def _get_user_or_404(session: Session, user_id: int) -> User:
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="No such user")
+    return user
+
+
+@router.post("/users/{user_id}/disable")
+def disable_user(
+    request: Request,
+    user_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    user = _get_user_or_404(session, user_id)
+    user.disabled = True
+    session.add(user)
+    session.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post("/users/{user_id}/enable")
+def enable_user(
+    request: Request,
+    user_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    user = _get_user_or_404(session, user_id)
+    user.disabled = False
+    session.add(user)
+    session.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post("/users/{user_id}/delete")
+def delete_user(
+    request: Request,
+    user_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    user = _get_user_or_404(session, user_id)
+    if user_has_active_jobs(session, user.id):
+        error = f"Can't delete {user.name} - they still have a job in the queue or printing. Resolve it first."
+        return templates.TemplateResponse(request, "admin_users.html", _users_context(session, admin, error))
+    session.delete(user)
+    session.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post("/users/delete_all")
+def delete_all_users(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    users = session.exec(select(User)).all()
+    blocked = [u.name for u in users if user_has_active_jobs(session, u.id)]
+    if blocked:
+        error = (
+            "Didn't delete anyone - these users still have a job in the queue or "
+            f"printing: {', '.join(blocked)}. Resolve those first."
+        )
+        return templates.TemplateResponse(request, "admin_users.html", _users_context(session, admin, error))
+    for user in users:
+        session.delete(user)
+    session.commit()
+    return RedirectResponse("/admin/users", status_code=303)

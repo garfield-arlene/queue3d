@@ -31,26 +31,38 @@ def scratch_stl_path(job_id: int) -> Path:
     return SCRATCH_DIR / f"{job_id}.stl"
 
 
-def queue_paths(job_id: int) -> tuple[Path, Path]:
-    return QUEUE_DIR / f"{job_id}.stl", QUEUE_DIR / f"{job_id}.makerbot"
+def queue_paths(job_id: int) -> tuple[Path, Path, Path]:
+    return (
+        QUEUE_DIR / f"{job_id}.stl",
+        QUEUE_DIR / f"{job_id}.makerbot",
+        QUEUE_DIR / f"{job_id}.supports.json",
+    )
 
 
-def archive_paths(job_id: int) -> tuple[Path, Path]:
-    return ARCHIVE_DIR / f"{job_id}.stl", ARCHIVE_DIR / f"{job_id}.makerbot"
+def archive_paths(job_id: int) -> tuple[Path, Path, Path]:
+    return (
+        ARCHIVE_DIR / f"{job_id}.stl",
+        ARCHIVE_DIR / f"{job_id}.makerbot",
+        ARCHIVE_DIR / f"{job_id}.supports.json",
+    )
 
 
 def move_job_to_archive(job) -> None:
     """Move a job's files from queue/ to archive/ once it reaches a
-    terminal state (done/failed/rejected). Tolerant of either file being
-    absent (e.g. a rejected job might never have finished slicing)."""
-    src_stl, src_makerbot = queue_paths(job.id)
-    dest_stl, dest_makerbot = archive_paths(job.id)
+    terminal state (done/failed/rejected). Tolerant of any file being
+    absent (e.g. a rejected job might never have finished slicing, or may
+    have no supports)."""
+    src_stl, src_makerbot, src_supports = queue_paths(job.id)
+    dest_stl, dest_makerbot, dest_supports = archive_paths(job.id)
     if src_stl.exists():
         src_stl.rename(dest_stl)
         job.stl_path = str(dest_stl)
     if src_makerbot.exists():
         src_makerbot.rename(dest_makerbot)
         job.makerbot_path = str(dest_makerbot)
+    if src_supports.exists():
+        src_supports.rename(dest_supports)
+        job.supports_path = str(dest_supports)
 
 
 def read_makerbot_duration_s(makerbot_path: Path) -> float | None:

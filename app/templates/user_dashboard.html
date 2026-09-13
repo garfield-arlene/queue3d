@@ -8,6 +8,14 @@
 
   <form method="post" action="/upload" enctype="multipart/form-data">
     <label>Upload a model (.stl)<br><input type="file" id="stl-file" name="file" accept=".stl" required></label>
+    <label><input type="checkbox" name="enable_supports"> Generate supports</label>
+    <label>Support style<br>
+      <select name="support_style">
+        {% for value, label in support_styles.items() %}
+          <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <button type="submit">Upload &amp; slice</button>
   </form>
 
@@ -39,7 +47,7 @@
     <p class="muted">Nothing submitted yet.</p>
   {% else %}
     <table>
-      <tr><th>File</th><th>Status</th><th>Details</th></tr>
+      <tr><th>File</th><th>Status</th><th>Details</th><th></th></tr>
       {% for row in rows %}
         {% set job = row.job %}
         <tr>
@@ -61,6 +69,7 @@
               print failed
             {% endif %}
           </td>
+          <td>{% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}</td>
         </tr>
       {% endfor %}
     </table>

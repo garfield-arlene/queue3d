@@ -23,6 +23,10 @@ class User(SQLModel, table=True):
     name: str = Field(index=True, unique=True)
     pin_hash: str
     created_at: datetime = Field(default_factory=utcnow)
+    # A disabled user is blocked from logging in - and from an already-open
+    # session, immediately (see auth.get_current_user) - without deleting
+    # their account or job history. Reversible, unlike delete.
+    disabled: bool = Field(default=False)
 
 
 class Admin(SQLModel, table=True):
@@ -90,6 +94,16 @@ class Job(SQLModel, table=True):
     makerbot_path: str | None = Field(default=None)
     duration_estimate_s: float | None = Field(default=None)
     slice_error: str | None = Field(default=None)
+
+    supports_enabled: bool = Field(default=False)
+    # OrcaSlicer's own support_style setting used for this job (grid/snug/
+    # organic/tree_hybrid/tree_slim/default) - see routers/user.py's
+    # SUPPORT_STYLES. Only meaningful when supports_enabled.
+    support_style: str | None = Field(default=None)
+    # Path to a JSON file of simplified support-material line segments (see
+    # app/supports.py) - present once slicing succeeds, even if empty
+    # (supports enabled but the model didn't need any).
+    supports_path: str | None = Field(default=None)
 
     submitted_at: datetime = Field(default_factory=utcnow)
     reviewed_at: datetime | None = Field(default=None)

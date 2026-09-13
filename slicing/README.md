@@ -45,9 +45,23 @@ standalone if you need to debug one stage in isolation.
 
 ```bash
 python3 slice.py models/testcube.stl out/testcube.makerbot
+python3 slice.py models/overhang_test.stl out/overhang.makerbot --enable-supports --gcode-out out/overhang.gcode
 ```
 
 Then hand that file to `../test-print/send_print.py` to actually print it.
+
+`--enable-supports` overrides the profile's `enable_support` (off by
+default) for one slice. `--support-style STYLE` additionally picks a
+specific support shape (`grid`/`snug`/`organic`/`tree_hybrid`/`tree_slim`)
+- see `SUPPORT_STYLE_TYPE` in `slice.py` before adding to this list, since
+OrcaSlicer silently ignores a style that isn't compatible with the active
+`support_type` rather than erroring, so each one has to co-set the right
+type too (confirmed per-value against `models/overhang_test.stl`, not
+guessed). `--gcode-out` saves the intermediate gcode (normally discarded
+once converted to `.makerbot`) - needed by `app/supports.py` to extract
+support-material geometry for the 3D preview, since `mbotmake`'s conversion
+throws away which moves were supports vs. model (every move becomes an
+undifferentiated command - see the `.makerbot`-format note below).
 
 ## Setup (fresh checkout)
 
@@ -82,6 +96,11 @@ AppImage - see project memory for the fuller comparison).
   extrusion (`use_relative_e_distances: 0`) - the last two are hard
   requirements of `mbotmake`'s parser, not arbitrary choices.
 - `models/testcube.stl` - 20mm calibration cube used to validate the pipeline.
+- `models/overhang_test.stl` - a thin post topped by a wide flat cap,
+  deliberately needing support material on all sides - used to validate
+  `--enable-supports` and the gcode support-marker extraction in
+  `app/supports.py`. Confirmed OrcaSlicer emits `;TYPE:Support` and
+  `;TYPE:Support interface` gcode comments when slicing it.
 - `slice.py` - orchestrates all three steps.
 
 ## The mbotmake bug fix

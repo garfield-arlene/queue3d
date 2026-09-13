@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Manage users - queue3d{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Users</h2>
+  {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
+
+  {% if not users %}
+    <p class="muted">No users yet.</p>
+  {% else %}
+    <table>
+      <tr><th>Name</th><th>Status</th><th>Created</th><th>Actions</th></tr>
+      {% for user in users %}
+        <tr>
+          <td>{{ user.name }}</td>
+          <td>{{ "disabled" if user.disabled else "active" }}</td>
+          <td class="muted">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+          <td>
+            {% if user.disabled %}
+              <form method="post" action="/admin/users/{{ user.id }}/enable" style="display:inline">
+                <button type="submit">Re-enable</button>
+              </form>
+            {% else %}
+              <form method="post" action="/admin/users/{{ user.id }}/disable" style="display:inline">
+                <button type="submit">Disable</button>
+              </form>
+            {% endif %}
+            <form method="post" action="/admin/users/{{ user.id }}/delete" style="display:inline"
+                  onsubmit="return confirm('Permanently delete {{ user.name }}? This cannot be undone.')">
+              <button type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+
+    <form method="post" action="/admin/users/delete_all"
+          onsubmit="return confirm('Permanently delete ALL {{ users|length }} users? This cannot be undone, and will fail if any of them still have a job in the queue or printing.')">
+      <button type="submit">Delete all users</button>
+    </form>
+  {% endif %}
+{% endblock %}

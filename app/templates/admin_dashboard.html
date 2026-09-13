@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Admin - queue3d{% endblock %}
 {% block nav %}
+  <a href="/admin/users">Users</a>
   <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
 {% endblock %}
 {% block content %}
@@ -22,12 +23,13 @@
     <p class="muted">Nothing in the queue.</p>
   {% else %}
     <table>
-      <tr><th>User</th><th>File</th><th>Status</th><th>Est.</th><th>Actions</th></tr>
+      <tr><th>User</th><th>File</th><th></th><th>Status</th><th>Est.</th><th>Actions</th></tr>
       {% for row in rows %}
         {% set job = row.job %}
         <tr>
           <td>{{ row.user_name }}</td>
           <td>{{ job.original_filename }}</td>
+          <td>{% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}</td>
           <td>{{ job.status.value }}</td>
           <td class="muted">
             {% if job.duration_estimate_s %}{{ (job.duration_estimate_s / 60) | round | int }} min{% endif %}

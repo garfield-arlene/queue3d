@@ -20,6 +20,7 @@ A .3mf is just a zip (the OPC/OOXML package format) with:
 """
 
 import argparse
+import json
 import struct
 import sys
 import zipfile
@@ -122,6 +123,36 @@ def _parse_stl_binary(head, rest):
     return vertices, triangles
 
 
+def center_vertices(vertices):
+    """Center X/Y on the bounding-box center and drop Z so the lowest point
+    sits at 0 - matching app/static/preview.js's showModel() exactly.
+
+    Why this has to happen here, not left to OrcaSlicer: confirmed (by
+    slicing a real, off-center-authored model and comparing its sliced
+    gcode's own bounding box to the raw STL's) that OrcaSlicer sometimes
+    repositions an object during slicing and sometimes doesn't - a smaller
+    synthetic test model was sliced at its native coordinates untouched,
+    while a large real-world model with an off-center authored origin
+    (Y-center ~9.8mm, not 0) came out of slicing centered near Y~0 instead.
+    Meanwhile the client-side preview always centers the raw STL to its own
+    bounding box for display, independent of whatever OrcaSlicer decides.
+    Two independently-arrived-at placements agreeing by luck for a
+    centered-ish model, and visibly disagreeing for an off-center one, is
+    exactly the "supports render solid now but are floating disconnected
+    from the model" bug reported after the tube-rendering fix. Centering
+    here ourselves - the same way, in the same place, every time - removes
+    the guesswork: OrcaSlicer slices already-centered geometry, so there's
+    nothing left for it to reposition differently than what's displayed.
+    """
+    xs = [v[0] for v in vertices]
+    ys = [v[1] for v in vertices]
+    zs = [v[2] for v in vertices]
+    cx = (min(xs) + max(xs)) / 2
+    cy = (min(ys) + max(ys)) / 2
+    z_min = min(zs)
+    return [(x - cx, y - cy, z - z_min) for x, y, z in vertices]
+
+
 def build_model_xml(vertices, triangles):
     vlines = "\n".join(
         f'     <vertex x="{x:.6g}" y="{y:.6g}" z="{z:.6g}"/>' for x, y, z in vertices
@@ -132,12 +163,19 @@ def build_model_xml(vertices, triangles):
     return MODEL_TEMPLATE.format(vertices=vlines, triangles=tlines)
 
 
-def build_3mf(stl_path, settings_path, output_path):
+def build_3mf(stl_path, settings_path, output_path, overrides=None):
+    """overrides: optional dict of settings keys to override in the loaded
+    profile before embedding it - e.g. {"enable_support": "1"} to turn
+    supports on for one job without needing a second profile file."""
     vertices, triangles = parse_stl(stl_path)
+    vertices = center_vertices(vertices)
     model_xml = build_model_xml(vertices, triangles)
 
     with open(settings_path, "r") as f:
-        settings_text = f.read()
+        settings = json.load(f)
+    if overrides:
+        settings.update(overrides)
+    settings_text = json.dumps(settings, indent=4)
 
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", CONTENT_TYPES)
