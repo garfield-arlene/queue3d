@@ -6,7 +6,6 @@ admin signup would defeat the whole point of the review gate."""
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from auth import admin_by_username, require_admin, verify_secret
@@ -14,9 +13,9 @@ from backup import get_last_successful_backup, is_stale
 from db import get_session
 from jobs import JobActionError, active_jobs, approve, mark_finished, reject, release, user_has_active_jobs
 from models import Admin, Job, User
+from templates_env import templates
 
 router = APIRouter(prefix="/admin")
-templates = Jinja2Templates(directory="templates")
 
 
 @router.get("/login")

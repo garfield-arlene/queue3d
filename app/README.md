@@ -281,6 +281,11 @@ original STL's own dimensions) directly.
 
 - `main.py` - app setup: session middleware, static files, the
   `AuthRedirect` -> real HTTP redirect exception handler, router mounting.
+- `templates_env.py` - the one shared `Jinja2Templates` instance every
+  router renders through (rather than each router making its own, as
+  before), so a Jinja global set once - `APP_VERSION`, read from the
+  `VERSION` file - reaches every template. Every page extends
+  `templates/base.html`, which is what actually prints the footer.
 - `models.py` - `User`, `Admin`, `Job` (with `JobStatus`), `BackupRecord`
   tables (SQLModel).
 - `db.py` - SQLite engine/session. One file, no separate DB server - this

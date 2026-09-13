@@ -46,20 +46,15 @@ are supported yet.
   dashboard indicator if a backup hasn't run recently.
 - **Built for offline deployment** - runs entirely on a local network with
   no internet access required; no CDN dependencies.
+- **App version number** shown as a footer on every page, read from
+  `app/VERSION` at startup - bump that file to change what's shown, no code
+  change needed.
 
 ## To do
 
 Basic functionality works end to end (accounts, upload/slicing, the queue,
 admin review/release) - these are the gaps between that and the
 functionality this is meant to have:
-
-**Before merging to main**
-- An app version number, shown as a footer on every page. Belongs in
-  `app/templates/base.html` so it applies everywhere automatically without
-  repeating it per-template - every page already extends that one file.
-  Where the number itself comes from (a hardcoded constant, a version
-  file, tied to the git branch naming already in use here - `1.0`, `2.0`)
-  is still an open choice.
 
 **Security & CI**
 - A pipeline to run security checks automatically (e.g. dependency

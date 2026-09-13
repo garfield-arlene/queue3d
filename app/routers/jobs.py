@@ -10,15 +10,14 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
 from auth import AuthRedirect
 from db import get_session
 from models import Job
+from templates_env import templates
 
 router = APIRouter(prefix="/jobs")
-templates = Jinja2Templates(directory="templates")
 
 
 def _job_with_access(job_id: int, request: Request, session: Session) -> Job:

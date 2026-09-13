@@ -2,7 +2,6 @@ import shutil
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
-from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
 from auth import (
@@ -16,6 +15,7 @@ from jobs import jobs_for_user, queue_position
 from models import Job, JobStatus, User
 from pipeline import run_slice
 from storage import MAX_UPLOAD_BYTES, queue_paths, read_makerbot_duration_s, scratch_stl_path
+from templates_env import templates
 
 # OrcaSlicer's own support_style values, each confirmed (by directly
 # comparing sliced gcode output, not just guessed) to actually produce
@@ -35,7 +35,6 @@ SUPPORT_STYLES = {
 }
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
 
 
 @router.get("/signup")
