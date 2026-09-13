@@ -37,20 +37,25 @@ class Admin(SQLModel, table=True):
 
 
 class SchemaVersion(SQLModel, table=True):
-    """A single-row marker of which hand-written migration (db.py's
-    `MIGRATIONS`) this database has had applied - not an ORM-schema
-    version in the Alembic sense (this project has no migration
-    framework, deliberately, for something this small - see db.py). Exists
-    because `SQLModel.metadata.create_all()` only ever creates tables that
-    don't exist yet; it never alters an existing one, so a running
+    """A single-row marker of the app VERSION (see version.py) that last
+    touched this database's schema - not a separate incrementing number.
+    Per the user: a schema change should always come with a version bump,
+    so the app version doubles as the schema version rather than tracking
+    a second number that could quietly drift out of sync with it (which
+    is exactly what happened the first time - see db.py's migration list
+    for the incident this whole mechanism exists because of).
+
+    Not an ORM-schema version in the Alembic sense - this project has no
+    migration framework, deliberately, for something this small (see
+    db.py). `SQLModel.metadata.create_all()` only ever creates tables
+    that don't exist yet; it never alters an existing one, so a running
     deployment's database can silently fall behind the code's model
-    definitions after a `git pull` - confirmed the hard way (see db.py's
-    migration list for what broke). Checked on every startup so that
-    upgrading is "restart the app," not "remember to run a script and hope
-    you remember which one.\""""
+    definitions after a `git pull`. Checked on every startup so that
+    upgrading is "bump VERSION, pull, restart," not "remember to run a
+    script and hope you remember which one."""
 
     id: int = Field(default=1, primary_key=True)
-    version: int
+    version: str
 
 
 class BackupRecord(SQLModel, table=True):

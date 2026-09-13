@@ -64,48 +64,71 @@ one-time step.
 
 No framework (Alembic, etc.) - deliberately, for something this small - so
 `db.py`'s `init_db()` (called on every startup, `main.py`'s
-`on_event("startup")`) does its own minimal version check instead:
+`on_event("startup")`) does its own minimal version check instead. The
+schema version *is* the app version (`VERSION`, `version.py`) - not a
+second, separately-incrementing number - per the user: a schema change
+should always come with a version bump, so there's exactly one number to
+keep track of, not two that can quietly drift apart. **This is a real
+policy, not just a mechanism: touching a table's columns and bumping
+`VERSION` are the same commit, always.** The first time this schema
+changed, it didn't - which is the entire reason this section and
+`schemaversion` exist at all.
 
-1. Read the current version from the `schemaversion` table (a single row -
-   `models.SchemaVersion`). No row/table yet, but `job` already exists ->
-   an old database that predates this mechanism, treated as version 0.
-   No `job` table either -> genuinely fresh, nothing to migrate.
-2. Run whatever's left in `db.MIGRATIONS` (a plain `{from_version: fn}`
-   dict, applied in order) to catch it up to `CURRENT_SCHEMA_VERSION`.
+1. Read the version stored in `schemaversion` (a single row -
+   `models.SchemaVersion`; briefly a small integer before this scheme
+   existed, transparently translated to the version string it actually
+   corresponds to). No row/table yet, but `job` already exists -> an old
+   database that predates this mechanism, treated as older than
+   everything in `MIGRATIONS`. No `job` table either -> genuinely fresh,
+   nothing to migrate.
+2. Run whichever entries in `db.MIGRATIONS` (a `{version: fn}` dict, each
+   keyed by the app version it shipped in) are newer than the stored
+   version, oldest first.
 3. `SQLModel.metadata.create_all()` - creates any table that's still
    missing (including `schemaversion` itself, and any brand new table a
    migration didn't need to touch, like `Settings` was when it first
    showed up).
-4. Record the now-current version, whichever path got here.
+4. Record the *running app's* current `VERSION` - not just the latest
+   migration key, since most version bumps won't have a schema change at
+   all, and this still needs to reflect that the current code has looked
+   at this database.
 
 **Why this exists - a real incident, not foresight:** `create_all()` only
 ever creates tables that don't exist yet; it never alters an existing one.
 The slice/submit-split change (see "Drafts and expiry" below) renamed
-`Job.submitted_at` to `created_at` and added `queued_at` - on a database
-from before that change, neither existed under their new names, and every
-query referencing either crashed the app immediately after login, on a
-real running dev deployment nobody had touched by hand. `db.MIGRATIONS[0]`
-is that specific fix (rename the column, add the new one, backfill
-`queued_at` for already-queued jobs from their old `created_at`, since
-under the old model a successful slice meant immediately queued - there
-was no separate submit step yet to record a truer timestamp for).
+`Job.submitted_at` to `created_at` and added `queued_at`, without a
+version bump alongside it - on a database from before that change,
+neither existed under their new names, and every query referencing
+either crashed the app immediately after login, on a real running dev
+deployment nobody had touched by hand. `db.MIGRATIONS["2.1.0"]` is that
+specific fix (rename the column, add the new one, backfill `queued_at`
+for already-queued jobs from their old `created_at`, since under the old
+model a successful slice meant immediately queued - there was no separate
+submit step yet to record a truer timestamp for) - tagged with the
+version it should have shipped alongside the first time.
 
 Checked on every startup rather than a one-time manual step, per the
-user - upgrading this app is "pull and restart," not "pull, restart, and
-remember which script to run and whether you already ran it." Verified by
-testing all three cases directly, not just the one that was broken: a
-fresh database (creates the current schema outright, migrations are a
-no-op), the actual pre-fix database recovered from the real incident
-(migrates and backfills correctly), and re-running `init_db()` against an
-already-migrated database (no-ops cleanly, safe to call on every startup
-indefinitely).
+user - upgrading this app is "bump `VERSION`, pull, restart," not "pull,
+restart, and remember which script to run and whether you already ran
+it." Verified by testing all the cases that matter, not just the one that
+broke: a fresh database (creates the current schema outright, migrations
+are a no-op), the actual pre-fix database recovered from the real
+incident (migrates, backfills, and lands on the current version), a
+database still carrying the brief legacy-integer version value
+(translated and caught up correctly), and re-running `init_db()` against
+an already-current database (no-ops cleanly, safe on every startup
+indefinitely). Confirmed against the user's own real dev database
+directly (not just isolated copies) both times: its `uvicorn --reload`
+picked up the code change on its own and self-migrated - note that
+`--reload` only watches `.py` files, so bumping `VERSION` alone needs an
+actual restart (or any trivial `.py` save) to be picked up, unlike a code
+change.
 
-**Adding a future migration:** write a new `_migrate_N_to_N+1(conn)`
-function next to `_migrate_0_to_1`, add it to `MIGRATIONS` keyed by the
-version it upgrades *from* (`CURRENT_SCHEMA_VERSION` derives from
-`len(MIGRATIONS)`, so it bumps itself), and test it the same three ways -
-fresh, an old real database, and re-running against an already-migrated
-one.
+**Adding a future migration:** bump `VERSION`, write a new
+`_migrate_to_<that version>(conn)` function next to `_migrate_to_2_1_0`,
+and add it to `MIGRATIONS` keyed by that same version string. Test it the
+same way - fresh, an old real database, and re-running against an
+already-migrated one.
 
 ## Deployment: zero internet access, by design
 
