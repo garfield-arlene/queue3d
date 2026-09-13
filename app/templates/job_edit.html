@@ -23,7 +23,13 @@
   {% if job.status.value == 'submitted' %}
     <p><progress></progress> slicing&hellip;</p>
   {% elif job.status.value == 'slice_failed' %}
-    <p class="error">Couldn't slice this file{% if job.slice_error %} - {{ job.slice_error }}{% endif %}. Adjust settings and re-slice below, or re-export and re-upload from the dashboard.</p>
+    <p class="error">Couldn't slice this file. Adjust settings and re-slice below, or re-export and re-upload from the dashboard.</p>
+    {% if job.slice_error %}
+      <details class="tech-detail">
+        <summary>Show technical details</summary>
+        <pre>{{ job.slice_error }}</pre>
+      </details>
+    {% endif %}
   {% endif %}
 
   <p class="muted">
