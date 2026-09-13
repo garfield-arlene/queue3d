@@ -60,7 +60,13 @@
                 <button type="submit">Mark failed</button>
               </form>
             {% elif job.status.value == 'slice_failed' %}
-              <span class="muted" title="{{ job.slice_error }}">slicing failed - hover for detail</span>
+              <span class="muted">slicing failed</span>
+              {% if job.slice_error %}
+                <details class="tech-detail">
+                  <summary>Show technical details</summary>
+                  <pre>{{ job.slice_error }}</pre>
+                </details>
+              {% endif %}
             {% endif %}
           </td>
         </tr>
