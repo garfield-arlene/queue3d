@@ -9,6 +9,30 @@ Extruder+) is supported at this time, over its reverse-engineered network
 protocol - see `test-print/README.md`. No other printer models or brands
 are supported yet.
 
+## Screenshots
+
+Sample data below (names, filenames, queue contents) - not a real
+deployment.
+
+**User view** - uploading a model and tracking submissions through the
+queue:
+
+![User dashboard, showing the upload form and a table of submitted jobs in various states](docs/screenshots/user-dashboard.png)
+
+The interactive 3D preview, here showing a model alongside its generated
+support material:
+
+![3D preview of a model with orange support material rendered underneath its overhangs](docs/screenshots/3d-preview-supports.png)
+
+**Admin view** - reviewing the queue and approving, rejecting, or releasing
+jobs to the printer:
+
+![Admin dashboard, showing the queue with per-job approve/reject/release actions](docs/screenshots/admin-dashboard.png)
+
+Managing user accounts:
+
+![Admin user management page, listing users with disable/delete actions](docs/screenshots/admin-users.png)
+
 ## Features
 
 - **Self-serve user accounts** - sign up with just a name and PIN, no
