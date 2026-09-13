@@ -52,10 +52,6 @@ are supported yet.
 
 ## To do
 
-Basic functionality works end to end (accounts, upload/slicing, the queue,
-admin review/release) - these are the gaps between that and the
-functionality this is meant to have:
-
 **Security & CI**
 - A pipeline to run security checks automatically (e.g. dependency
   vulnerability scanning, static analysis, secret scanning) rather than
