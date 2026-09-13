@@ -2,10 +2,10 @@
    GET /dashboard/jobs-table for htmx polling below.
 
    Polling (hx-trigger="every 2s") only turns on when a row is still
-   'submitted' - i.e. slicing hasn't finished yet - and stops on its own
-   the moment it has: once every job here is queued/slice_failed/etc.,
-   the re-rendered div simply doesn't carry the hx-get/hx-trigger
-   attributes any more, so there's nothing left telling htmx to keep
+   'submitted' - i.e. slicing (or re-slicing) hasn't finished yet - and
+   stops on its own the moment it has: once nothing here is 'submitted'
+   any more, the re-rendered div simply doesn't carry the hx-get/
+   hx-trigger attributes, so there's nothing left telling htmx to keep
    asking. No separate "stop polling" signal needed. #}
 <div id="jobs-table"
   {% if rows | selectattr('job.status.value', 'equalto', 'submitted') | list %}
@@ -17,7 +17,7 @@
     <p class="muted">Nothing submitted yet.</p>
   {% else %}
     <table>
-      <tr><th>File</th><th>Status</th><th>Details</th><th></th></tr>
+      <tr><th>File</th><th>Status</th><th>Details</th><th></th><th>Actions</th></tr>
       {% for row in rows %}
         {% set job = row.job %}
         <tr>
@@ -26,6 +26,9 @@
           <td class="muted">
             {% if job.status.value == 'submitted' %}
               <progress></progress> slicing&hellip;
+            {% elif job.status.value == 'sliced' %}
+              sliced - not yet submitted to the queue
+              {% if job.duration_estimate_s %} - est. {{ (job.duration_estimate_s / 60) | round | int }} min print{% endif %}
             {% elif job.status.value == 'queued' or job.status.value == 'approved' %}
               position {{ row.position }} in queue
               {% if job.duration_estimate_s %} - est. {{ (job.duration_estimate_s / 60) | round | int }} min print{% endif %}
@@ -34,7 +37,9 @@
             {% elif job.status.value == 'rejected' %}
               {{ job.admin_note or "no note given" }}
             {% elif job.status.value == 'slice_failed' %}
-              couldn't slice this file - try re-exporting it and re-uploading
+              couldn't slice this file - try re-exporting it and re-uploading, or adjust settings and re-slice below
+            {% elif job.status.value == 'expired' %}
+              never submitted - expired after sitting too long as a draft
             {% elif job.status.value == 'done' %}
               finished
             {% elif job.status.value == 'failed' %}
@@ -42,6 +47,24 @@
             {% endif %}
           </td>
           <td>{% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}</td>
+          <td>
+            {% if job.status.value == 'sliced' %}
+              <form method="post" action="/jobs/{{ job.id }}/submit" style="display:inline">
+                <button type="submit">Submit to queue</button>
+              </form>
+            {% endif %}
+            {% if job.status.value == 'sliced' or job.status.value == 'slice_failed' %}
+              <form method="post" action="/jobs/{{ job.id }}/reslice" style="display:inline">
+                <label><input type="checkbox" name="enable_supports" {% if job.supports_enabled %}checked{% endif %}> supports</label>
+                <select name="support_style">
+                  {% for value, label in support_styles.items() %}
+                    <option value="{{ value }}" {% if value == job.support_style %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit">Re-slice</button>
+              </form>
+            {% endif %}
+          </td>
         </tr>
       {% endfor %}
     </table>

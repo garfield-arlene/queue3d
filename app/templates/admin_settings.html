@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Settings - queue3d{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <a href="/admin/users">Users</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Settings</h2>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  {% if saved %}<p class="muted">Saved.</p>{% endif %}
+
+  <form method="post" action="/admin/settings">
+    <label>Expire an unsubmitted draft after this many days<br>
+      <input type="number" name="draft_expiry_days" min="1" value="{{ settings.draft_expiry_days }}" required>
+    </label>
+    <p class="muted">
+      A model that's been uploaded and sliced but never submitted to the
+      queue is a "draft" - visible only to the user who uploaded it, never
+      to admins. <code>cleanup_drafts.py</code> (wire it into cron - see
+      app/README.md) removes any draft older than this, so abandoned
+      drafts don't sit around forever.
+    </p>
+    <button type="submit">Save</button>
+  </form>
+{% endblock %}

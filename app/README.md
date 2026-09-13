@@ -118,26 +118,93 @@ State machine (confirmed with the user, see project memory
 `queue3d-purpose` - don't drift from this without re-checking there):
 
 ```
-submitted -> (sliced) -> queued
+submitted -> sliced -> queued (an explicit "submit" action)
     -> approved (admin greenlit it, waiting its turn)
         -> printing (admin explicitly released it) -> done | failed
     -> rejected (admin declined, with a note - terminal)
-submitted -> slice_failed (terminal - the submitter can resubmit)
+submitted -> slice_failed (can retry: re-slice in place, or let it expire)
+{submitted, sliced, slice_failed} -> expired (never submitted, past the
+    admin-configured age threshold - see "Drafts and expiry" below)
 ```
 
 Users submit directly into the one queue - there's no separate
-pre-review gate before something counts as "in the queue." Only one job
-can be `printing` at a time (enforced in `jobs.release`); `approve` and
-`release` are separate actions since an admin may want to greenlit several
-jobs while only one at a time can actually be on the printer.
+*admin* pre-review gate before something counts as "in the queue." But
+slicing and submitting *to* that queue are two distinct, explicit actions
+on the user's own side, not one combined step - see "Drafts and expiry"
+right below for why and how. Only one job can be `printing` at a time
+(enforced in `jobs.release`); `approve` and `release` are separate actions
+since an admin may want to greenlit several jobs while only one at a time
+can actually be on the printer.
 
 Files move between three directories on one filesystem as a job's status
 changes (see `storage.py` for why one filesystem, not physical drives per
-stage): `data/scratch/` while a fresh upload is being sliced,
-`data/queue/{job_id}.stl`+`.makerbot` for anything still active, moved to
-`data/archive/` the moment a job goes `done`/`failed`/`rejected`. Files are
-named by job id, never the submitter's original filename, to sidestep
-collisions and path-traversal entirely.
+stage): `data/scratch/` for anything not yet submitted (`models.
+DRAFT_STATUSES` - a draft can now sit here indefinitely, not just
+briefly), `data/queue/{job_id}.stl`+`.makerbot` for anything actually in
+the queue (`models.QUEUE_STATUSES`), moved to `data/archive/` the moment a
+job reaches any terminal state (`models.TERMINAL_STATUSES` -
+`done`/`failed`/`rejected`/`expired`). Files are named by job id, never
+the submitter's original filename, to sidestep collisions and
+path-traversal entirely.
+
+### Drafts and expiry
+
+Uploading used to both slice a model *and* commit it to the shared queue
+in one step - iterating on support settings meant spamming the
+admin-visible queue with abandoned attempts just to preview a different
+style. Slicing and submitting are now two distinct, explicit actions:
+
+- Uploading creates a `submitted` job and slices it in the background (see
+  "Upload and slicing progress" below); success lands on `sliced`, not
+  `queued`. A `sliced` (or `slice_failed`) job is a **draft**: private to
+  its own user, invisible to admins, not counted in the queue, sitting in
+  `data/scratch/` for as long as it stays one.
+- `jobs.start_reslice` + `slice_and_update` let a draft be re-sliced with
+  different settings, reusing the same already-uploaded file - no new
+  upload needed - as many times as the user wants
+  (`POST /jobs/{id}/reslice`).
+- `jobs.submit_draft` is the explicit "submit to queue" action
+  (`POST /jobs/{id}/submit`): moves the draft's files from `scratch/` to
+  `queue/`, sets `queued_at`, and only *then* does it become admin-visible
+  (`jobs.active_jobs`, an explicit `QUEUE_STATUSES` allow-list, not just
+  "not terminal" - a draft is also not terminal, so that distinction has
+  to be explicit now) and counted in `queue_position`.
+- `queue_position` orders by `queued_at`, deliberately **not**
+  `created_at` (when the file was first uploaded) - someone who sits on a
+  sliced draft for hours before submitting must not cut ahead of everyone
+  who submitted right away in the meantime. `created_at` still orders a
+  user's own submissions list, and is what draft expiry (below) measures
+  against.
+- **What happens to a draft nobody ever submits** - the open question this
+  feature originally raised: per the user, it auto-expires after an
+  admin-configurable number of days (`Settings.draft_expiry_days`,
+  `/admin/settings`), not left as permanent clutter and not a fixed
+  constant either, since there's no one right threshold for every
+  deployment's traffic and storage. `cleanup_drafts.py` (same run-from-cron
+  pattern as `backup.py` - see "Backups" above) finds every draft
+  (including a `submitted` one stuck mid-slice, as a safety net for a
+  crashed background task) older than that threshold and expires it,
+  moving its files to `archive/` the same way a finished job's are - an
+  expired draft is *gone from scratch/*, not deleted outright, consistent
+  with the rule that nothing this app finishes with just disappears.
+
+  ```
+  0 4 * * * /path/to/.venv/bin/python3 /path/to/app/cleanup_drafts.py
+  ```
+
+Verified live (Playwright against an isolated instance, not just read as
+correct): a freshly-sliced job lands on `sliced` and is absent from the
+admin queue view; re-slicing with different settings updates the draft in
+place and clears a stale error/supports path from a previous attempt;
+submitting moves it into the queue and makes it admin-visible; two jobs
+uploaded in one order but submitted in the *other* order get queue
+positions reflecting submission order, not upload order; the settings page
+persists a new threshold and rejects an invalid one (client-side via the
+input's own `min`, and independently server-side, confirmed by posting
+directly past the browser); and `cleanup_drafts.py` against a backdated
+draft actually moves its files to `archive/` and flips it to `expired`.
+
+### Upload and slicing progress
 
 ### Upload and slicing progress
 
@@ -187,9 +254,12 @@ Verified live (Playwright driving a real isolated instance, not just read
 as correct): the redirect after upload returns in a fraction of a second
 even though the background slice is still running; a throttled transfer
 showed the progress bar unhide and track real intermediate byte counts;
-the dashboard row visibly moved from "slicing…" to `queued`; and polling
+the dashboard row visibly moved from "slicing…" to `sliced`; and polling
 requests stopped the moment it did, confirmed by watching request counts
-stay flat several seconds afterward.
+stay flat several seconds afterward. (This predates the slice/submit
+split below, which is why the end state here is `sliced` rather than the
+`queued` this was originally verified against - re-confirmed after that
+change, not just assumed still true.)
 
 ### What release does
 
@@ -343,8 +413,9 @@ original STL's own dimensions) directly.
 - `db.py` - SQLite engine/session. One file, no separate DB server - this
   runs on one Pi next to one printer.
 - `storage.py` - the scratch/queue/archive directory layout and file-moving
-  helpers, plus reading a `.makerbot`'s slice-time duration estimate back
-  out of its `meta.json`.
+  helpers (including moving a draft's files, not just a queued job's -
+  see "Drafts and expiry" above), plus reading a `.makerbot`'s slice-time
+  duration estimate back out of its `meta.json`.
 - `pipeline.py` - calls `../slicing/slice.py` as a subprocess (deliberately
   not imported - see the module docstring for why) to turn an uploaded STL
   into a `.makerbot`, optionally with supports enabled and the intermediate
@@ -353,10 +424,14 @@ original STL's own dimensions) directly.
   line segments shown in the 3D preview (see "3D preview" above).
 - `jobs.py` - queries (`jobs_for_user`, `active_jobs`, `queue_position`) and
   the actual state-transition logic (`approve`/`reject`/`release`/
-  `mark_finished`), kept out of the routers so it's independently testable.
-  Also `slice_and_update`, run as a background task by `routers/user.py`'s
-  `upload()` so that request doesn't block on slicing - see "Upload and
-  slicing progress" above.
+  `mark_finished`/`submit_draft`/`start_reslice`), kept out of the routers
+  so it's independently testable. Also `slice_and_update`, run as a
+  background task by `routers/user.py`'s `upload()` and `reslice()` so
+  neither request blocks on slicing - see "Upload and slicing progress"
+  above.
+- `cleanup_drafts.py` - expires abandoned drafts past the admin-configured
+  age threshold; see "Drafts and expiry" above. Same run-from-cron
+  pattern as `backup.py` below.
 - `printer.py` - the printer's network protocol client (vendored from
   `../test-print/`, see its docstring for why not imported) and
   `send_print_job()`, the real hardware call behind `jobs.release()`.
@@ -364,10 +439,14 @@ original STL's own dimensions) directly.
 - `auth.py` - hashing (bcrypt, called directly - see note below) and the
   `require_user`/`require_admin` FastAPI dependencies that redirect to
   the right login page when not authenticated.
-- `routers/user.py` - signup/login/logout/dashboard/upload.
+- `routers/user.py` - signup/login/logout/dashboard/upload, plus a draft's
+  own `reslice`/`submit` actions (`POST /jobs/{id}/reslice`,
+  `POST /jobs/{id}/submit`) - user-only, so they live here rather than in
+  `routers/jobs.py` even though they share that URL prefix.
 - `routers/admin.py` - login/logout/dashboard (the queue view), the
-  approve/reject/release/mark_done/mark_failed actions, and user account
-  management (`/admin/users`).
+  approve/reject/release/mark_done/mark_failed actions, user account
+  management (`/admin/users`), and settings (`/admin/settings` -
+  currently just `Settings.draft_expiry_days`).
 - `routers/jobs.py` - serves a job's model/supports and the 3D preview
   page, usable by either the job's owner or any admin (not role-specific
   like the two routers above).

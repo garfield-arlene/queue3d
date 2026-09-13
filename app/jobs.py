@@ -10,10 +10,10 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from db import engine
-from models import Admin, Job, JobStatus, TERMINAL_STATUSES
+from models import Admin, DRAFT_STATUSES, Job, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES
 from pipeline import run_slice
 from printer import PrinterError, send_print_job
-from storage import move_job_to_archive, queue_paths, read_makerbot_duration_s
+from storage import move_job_to_archive, queue_paths, read_makerbot_duration_s, scratch_paths
 
 
 class JobActionError(Exception):
@@ -25,19 +25,21 @@ class JobActionError(Exception):
 
 def jobs_for_user(session: Session, user_id: int) -> list[Job]:
     return session.exec(
-        select(Job).where(Job.user_id == user_id).order_by(Job.submitted_at.desc())
+        select(Job).where(Job.user_id == user_id).order_by(Job.created_at.desc())
     ).all()
 
 
 def active_jobs(session: Session) -> list[Job]:
-    """Everything not yet finished, oldest first - this is "the queue" a
-    reviewing admin looks at. Defined as NOT-terminal rather than an
-    explicit allow-list so it stays correct by construction if a status is
-    ever added."""
+    """Everything actually in the shared queue, oldest-queued first - this
+    is what a reviewing admin looks at. An explicit allow-list
+    (models.QUEUE_STATUSES), not just "not terminal" - a sliced-but-
+    unsubmitted draft is also not terminal, but must never show up here;
+    see models.py's comment on the three-way status partition this and
+    user_has_active_jobs below both rely on."""
     return session.exec(
         select(Job)
-        .where(Job.status.not_in(list(TERMINAL_STATUSES)))
-        .order_by(Job.submitted_at.asc())
+        .where(Job.status.in_(list(QUEUE_STATUSES)))
+        .order_by(Job.queued_at.asc())
     ).all()
 
 
@@ -45,7 +47,12 @@ def user_has_active_jobs(session: Session, user_id: int) -> bool:
     """Used to guard deleting a user - see routers/admin.py's user
     management actions. Deleting someone with a job still in flight would
     either orphan a queue entry mid-review or, worse, leave a printing job
-    with no owner to attribute it to."""
+    with no owner to attribute it to. Unlike active_jobs() above, this
+    deliberately still counts drafts (not just queued+) as "active" - a
+    draft has real files sitting in scratch/ and represents unfinished
+    work, even though an admin never sees it; deleting a draft-only user
+    is left to draft expiry cleaning things up first, same as anyone
+    else's job."""
     return (
         session.exec(
             select(Job)
@@ -58,14 +65,17 @@ def user_has_active_jobs(session: Session, user_id: int) -> bool:
 
 def queue_position(session: Session, job: Job) -> int | None:
     """1-based position among jobs waiting their turn (queued/approved),
-    oldest-first across all users - None if this job isn't in that
-    waiting state at all."""
+    oldest-queued first across all users - None if this job isn't in that
+    waiting state at all. Ordered by queued_at (when submit_draft actually
+    put it in the queue), not created_at (when it was first uploaded) -
+    sitting on a sliced draft for a while before submitting must not let
+    it cut in ahead of jobs submitted right away in the meantime."""
     if job.status not in (JobStatus.queued, JobStatus.approved):
         return None
     ahead = session.exec(
         select(Job)
         .where(Job.status.in_([JobStatus.queued, JobStatus.approved]))
-        .where(Job.submitted_at < job.submitted_at)
+        .where(Job.queued_at < job.queued_at)
     ).all()
     return len(ahead) + 1
 
@@ -139,15 +149,20 @@ def slice_and_update(
     enable_supports: bool,
     support_style: str | None,
 ) -> None:
-    """Runs slicing for a just-submitted job and records the outcome -
-    called as a FastAPI `BackgroundTask` from routers/user.py's upload
-    handler, so that request can save the file and return right away
-    instead of blocking on however long slicing takes (previously the
-    whole point of the "upload progress" to-do item: the request used to
-    block silently until slicing finished entirely, with no way to show
-    the user anything was happening). Opens its own Session - the
-    request's is already closed by the time a background task runs (see
-    db.py's per-request get_session).
+    """Runs slicing for a draft and records the outcome as 'sliced' (ready
+    to preview and, if the user wants, submit) or 'slice_failed' - never
+    'queued' directly any more, now that slicing and submitting are split;
+    see submit_draft below for the separate, explicit action that actually
+    puts a job in the queue. Called as a FastAPI `BackgroundTask`, both
+    from routers/user.py's upload handler (the first slice) and its
+    reslice handler (any later one, same uploaded file, new settings), so
+    neither request blocks on however long slicing takes. Opens its own
+    Session - the request's is already closed by the time a background
+    task runs (see db.py's per-request get_session).
+
+    Output goes to scratch/, not queue/ - a draft's files stay in scratch/
+    for as long as it's a draft, however many times it gets re-sliced;
+    only submit_draft moves anything into queue/.
 
     Any unexpected exception here (not just an ordinary slicer failure,
     which run_slice already reports as (False, detail)) still has to leave
@@ -161,32 +176,77 @@ def slice_and_update(
         if job is None:
             return
 
-        queue_stl, queue_makerbot, queue_supports = queue_paths(job.id)
+        _scratch_stl, scratch_makerbot, scratch_supports = scratch_paths(job.id)
         try:
             success, detail = run_slice(
                 stl_path,
-                queue_makerbot,
+                scratch_makerbot,
                 enable_supports=enable_supports,
                 support_style=support_style,
-                supports_json_path=queue_supports if enable_supports else None,
+                supports_json_path=scratch_supports if enable_supports else None,
             )
         except Exception as e:
             success, detail = False, f"Unexpected error while slicing: {e}"
 
         if success:
-            shutil.move(str(stl_path), str(queue_stl))
-            job.stl_path = str(queue_stl)
-            job.makerbot_path = str(queue_makerbot)
-            job.duration_estimate_s = read_makerbot_duration_s(queue_makerbot)
-            if enable_supports and queue_supports.exists():
-                job.supports_path = str(queue_supports)
-            job.status = JobStatus.queued
+            job.makerbot_path = str(scratch_makerbot)
+            job.duration_estimate_s = read_makerbot_duration_s(scratch_makerbot)
+            if enable_supports and scratch_supports.exists():
+                job.supports_path = str(scratch_supports)
+            else:
+                job.supports_path = None  # clear a stale one from a previous re-slice attempt
+            job.slice_error = None  # clear a stale one from a previous failed attempt
+            job.status = JobStatus.sliced
         else:
             job.status = JobStatus.slice_failed
             job.slice_error = detail[-4000:]  # cap - slicer output can be long
 
         session.add(job)
         session.commit()
+
+
+def start_reslice(
+    session: Session, job: Job, enable_supports: bool, support_style: str | None
+) -> Path:
+    """Resets a draft to re-slice the same already-uploaded file with new
+    settings - the whole point of splitting slicing from submitting: a
+    user can freely iterate on support settings before ever deciding to
+    submit. Returns the STL path to hand to slice_and_update (via a
+    BackgroundTask, same as the initial slice - see routers/user.py)."""
+    _require_status(job, JobStatus.sliced, JobStatus.slice_failed)
+    job.supports_enabled = enable_supports
+    job.support_style = support_style
+    job.status = JobStatus.submitted
+    job.slice_error = None
+    session.add(job)
+    session.commit()
+    return Path(job.stl_path)
+
+
+def submit_draft(session: Session, job: Job) -> Job:
+    """The explicit "submit to queue" action - moves a successfully-sliced
+    draft's files from scratch/ to queue/ and actually puts it in the
+    queue. Nothing before this point (uploading, slicing, re-slicing) is
+    ever visible to an admin or counted in queue_position - see
+    active_jobs() above."""
+    _require_status(job, JobStatus.sliced)
+    scratch_stl, scratch_makerbot, scratch_supports = scratch_paths(job.id)
+    queue_stl, queue_makerbot, queue_supports = queue_paths(job.id)
+    if scratch_stl.exists():
+        shutil.move(str(scratch_stl), str(queue_stl))
+        job.stl_path = str(queue_stl)
+    if scratch_makerbot.exists():
+        shutil.move(str(scratch_makerbot), str(queue_makerbot))
+        job.makerbot_path = str(queue_makerbot)
+    if scratch_supports.exists():
+        shutil.move(str(scratch_supports), str(queue_supports))
+        job.supports_path = str(queue_supports)
+    job.status = JobStatus.queued
+    job.queued_at = datetime.now(timezone.utc)
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job
 
 
 def mark_finished(session: Session, job: Job, success: bool) -> Job:

@@ -12,7 +12,7 @@ from auth import admin_by_username, require_admin, verify_secret
 from backup import get_last_successful_backup, is_stale
 from db import get_session
 from jobs import JobActionError, active_jobs, approve, mark_finished, reject, release, user_has_active_jobs
-from models import Admin, Job, User
+from models import Admin, Job, Settings, User
 from templates_env import templates
 
 router = APIRouter(prefix="/admin")
@@ -238,3 +238,56 @@ def delete_all_users(
         session.delete(user)
     session.commit()
     return RedirectResponse("/admin/users", status_code=303)
+
+
+# ---- settings ----
+# A single-row table (models.Settings) rather than a generic key/value
+# store - see that model's docstring for why. Currently just the one
+# knob: how long a sliced-but-never-submitted draft sits before
+# cleanup_drafts.py expires it (run from cron, same pattern as backup.py -
+# see app/README.md).
+
+
+def get_settings(session: Session) -> Settings:
+    settings = session.get(Settings, 1)
+    if settings is None:
+        # First run: no row yet - create the default rather than making
+        # every caller (this page, cleanup_drafts.py) handle a None case.
+        settings = Settings(id=1)
+        session.add(settings)
+        session.commit()
+        session.refresh(settings)
+    return settings
+
+
+@router.get("/settings")
+def settings_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    return templates.TemplateResponse(
+        request, "admin_settings.html", {"admin": admin, "settings": get_settings(session)}
+    )
+
+
+@router.post("/settings")
+def update_settings(
+    request: Request,
+    draft_expiry_days: int = Form(...),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    error = None
+    if draft_expiry_days < 1:
+        error = "Draft expiry must be at least 1 day."
+    else:
+        settings = get_settings(session)
+        settings.draft_expiry_days = draft_expiry_days
+        session.add(settings)
+        session.commit()
+    return templates.TemplateResponse(
+        request,
+        "admin_settings.html",
+        {"admin": admin, "settings": get_settings(session), "error": error, "saved": error is None},
+    )

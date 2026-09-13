@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session
 
@@ -9,7 +9,7 @@ from auth import (
     verify_secret,
 )
 from db import get_session
-from jobs import jobs_for_user, queue_position, slice_and_update
+from jobs import JobActionError, jobs_for_user, queue_position, slice_and_update, start_reslice, submit_draft
 from models import Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, scratch_stl_path
 from templates_env import templates
@@ -205,4 +205,62 @@ def upload(
         support_style if enable_supports else None,
     )
 
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+def _owned_draft(session: Session, user: User, job_id: int) -> Job:
+    job = session.get(Job, job_id)
+    if job is None or job.user_id != user.id:
+        raise HTTPException(status_code=404, detail="No such job")
+    return job
+
+
+@router.post("/jobs/{job_id}/reslice")
+def reslice(
+    job_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    enable_supports: bool = Form(False),
+    support_style: str = Form("default"),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Re-slices a draft's already-uploaded file with new settings -
+    reachable from a 'sliced' or 'slice_failed' row (see
+    _jobs_table.html); no new file needed, the whole point of splitting
+    slicing from submitting."""
+    job = _owned_draft(session, user, job_id)
+    if support_style not in SUPPORT_STYLES:
+        support_style = "default"
+    try:
+        stl_path = start_reslice(
+            session, job, enable_supports, support_style if enable_supports else None
+        )
+    except JobActionError as e:
+        request.session["upload_error"] = str(e)
+        return RedirectResponse("/dashboard", status_code=303)
+
+    background_tasks.add_task(
+        slice_and_update,
+        job.id,
+        stl_path,
+        enable_supports,
+        support_style if enable_supports else None,
+    )
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@router.post("/jobs/{job_id}/submit")
+def submit(
+    job_id: int,
+    request: Request,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """The explicit "submit to queue" action - see jobs.submit_draft."""
+    job = _owned_draft(session, user, job_id)
+    try:
+        submit_draft(session, job)
+    except JobActionError as e:
+        request.session["upload_error"] = str(e)
     return RedirectResponse("/dashboard", status_code=303)

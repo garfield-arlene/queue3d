@@ -52,6 +52,12 @@ Managing user accounts:
   (self-updating, no page reload) while it's converted server-side -
   slicing runs in the background rather than leaving the page hanging for
   however long that takes.
+- **Slicing and submitting are separate actions** - uploading slices a
+  model into a private draft (never visible to admins or counted in the
+  queue) that can be re-sliced in place with different support settings,
+  as many times as wanted, before deciding to submit it to the shared
+  queue. A draft nobody ever submits expires automatically after an
+  admin-configurable number of days (`/admin/settings`).
 - **Live duration estimate and queue position** shown to the submitter as
   soon as slicing finishes.
 - **Interactive 3D preview** - rotate and zoom a model on the real build
@@ -87,21 +93,6 @@ Managing user accounts:
   relying on manual review.
 
 **Upload**
-- Separate "slice" from "submit to the queue" as two distinct actions.
-  Right now clicking Upload & slice does both - the job is added to the
-  queue the moment slicing succeeds. Instead, slicing should render the
-  result (model + supports, if enabled) without committing anything to the
-  queue yet, so a user can change support settings and re-slice the same
-  draft in place as many times as they want before deciding to actually
-  submit it - right now, iterating means spamming the shared,
-  admin-visible queue with abandoned attempts just to preview a different
-  support style. This is a real change to the documented job state machine
-  (`submitted -> (sliced) -> queued`, treated as confirmed/settled
-  elsewhere - see project memory queue3d-purpose and app/README.md's "The
-  job queue"), not just a UI tweak: it needs a genuine pre-queue "draft"
-  state, and a decision on what happens to a draft nobody ever submits
-  (left alone indefinitely as harmless clutter, or cleaned up after a
-  while).
 - Accept file types beyond `.stl` - `.3mf`, `.obj`, and `.zip` (presumably
   a zipped model file) were specifically asked for.
 - Model repair (like PrusaSlicer/OrcaSlicer's "Fix through Netfabb") -

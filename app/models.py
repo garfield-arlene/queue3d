@@ -54,13 +54,22 @@ class BackupRecord(SQLModel, table=True):
 class JobStatus(str, enum.Enum):
     """Confirmed state machine (project memory queue3d-purpose - don't
     drift from this): users submit directly into the one queue, there's
-    no separate pre-review gate before something counts as "in the queue."
+    no separate pre-review gate before something counts as "in the queue" -
+    but slicing and submitting *to* that queue are two distinct, explicit
+    user actions, not one combined step. A user can re-slice a 'sliced' or
+    'slice_failed' draft with different settings as many times as they
+    want (reusing the same already-uploaded file - see jobs.start_reslice)
+    before ever deciding to submit it, without spamming the shared,
+    admin-visible queue with abandoned attempts just to preview a
+    different support style.
 
-        submitted -> (sliced) -> queued
+        submitted -> sliced -> queued (an explicit "submit" action)
             -> approved (admin greenlit it, waiting its turn)
                 -> printing (admin explicitly released it) -> done | failed
             -> rejected (admin declined, with a note - terminal)
-        submitted -> slice_failed (terminal - the submitter can resubmit)
+        submitted -> slice_failed (can retry: re-slice in place, or let it expire)
+        {submitted, sliced, slice_failed} -> expired (never submitted, past
+            the admin-configured age threshold - see cleanup_drafts.py)
 
     Only an explicit admin *release* sends an approved job to the printer -
     approval alone just marks it greenlit while it waits, since only one
@@ -68,7 +77,9 @@ class JobStatus(str, enum.Enum):
     """
 
     submitted = "submitted"
+    sliced = "sliced"
     slice_failed = "slice_failed"
+    expired = "expired"
     queued = "queued"
     approved = "approved"
     rejected = "rejected"
@@ -77,11 +88,36 @@ class JobStatus(str, enum.Enum):
     failed = "failed"
 
 
-# Terminal states whose files get moved to archive/ (see storage.py) -
-# nothing more will ever happen to a job in one of these. "Active" is
-# defined as simply not-terminal (see jobs.active_jobs) rather than a
-# second overlapping allow-list, so the two can't drift out of sync.
-TERMINAL_STATUSES = {JobStatus.rejected, JobStatus.done, JobStatus.failed}
+# Every status is in exactly one of these three sets - keep it that way, so
+# "is this job admin-visible / does deleting its user need to be blocked /
+# is anything more ever going to happen to it" all stay correct by
+# construction instead of needing their own separate allow-lists that can
+# quietly drift out of sync with a status added later.
+#
+# DRAFT: sliced (or slicing, or failed to) but never submitted - exists
+# only for its own user; the admin queue view must never show these.
+# QUEUE: actually in the shared queue, admin-visible and actionable.
+# TERMINAL: nothing more will ever happen to it; files live in archive/,
+# never queue/ or scratch/ (see storage.py).
+DRAFT_STATUSES = {JobStatus.submitted, JobStatus.sliced, JobStatus.slice_failed}
+QUEUE_STATUSES = {JobStatus.queued, JobStatus.approved, JobStatus.printing}
+TERMINAL_STATUSES = {JobStatus.rejected, JobStatus.done, JobStatus.failed, JobStatus.expired}
+
+
+class Settings(SQLModel, table=True):
+    """A single-row table of admin-configurable settings - just one so far.
+    A real key/value settings table would be overkill for one integer;
+    add columns here as more settings show up rather than reaching for
+    that until there's actually more than one."""
+
+    id: int = Field(default=1, primary_key=True)
+    # How long a sliced-but-never-submitted draft sits before
+    # cleanup_drafts.py expires it. Admin-configurable (see
+    # routers/admin.py's /admin/settings) rather than a fixed constant,
+    # per the user - the "harmless clutter vs. auto-expire" question the
+    # draft feature raises doesn't have one right answer for every
+    # deployment's traffic/storage.
+    draft_expiry_days: int = Field(default=7)
 
 
 class Job(SQLModel, table=True):
@@ -105,7 +141,16 @@ class Job(SQLModel, table=True):
     # (supports enabled but the model didn't need any).
     supports_path: str | None = Field(default=None)
 
-    submitted_at: datetime = Field(default_factory=utcnow)
+    # When this row was created (upload time) - NOT when it joined the
+    # queue, which may be much later or never (see queued_at below). Used
+    # to order a user's own submissions list and to age out abandoned
+    # drafts (cleanup_drafts.py), not for queue fairness.
+    created_at: datetime = Field(default_factory=utcnow)
+    # When submit_draft() actually moved this job into the queue - None
+    # until then. This, not created_at, is what queue_position() orders
+    # by: a draft someone sat on for hours before submitting must not cut
+    # ahead of everyone who submitted straight away in the meantime.
+    queued_at: datetime | None = Field(default=None)
     reviewed_at: datetime | None = Field(default=None)
     reviewed_by_admin_id: int | None = Field(default=None, foreign_key="admin.id")
     admin_note: str | None = Field(default=None)
