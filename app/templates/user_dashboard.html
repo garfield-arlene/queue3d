@@ -7,10 +7,32 @@
   <h2>Hi, {{ user.name }}</h2>
 
   <form method="post" action="/upload" enctype="multipart/form-data">
-    <label>Upload a model (.stl)<br><input type="file" name="file" accept=".stl" required></label>
+    <label>Upload a model (.stl)<br><input type="file" id="stl-file" name="file" accept=".stl" required></label>
     <button type="submit">Upload &amp; slice</button>
   </form>
+
+  <div id="preview-container" class="preview-container" hidden></div>
+  <p id="preview-info" class="preview-info"></p>
+
   {% if upload_error %}<p class="error">{{ upload_error }}</p>{% endif %}
+
+  <script type="importmap">
+    { "imports": { "three": "/static/vendor/three/three.module.min.js" } }
+  </script>
+  <script type="module">
+    import { previewFile } from "/static/preview.js";
+
+    const fileInput = document.getElementById("stl-file");
+    const container = document.getElementById("preview-container");
+    const info = document.getElementById("preview-info");
+
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      container.hidden = false;
+      previewFile(file, container, info);
+    });
+  </script>
 
   <h3>Your submissions</h3>
   {% if not rows %}
