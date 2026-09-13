@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Edit - queue3d{% endblock %}
+{% block content %}
+  {% if job.status.value == 'submitted' %}
+    <script>
+      // Full-page reload, not htmx polling: this page hosts a live
+      // Three.js scene (preview.js), which keeps its renderer/camera
+      // state in module-level variables tied to the *current* DOM nodes -
+      // a partial swap of the preview container out from under it would
+      // leave that state pointing at a detached element instead of
+      // reinitializing. A plain reload sidesteps that entirely by
+      // starting the whole page fresh, same as the very first load. A
+      // <meta http-equiv="refresh"> tag would do this without JS, but
+      // only reliably inside <head> - base.html's content block renders
+      // in <body>, where browser support for it is inconsistent.
+      setTimeout(() => window.location.reload(), 2000);
+    </script>
+  {% endif %}
+
+  <h2>{{ job.original_filename }}</h2>
+  {% if flash_error %}<p class="error">{{ flash_error }}</p>{% endif %}
+
+  {% if job.status.value == 'submitted' %}
+    <p><progress></progress> slicing&hellip;</p>
+  {% elif job.status.value == 'slice_failed' %}
+    <p class="error">Couldn't slice this file{% if job.slice_error %} - {{ job.slice_error }}{% endif %}. Adjust settings and re-slice below, or re-export and re-upload from the dashboard.</p>
+  {% endif %}
+
+  <p class="muted">
+    Orange lines are generated support material (simplified - not the
+    exact print path, just roughly where supports will be).
+  </p>
+  <div id="preview-container" class="preview-container"></div>
+  <p id="preview-info" class="preview-info"></p>
+
+  <script type="importmap">
+    { "imports": { "three": "/static/vendor/three/three.module.min.js" } }
+  </script>
+  <script type="module">
+    import { previewUrl } from "/static/preview.js";
+    const container = document.getElementById("preview-container");
+    const info = document.getElementById("preview-info");
+    const supportsUrl = {% if job.supports_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
+    previewUrl("/jobs/{{ job.id }}/model.stl", supportsUrl, container, info);
+  </script>
+
+  <h3>Settings</h3>
+  <form method="post" action="/jobs/{{ job.id }}/reslice">
+    <label><input type="checkbox" name="enable_supports" {% if job.supports_enabled %}checked{% endif %}> Generate supports</label>
+    <label>Support style<br>
+      <select name="support_style">
+        {% for value, label in support_styles.items() %}
+          <option value="{{ value }}" {% if value == job.support_style %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">Re-slice</button>
+  </form>
+
+  {% if job.status.value == 'sliced' %}
+    <form method="post" action="/jobs/{{ job.id }}/submit">
+      <button type="submit">Submit to queue</button>
+    </form>
+  {% endif %}
+
+  <p><a href="/dashboard">&laquo; Back to dashboard</a></p>
+{% endblock %}

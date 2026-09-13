@@ -229,11 +229,33 @@ style. Slicing and submitting are now two distinct, explicit actions:
   `queued`. A `sliced` (or `slice_failed`) job is a **draft**: private to
   its own user, invisible to admins, not counted in the queue, sitting in
   `data/scratch/` for as long as it stays one.
-- `jobs.start_reslice` + `slice_and_update` let a draft be re-sliced with
-  different settings, reusing the same already-uploaded file - no new
-  upload needed - as many times as the user wants
-  (`POST /jobs/{id}/reslice`).
-- `jobs.submit_draft` is the explicit "submit to queue" action
+- **Editing a draft** (`GET /jobs/{id}/edit`, `templates/job_edit.html`) -
+  "Edit" on the dashboard for any draft row - is meant to feel like
+  picking up the upload flow again with this model still loaded: the same
+  3D preview as the job-preview page (model + its currently selected
+  support material overlaid), plus the support settings as an editable
+  form right there, pre-filled with whatever's currently set. Deliberately
+  not the raw checkbox+dropdown+button that used to sit inline in the
+  dashboard's row - editing settings is its own real step, not a table
+  action, and this is where any future editing controls belong too (a
+  resize, say) since it's already the "load the model and its settings
+  back up" page. While a (re-)slice is running the page shows a spinner
+  and reloads itself every couple seconds until it's done - a plain
+  reload, not htmx swapping the DOM, because the live Three.js scene on
+  this page keeps its state tied to the *current* preview container; a
+  partial swap would leave that state pointing at a detached element
+  instead of reinitializing, where a full reload just starts fresh.
+  Visiting this page for a job that isn't a draft any more (submitted,
+  or - a stale link - since expired) redirects to the dashboard instead
+  of showing an edit form for something it can no longer apply to.
+- `jobs.start_reslice` + `slice_and_update`, driven from that edit page,
+  let a draft be re-sliced with different settings, reusing the same
+  already-uploaded file - no new upload needed - as many times as the
+  user wants (`POST /jobs/{id}/reslice`, redirecting back to the same
+  edit page either way, success or a settings error, so iterating on
+  settings stays a loop on one page).
+- `jobs.submit_draft` is the explicit "submit to queue" action, reachable
+  from both the dashboard row and the edit page
   (`POST /jobs/{id}/submit`): moves the draft's files from `scratch/` to
   `queue/`, sets `queued_at`, and only *then* does it become admin-visible
   (`jobs.active_jobs`, an explicit `QUEUE_STATUSES` allow-list, not just
@@ -271,10 +293,15 @@ uploaded in one order but submitted in the *other* order get queue
 positions reflecting submission order, not upload order; the settings page
 persists a new threshold and rejects an invalid one (client-side via the
 input's own `min`, and independently server-side, confirmed by posting
-directly past the browser); and `cleanup_drafts.py` against a backdated
-draft actually moves its files to `archive/` and flips it to `expired`.
-
-### Upload and slicing progress
+directly past the browser); `cleanup_drafts.py` against a backdated
+draft actually moves its files to `archive/` and flips it to `expired`;
+the edit page's own settings form starts pre-filled with a draft's
+current settings and its 3D preview actually renders; clicking re-slice
+there stays on that same page through the "slicing…" reload loop and
+lands back on it reflecting the new settings and a fresh preview;
+submitting from the edit page ends on the dashboard with the job queued;
+and visiting a queued job's edit URL directly redirects to the dashboard
+instead of showing a stale form.
 
 ### Upload and slicing progress
 
@@ -510,10 +537,11 @@ original STL's own dimensions) directly.
 - `auth.py` - hashing (bcrypt, called directly - see note below) and the
   `require_user`/`require_admin` FastAPI dependencies that redirect to
   the right login page when not authenticated.
-- `routers/user.py` - signup/login/logout/dashboard/upload, plus a draft's
-  own `reslice`/`submit` actions (`POST /jobs/{id}/reslice`,
-  `POST /jobs/{id}/submit`) - user-only, so they live here rather than in
-  `routers/jobs.py` even though they share that URL prefix.
+- `routers/user.py` - signup/login/logout/dashboard/upload, plus a
+  draft's own edit page and actions (`GET /jobs/{id}/edit`,
+  `POST /jobs/{id}/reslice`, `POST /jobs/{id}/submit`) - user-only, so
+  they live here rather than in `routers/jobs.py` even though they share
+  that URL prefix.
 - `routers/admin.py` - login/logout/dashboard (the queue view), the
   approve/reject/release/mark_done/mark_failed actions, user account
   management (`/admin/users`), and settings (`/admin/settings` -

@@ -10,7 +10,7 @@ from auth import (
 )
 from db import get_session
 from jobs import JobActionError, jobs_for_user, queue_position, slice_and_update, start_reslice, submit_draft
-from models import Job, JobStatus, User
+from models import DRAFT_STATUSES, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, scratch_stl_path
 from templates_env import templates
 
@@ -105,13 +105,13 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
-def _dashboard_context(session: Session, user: User, upload_error: str | None = None):
+def _dashboard_context(session: Session, user: User, flash_error: str | None = None):
     jobs = jobs_for_user(session, user.id)
     rows = [{"job": job, "position": queue_position(session, job)} for job in jobs]
     return {
         "user": user,
         "rows": rows,
-        "upload_error": upload_error,
+        "flash_error": flash_error,
         "support_styles": SUPPORT_STYLES,
     }
 
@@ -122,16 +122,17 @@ def dashboard(
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
-    # Flashed via session by upload() below rather than returned directly
-    # from that POST, so /upload can always redirect (a plain <form>, with
-    # no JS at all, still gets a normal post-redirect-get instead of a
-    # "confirm resubmission" page on refresh) and the client-side upload
-    # progress bar (see the script in user_dashboard.html) can always just
-    # navigate to /dashboard when the transfer finishes, success or not,
-    # without needing to inspect or splice in the response body itself.
-    upload_error = request.session.pop("upload_error", None)
+    # Flashed via session by upload()/reslice()/submit() below rather than
+    # returned directly from that POST, so each can always redirect (a
+    # plain <form>, with no JS at all, still gets a normal
+    # post-redirect-get instead of a "confirm resubmission" page on
+    # refresh) and the client-side upload progress bar (see the script in
+    # user_dashboard.html) can always just navigate to /dashboard when the
+    # transfer finishes, success or not, without needing to inspect or
+    # splice in the response body itself.
+    flash_error = request.session.pop("flash_error", None)
     return templates.TemplateResponse(
-        request, "user_dashboard.html", _dashboard_context(session, user, upload_error)
+        request, "user_dashboard.html", _dashboard_context(session, user, flash_error)
     )
 
 
@@ -163,7 +164,7 @@ def upload(
         support_style = "default"
 
     def fail(message: str):
-        request.session["upload_error"] = message
+        request.session["flash_error"] = message
         return RedirectResponse("/dashboard", status_code=303)
 
     if not filename.lower().endswith(".stl"):
@@ -215,6 +216,32 @@ def _owned_draft(session: Session, user: User, job_id: int) -> Job:
     return job
 
 
+@router.get("/jobs/{job_id}/edit")
+def edit_draft(
+    job_id: int,
+    request: Request,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Pick up working on a draft - the model with its currently selected
+    support settings, previewed exactly like the job-preview page (same
+    supports overlay), plus the settings themselves as an editable form
+    that re-slices in place. Not a thing once a job has actually been
+    submitted - there's nothing left to edit at that point, so send
+    anyone who lands here anyway (a stale link, or the row that put them
+    here has since moved on) back to the dashboard rather than showing an
+    edit form for a job it can no longer apply to."""
+    job = _owned_draft(session, user, job_id)
+    if job.status not in DRAFT_STATUSES:
+        return RedirectResponse("/dashboard", status_code=303)
+    flash_error = request.session.pop("flash_error", None)
+    return templates.TemplateResponse(
+        request,
+        "job_edit.html",
+        {"job": job, "support_styles": SUPPORT_STYLES, "flash_error": flash_error},
+    )
+
+
 @router.post("/jobs/{job_id}/reslice")
 def reslice(
     job_id: int,
@@ -226,9 +253,11 @@ def reslice(
     session: Session = Depends(get_session),
 ):
     """Re-slices a draft's already-uploaded file with new settings -
-    reachable from a 'sliced' or 'slice_failed' row (see
-    _jobs_table.html); no new file needed, the whole point of splitting
-    slicing from submitting."""
+    reachable from its edit page (job_edit.html); no new file needed, the
+    whole point of splitting slicing from submitting. Redirects back to
+    that same edit page (not the dashboard) either way, so re-slicing
+    repeatedly to try different settings stays a loop on one page, the
+    same as it would with a real slicer's own settings panel."""
     job = _owned_draft(session, user, job_id)
     if support_style not in SUPPORT_STYLES:
         support_style = "default"
@@ -237,8 +266,8 @@ def reslice(
             session, job, enable_supports, support_style if enable_supports else None
         )
     except JobActionError as e:
-        request.session["upload_error"] = str(e)
-        return RedirectResponse("/dashboard", status_code=303)
+        request.session["flash_error"] = str(e)
+        return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 
     background_tasks.add_task(
         slice_and_update,
@@ -247,7 +276,7 @@ def reslice(
         enable_supports,
         support_style if enable_supports else None,
     )
-    return RedirectResponse("/dashboard", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 
 
 @router.post("/jobs/{job_id}/submit")
@@ -257,10 +286,14 @@ def submit(
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
-    """The explicit "submit to queue" action - see jobs.submit_draft."""
+    """The explicit "submit to queue" action - see jobs.submit_draft.
+    Back to the dashboard either way: once submitted there's nothing left
+    to edit, and a failure here means the job wasn't in a submittable
+    state any more (e.g. a duplicate click), which the dashboard's own
+    status column already explains."""
     job = _owned_draft(session, user, job_id)
     try:
         submit_draft(session, job)
     except JobActionError as e:
-        request.session["upload_error"] = str(e)
+        request.session["flash_error"] = str(e)
     return RedirectResponse("/dashboard", status_code=303)

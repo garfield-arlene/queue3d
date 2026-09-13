@@ -23,7 +23,7 @@
   <div id="preview-container" class="preview-container" hidden></div>
   <p id="preview-info" class="preview-info"></p>
 
-  {% if upload_error %}<p class="error">{{ upload_error }}</p>{% endif %}
+  {% if flash_error %}<p class="error">{{ flash_error }}</p>{% endif %}
 
   <script type="importmap">
     { "imports": { "three": "/static/vendor/three/three.module.min.js" } }

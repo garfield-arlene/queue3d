@@ -37,7 +37,8 @@
             {% elif job.status.value == 'rejected' %}
               {{ job.admin_note or "no note given" }}
             {% elif job.status.value == 'slice_failed' %}
-              couldn't slice this file - try re-exporting it and re-uploading, or adjust settings and re-slice below
+              couldn't slice this file - open Edit to adjust settings and
+              re-slice, or re-export and re-upload from here
             {% elif job.status.value == 'expired' %}
               never submitted - expired after sitting too long as a draft
             {% elif job.status.value == 'done' %}
@@ -46,22 +47,17 @@
               print failed
             {% endif %}
           </td>
-          <td>{% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}</td>
+          <td>
+            {% if job.status.value in ('submitted', 'sliced', 'slice_failed') %}
+              <a href="/jobs/{{ job.id }}/edit">Edit</a>
+            {% elif job.stl_path %}
+              <a href="/jobs/{{ job.id }}/preview">View 3D</a>
+            {% endif %}
+          </td>
           <td>
             {% if job.status.value == 'sliced' %}
               <form method="post" action="/jobs/{{ job.id }}/submit" style="display:inline">
                 <button type="submit">Submit to queue</button>
-              </form>
-            {% endif %}
-            {% if job.status.value == 'sliced' or job.status.value == 'slice_failed' %}
-              <form method="post" action="/jobs/{{ job.id }}/reslice" style="display:inline">
-                <label><input type="checkbox" name="enable_supports" {% if job.supports_enabled %}checked{% endif %}> supports</label>
-                <select name="support_style">
-                  {% for value, label in support_styles.items() %}
-                    <option value="{{ value }}" {% if value == job.support_style %}selected{% endif %}>{{ label }}</option>
-                  {% endfor %}
-                </select>
-                <button type="submit">Re-slice</button>
               </form>
             {% endif %}
           </td>
