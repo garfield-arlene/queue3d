@@ -54,11 +54,15 @@ functionality this is meant to have:
   "X"), which looks identical whether it's working or stuck.
 
 **Job review & feedback**
-- A visual preview of a submitted model, on both the user's and the
-  admin's view of a job - lets a user judge before submitting whether a
-  model looks right and is likely to print successfully, and lets an
-  admin judge the same thing during review, plus whether it's appropriate
-  to print at all, without that being a blind approve/reject on a filename.
+- Extend the pre-submission 3D preview to the admin's view of a job too -
+  same rotate/zoom view, so an admin can judge fit/print-worthiness (and
+  whether a model is appropriate to print at all) without that being a
+  blind approve/reject on a filename.
+- Enable/disable auto-generated supports from the UI (some models don't
+  need them), and show the resulting support shapes in the 3D view once
+  generated - as simplified shapes, not a full toolpath/layer view (out of
+  scope - no G-code path or per-layer slider, just enough to see roughly
+  where supports will be).
 - Show failure reasons to the user, not just rejection notes - rejection
   notes already display (required, and shown on the user's dashboard); a
   failed print currently has no reason at all (`mark_failed` only flips
@@ -66,6 +70,17 @@ functionality this is meant to have:
   visible to an admin (as a hover tooltip), never shown to the user.
 - Break the estimated print duration into days/hours/minutes - it's
   currently total minutes only.
+- Let a user modify and resubmit a job that ended unsuccessfully
+  (`slice_failed`, `rejected`, or `failed`) instead of only being able to
+  start over from scratch. A resubmission goes to the end of the queue,
+  not back to where the original was - it's a new submission, and the
+  admin still decides when to release it like any other.
+
+**Print options**
+- Color selection for users - 1st/2nd/3rd preference, chosen from a
+  dropdown populated by an admin-managed list of colors (admins check or
+  uncheck which colors are currently available, based on inventory).
+- Controls for resizing a model before submitting.
 
 **Appearance**
 - Light/dark theme, with a toggle.
