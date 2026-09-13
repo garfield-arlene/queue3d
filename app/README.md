@@ -139,6 +139,58 @@ stage): `data/scratch/` while a fresh upload is being sliced,
 named by job id, never the submitter's original filename, to sidestep
 collisions and path-traversal entirely.
 
+### Upload and slicing progress
+
+Slicing (OrcaSlicer + `mbotmake`, both real subprocesses) can take minutes
+for a large or support-dense model. `routers/user.py`'s `upload()` used to
+block on that entirely before responding - the request just hung, with no
+way to tell "still working" from "stuck." It now does the fast part
+(validate, save the file, create the `Job` row as `submitted`) and hands
+the slow part to a FastAPI `BackgroundTask` (`jobs.slice_and_update`,
+opening its own `Session` since the request's is already closed by the
+time a background task runs) - the response comes back immediately, and
+the job finishes out of band.
+
+Two independent indicators cover the two slow parts, deliberately using
+different mechanisms because they're different kinds of "slow":
+
+- **Receiving** (the file transfer itself) needs real byte-level progress,
+  which only an XHR's own `upload.progress` event provides - a plain
+  `<form>` submission gives no hook to show that at all. `user_dashboard.html`
+  intercepts the form's submit, sends it manually via `XMLHttpRequest`, and
+  drives a `<progress>` bar off that event. Since the server always ends up
+  redirecting to `/dashboard` regardless of outcome (see below), the
+  completion handler doesn't need to inspect the response - it just
+  navigates there for real once the transfer finishes.
+- **Slicing** (server-side, duration unknown up front) is handled by
+  `templates/_jobs_table.html`, included by the dashboard and also served
+  standalone at `GET /dashboard/jobs-table`. While any row is still
+  `submitted` it carries `hx-trigger="every 2s"` and polls itself; a
+  `submitted` row shows a plain indeterminate `<progress></progress>` (no
+  `value` attribute - browsers animate that on their own, no JS needed for
+  the animation itself). Polling stops **on its own** the moment slicing
+  finishes: the next re-rendered table simply doesn't carry the
+  `hx-trigger` attribute any more once nothing is `submitted`, so there's
+  nothing left telling htmx to keep asking - no separate "stop polling"
+  signal to send or forget to send.
+
+A validation failure (wrong extension, empty file, too large) is flashed
+into the session (`request.session["upload_error"]`) and redirected the
+same way a successful upload is, rather than re-rendering the dashboard
+directly as the POST response - keeps `/upload`'s response shape
+uniform (always a redirect to `/dashboard`) for the JS above, and is a
+better-behaved POST-redirect-GET regardless: refreshing the dashboard
+after a failed upload no longer re-triggers a "confirm form resubmission"
+browser prompt the way re-rendering the POST response used to.
+
+Verified live (Playwright driving a real isolated instance, not just read
+as correct): the redirect after upload returns in a fraction of a second
+even though the background slice is still running; a throttled transfer
+showed the progress bar unhide and track real intermediate byte counts;
+the dashboard row visibly moved from "slicing…" to `queued`; and polling
+requests stopped the moment it did, confirmed by watching request counts
+stay flat several seconds afterward.
+
 ### What release does
 
 `jobs.release()` enforces the one-job-at-a-time rule, then calls
@@ -302,6 +354,9 @@ original STL's own dimensions) directly.
 - `jobs.py` - queries (`jobs_for_user`, `active_jobs`, `queue_position`) and
   the actual state-transition logic (`approve`/`reject`/`release`/
   `mark_finished`), kept out of the routers so it's independently testable.
+  Also `slice_and_update`, run as a background task by `routers/user.py`'s
+  `upload()` so that request doesn't block on slicing - see "Upload and
+  slicing progress" above.
 - `printer.py` - the printer's network protocol client (vendored from
   `../test-print/`, see its docstring for why not imported) and
   `send_print_job()`, the real hardware call behind `jobs.release()`.

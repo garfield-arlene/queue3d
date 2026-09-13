@@ -47,6 +47,11 @@ Managing user accounts:
 - **Upload and automatic slicing** - submit an STL, it's sliced
   server-side (OrcaSlicer + a patched `mbotmake`) into a print-ready file,
   no separate slicer software needed on the user's end.
+- **Live upload and slicing progress** - a byte-transfer progress bar while
+  the file is being received, and a "slicing…" indicator on the dashboard
+  (self-updating, no page reload) while it's converted server-side -
+  slicing runs in the background rather than leaving the page hanging for
+  however long that takes.
 - **Live duration estimate and queue position** shown to the submitter as
   soon as slicing finishes.
 - **Interactive 3D preview** - rotate and zoom a model on the real build
@@ -97,11 +102,6 @@ Managing user accounts:
   state, and a decision on what happens to a draft nobody ever submits
   (left alone indefinitely as harmless clutter, or cleaned up after a
   while).
-- A progress bar or other "receiving/slicing" indicator during upload.
-  Right now the request blocks silently until slicing finishes entirely
-  (which can take a while) - the only sign anything is happening is the
-  browser's own loading state (e.g. the reload button turning into an
-  "X"), which looks identical whether it's working or stuck.
 - Accept file types beyond `.stl` - `.3mf`, `.obj`, and `.zip` (presumably
   a zipped model file) were specifically asked for.
 - Model repair (like PrusaSlicer/OrcaSlicer's "Fix through Netfabb") -

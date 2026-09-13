@@ -1,6 +1,4 @@
-import shutil
-
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session
 
@@ -11,10 +9,9 @@ from auth import (
     verify_secret,
 )
 from db import get_session
-from jobs import jobs_for_user, queue_position
+from jobs import jobs_for_user, queue_position, slice_and_update
 from models import Job, JobStatus, User
-from pipeline import run_slice
-from storage import MAX_UPLOAD_BYTES, queue_paths, read_makerbot_duration_s, scratch_stl_path
+from storage import MAX_UPLOAD_BYTES, scratch_stl_path
 from templates_env import templates
 
 # OrcaSlicer's own support_style values, each confirmed (by directly
@@ -125,14 +122,36 @@ def dashboard(
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
+    # Flashed via session by upload() below rather than returned directly
+    # from that POST, so /upload can always redirect (a plain <form>, with
+    # no JS at all, still gets a normal post-redirect-get instead of a
+    # "confirm resubmission" page on refresh) and the client-side upload
+    # progress bar (see the script in user_dashboard.html) can always just
+    # navigate to /dashboard when the transfer finishes, success or not,
+    # without needing to inspect or splice in the response body itself.
+    upload_error = request.session.pop("upload_error", None)
     return templates.TemplateResponse(
-        request, "user_dashboard.html", _dashboard_context(session, user)
+        request, "user_dashboard.html", _dashboard_context(session, user, upload_error)
     )
+
+
+@router.get("/dashboard/jobs-table")
+def dashboard_jobs_table(
+    request: Request,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Just the submissions table, for the htmx polling in
+    templates/_jobs_table.html to re-fetch while a job is still slicing -
+    see that template for why polling stops on its own once none are."""
+    context = _dashboard_context(session, user)
+    return templates.TemplateResponse(request, "_jobs_table.html", context)
 
 
 @router.post("/upload")
 def upload(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     enable_supports: bool = Form(False),
     support_style: str = Form("default"),
@@ -143,19 +162,18 @@ def upload(
     if support_style not in SUPPORT_STYLES:
         support_style = "default"
 
-    def error_response(message: str):
-        return templates.TemplateResponse(
-            request, "user_dashboard.html", _dashboard_context(session, user, message)
-        )
+    def fail(message: str):
+        request.session["upload_error"] = message
+        return RedirectResponse("/dashboard", status_code=303)
 
     if not filename.lower().endswith(".stl"):
-        return error_response("Only .stl files are accepted.")
+        return fail("Only .stl files are accepted.")
 
     data = file.file.read()
     if not data:
-        return error_response("That file is empty.")
+        return fail("That file is empty.")
     if len(data) > MAX_UPLOAD_BYTES:
-        return error_response(f"File is too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB).")
+        return fail(f"File is too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB).")
 
     job = Job(
         user_id=user.id,
@@ -174,27 +192,17 @@ def upload(
     session.add(job)
     session.commit()
 
-    queue_stl, queue_makerbot, queue_supports = queue_paths(job.id)
-    success, detail = run_slice(
+    # Slicing (OrcaSlicer + mbotmake, both real subprocesses) can take
+    # minutes for a large or support-dense model - returning now instead of
+    # blocking on it is the whole point of this being a background task.
+    # The job sits visibly in 'submitted' (see _jobs_table.html) until
+    # slice_and_update finishes it one way or the other.
+    background_tasks.add_task(
+        slice_and_update,
+        job.id,
         stl_path,
-        queue_makerbot,
-        enable_supports=enable_supports,
-        support_style=support_style if enable_supports else None,
-        supports_json_path=queue_supports if enable_supports else None,
+        enable_supports,
+        support_style if enable_supports else None,
     )
-    if success:
-        shutil.move(str(stl_path), str(queue_stl))
-        job.stl_path = str(queue_stl)
-        job.makerbot_path = str(queue_makerbot)
-        job.duration_estimate_s = read_makerbot_duration_s(queue_makerbot)
-        if enable_supports and queue_supports.exists():
-            job.supports_path = str(queue_supports)
-        job.status = JobStatus.queued
-    else:
-        job.status = JobStatus.slice_failed
-        job.slice_error = detail[-4000:]  # cap - slicer output can be long
-
-    session.add(job)
-    session.commit()
 
     return RedirectResponse("/dashboard", status_code=303)

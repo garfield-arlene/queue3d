@@ -6,7 +6,7 @@
 {% block content %}
   <h2>Hi, {{ user.name }}</h2>
 
-  <form method="post" action="/upload" enctype="multipart/form-data">
+  <form id="upload-form" method="post" action="/upload" enctype="multipart/form-data">
     <label>Upload a model (.stl)<br><input type="file" id="stl-file" name="file" accept=".stl" required></label>
     <label><input type="checkbox" name="enable_supports"> Generate supports</label>
     <label>Support style<br>
@@ -17,6 +17,7 @@
       </select>
     </label>
     <button type="submit">Upload &amp; slice</button>
+    <progress id="upload-progress" value="0" max="100" hidden></progress>
   </form>
 
   <div id="preview-container" class="preview-container" hidden></div>
@@ -41,37 +42,36 @@
       previewFile(file, container, info);
     });
   </script>
+  <script>
+    // A plain <form method=post> already works with no JS at all (a
+    // normal post-redirect-get to /dashboard) - this only adds a progress
+    // bar for the "receiving" half of the to-do item (the other half,
+    // "slicing", is handled by _jobs_table.html's htmx polling once we're
+    // back on /dashboard). Sent manually via XHR rather than through htmx
+    // because what's needed here is genuine upload-byte progress
+    // (xhr.upload's own progress event), not an htmx-managed
+    // request/swap - and the server always ends at the same place
+    // (/dashboard, error or not - see routers/user.py's upload()), so the
+    // completion handler doesn't need to inspect the response at all,
+    // just navigate there for real.
+    const uploadForm = document.getElementById("upload-form");
+    const uploadProgress = document.getElementById("upload-progress");
+    uploadForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", uploadForm.action);
+      xhr.upload.addEventListener("progress", (e) => {
+        if (!e.lengthComputable) return;
+        uploadProgress.hidden = false;
+        uploadProgress.value = e.loaded;
+        uploadProgress.max = e.total;
+      });
+      xhr.addEventListener("loadend", () => {
+        window.location.href = "/dashboard";
+      });
+      xhr.send(new FormData(uploadForm));
+    });
+  </script>
 
-  <h3>Your submissions</h3>
-  {% if not rows %}
-    <p class="muted">Nothing submitted yet.</p>
-  {% else %}
-    <table>
-      <tr><th>File</th><th>Status</th><th>Details</th><th></th></tr>
-      {% for row in rows %}
-        {% set job = row.job %}
-        <tr>
-          <td>{{ job.original_filename }}</td>
-          <td>{{ job.status.value }}</td>
-          <td class="muted">
-            {% if job.status.value == 'queued' or job.status.value == 'approved' %}
-              position {{ row.position }} in queue
-              {% if job.duration_estimate_s %} - est. {{ (job.duration_estimate_s / 60) | round | int }} min print{% endif %}
-            {% elif job.status.value == 'printing' %}
-              printing now
-            {% elif job.status.value == 'rejected' %}
-              {{ job.admin_note or "no note given" }}
-            {% elif job.status.value == 'slice_failed' %}
-              couldn't slice this file - try re-exporting it and re-uploading
-            {% elif job.status.value == 'done' %}
-              finished
-            {% elif job.status.value == 'failed' %}
-              print failed
-            {% endif %}
-          </td>
-          <td>{% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}</td>
-        </tr>
-      {% endfor %}
-    </table>
-  {% endif %}
+  {% include "_jobs_table.html" %}
 {% endblock %}

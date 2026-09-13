@@ -3,14 +3,17 @@ business logic (what's allowed, what moves where) is testable on its own
 and routers stay thin HTTP glue.
 """
 
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlmodel import Session, select
 
+from db import engine
 from models import Admin, Job, JobStatus, TERMINAL_STATUSES
+from pipeline import run_slice
 from printer import PrinterError, send_print_job
-from storage import move_job_to_archive
+from storage import move_job_to_archive, queue_paths, read_makerbot_duration_s
 
 
 class JobActionError(Exception):
@@ -128,6 +131,62 @@ def release(session: Session, job: Job) -> Job:
     session.commit()
     session.refresh(job)
     return job
+
+
+def slice_and_update(
+    job_id: int,
+    stl_path: Path,
+    enable_supports: bool,
+    support_style: str | None,
+) -> None:
+    """Runs slicing for a just-submitted job and records the outcome -
+    called as a FastAPI `BackgroundTask` from routers/user.py's upload
+    handler, so that request can save the file and return right away
+    instead of blocking on however long slicing takes (previously the
+    whole point of the "upload progress" to-do item: the request used to
+    block silently until slicing finished entirely, with no way to show
+    the user anything was happening). Opens its own Session - the
+    request's is already closed by the time a background task runs (see
+    db.py's per-request get_session).
+
+    Any unexpected exception here (not just an ordinary slicer failure,
+    which run_slice already reports as (False, detail)) still has to leave
+    the job in a real terminal-for-this-attempt state rather than stuck at
+    'submitted' forever with no way for the user to tell it isn't still
+    working - a background task's exceptions don't propagate anywhere a
+    user would ever see them.
+    """
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            return
+
+        queue_stl, queue_makerbot, queue_supports = queue_paths(job.id)
+        try:
+            success, detail = run_slice(
+                stl_path,
+                queue_makerbot,
+                enable_supports=enable_supports,
+                support_style=support_style,
+                supports_json_path=queue_supports if enable_supports else None,
+            )
+        except Exception as e:
+            success, detail = False, f"Unexpected error while slicing: {e}"
+
+        if success:
+            shutil.move(str(stl_path), str(queue_stl))
+            job.stl_path = str(queue_stl)
+            job.makerbot_path = str(queue_makerbot)
+            job.duration_estimate_s = read_makerbot_duration_s(queue_makerbot)
+            if enable_supports and queue_supports.exists():
+                job.supports_path = str(queue_supports)
+            job.status = JobStatus.queued
+        else:
+            job.status = JobStatus.slice_failed
+            job.slice_error = detail[-4000:]  # cap - slicer output can be long
+
+        session.add(job)
+        session.commit()
 
 
 def mark_finished(session: Session, job: Job, success: bool) -> Job:
