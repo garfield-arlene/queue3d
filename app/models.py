@@ -142,6 +142,31 @@ class Settings(SQLModel, table=True):
     draft_expiry_days: int = Field(default=7)
 
 
+class JobEvent(SQLModel, table=True):
+    """One row per job-affecting action - the audit log. `Job` itself only
+    ever holds the *current* snapshot (`reviewed_at`/`reviewed_by_admin_id`/
+    `admin_note` capture just the latest review, nothing earlier), which
+    was the actual gap that prompted this: a rejection was recorded
+    correctly but there was nowhere to go *see* that it had been, so it
+    read as if nothing had happened. This is the full history instead -
+    every submit, slice attempt, re-slice, queue-submit, approve, reject,
+    release, done/failed, and expiry, in order, for a given job.
+
+    `actor` is a plain label (`"user:<name>"`, `"admin:<username>"`, or
+    `"system"` for an automated action like draft expiry) rather than a
+    real foreign key to either `User` or `Admin` - those are two separate
+    tables, and a job's actor could be either one or nothing at all;
+    a label is simpler than a polymorphic FK for something only ever
+    displayed, never joined against."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    job_id: int = Field(foreign_key="job.id", index=True)
+    at: datetime = Field(default_factory=utcnow)
+    actor: str
+    action: str  # short verb: "submitted", "sliced", "slice_failed", "reslice_started", "queued", "approved", "rejected", "released", "done", "failed", "expired"
+    detail: str = ""  # e.g. the rejection note, or a truncated slice error
+
+
 class Job(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True)

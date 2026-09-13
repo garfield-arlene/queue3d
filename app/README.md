@@ -385,6 +385,58 @@ Not yet built: live print progress/status polling (the printer's own
 would need to be consumed) and detecting completion automatically -
 `mark_done`/`mark_failed` are still a manual admin action for now.
 
+### Browsing finished jobs, and the audit log
+
+**Why this exists:** a real report, not a planned feature landing on
+schedule. A rejection had actually recorded correctly (confirmed directly
+in the database - `status='rejected'`, the note, timestamps, all there)
+but there was nowhere in the UI to go see that, since `active_jobs()`
+(deliberately, for the queue view) only ever shows `QUEUE_STATUSES` -
+so the row just vanished, and from the admin's side that read as "nothing
+happened" rather than "it worked, and here's where it went."
+
+Two separate views, kept separate on purpose (they answer different
+questions):
+
+- **`/admin/jobs/finished`** (`jobs.finished_jobs`, most-recently-finished
+  first) - browsing past jobs: everything in `TERMINAL_STATUSES`
+  (rejected/done/failed/expired), with the rejection note if there is one
+  and a working "View 3D" link, since a job's files and preview are
+  completely unaffected by its status leaving the active queue list (only
+  confirmed by testing directly - it's easy to mistake "the row is gone"
+  for "the data is gone," which it isn't).
+- **`/admin/jobs/{id}/log`** (`jobs.job_events`, oldest first) - one job's
+  complete history, not a cross-job list: every submit, slice attempt,
+  re-slice, queue-submit, approve, reject (with the note), release, and
+  outcome, each with who did it and when. `Job` itself only ever holds
+  the *latest* review snapshot (`reviewed_at`/`reviewed_by_admin_id`/
+  `admin_note`) - this is the full sequence that snapshot alone can't
+  show, backed by its own table (`models.JobEvent`) rather than trying to
+  cram a whole history into more columns on `Job`. Linked from both the
+  active queue (`admin_dashboard.html`) and the finished-jobs list, so a
+  job's log is reachable regardless of where it currently sits.
+
+`jobs.log_event()` is the one place every entry gets written, called
+right alongside the `session.add(job)`/`commit()` for whatever change
+it's recording (never as an afterthought in a different transaction),
+from every function in `jobs.py` that changes a job's status, plus
+`routers/user.py`'s `upload()` (the initial `submitted`) and
+`cleanup_drafts.py` (`expired`, actor `"system"` - the one case with no
+person behind the action). `actor` is a plain label
+(`"user:<name>"`/`"admin:<username>"`/`"system"`) rather than a real
+foreign key to either `User` or `Admin` - simpler than a polymorphic FK
+for something only ever displayed, never joined against.
+
+Verified live, every action type, not just the one that prompted this:
+submit, slice success, slice failure, re-slice (both outcomes), queue
+submission, approve, reject, and both `mark_finished` outcomes each
+produce the right log entry with the right actor - confirmed by reading
+the entries back out of a real running instance's database directly, not
+assumed from the code alone. Also confirmed: a rejected job now
+correctly disappears from the active queue *and* shows up in the
+finished-jobs list as `rejected` with its note, closing the actual gap
+that was reported.
+
 ## 3D preview
 
 Two different views, both in `static/preview.js` (Three.js, vendored
@@ -520,13 +572,17 @@ original STL's own dimensions) directly.
   gcode preserved for `supports.py`.
 - `supports.py` - parses that gcode into the simplified support-material
   line segments shown in the 3D preview (see "3D preview" above).
-- `jobs.py` - queries (`jobs_for_user`, `active_jobs`, `queue_position`) and
-  the actual state-transition logic (`approve`/`reject`/`release`/
-  `mark_finished`/`submit_draft`/`start_reslice`), kept out of the routers
-  so it's independently testable. Also `slice_and_update`, run as a
-  background task by `routers/user.py`'s `upload()` and `reslice()` so
-  neither request blocks on slicing - see "Upload and slicing progress"
-  above.
+- `jobs.py` - queries (`jobs_for_user`, `active_jobs`, `finished_jobs`,
+  `queue_position`, `job_events`) and the actual state-transition logic
+  (`approve`/`reject`/`release`/`mark_finished`/`submit_draft`/
+  `start_reslice`), kept out of the routers so it's independently
+  testable. Also `slice_and_update`, run as a background task by
+  `routers/user.py`'s `upload()` and `reslice()` so neither request
+  blocks on slicing - see "Upload and slicing progress" above - and
+  `log_event`, the one function that writes to the audit log
+  (`models.JobEvent`), called by every state-transition function here plus
+  `routers/user.py`'s `upload()` and `cleanup_drafts.py` - see "Browsing
+  finished jobs, and the audit log" above.
 - `cleanup_drafts.py` - expires abandoned drafts past the admin-configured
   age threshold; see "Drafts and expiry" above. Same run-from-cron
   pattern as `backup.py` below.
@@ -544,8 +600,9 @@ original STL's own dimensions) directly.
   that URL prefix.
 - `routers/admin.py` - login/logout/dashboard (the queue view), the
   approve/reject/release/mark_done/mark_failed actions, user account
-  management (`/admin/users`), and settings (`/admin/settings` -
-  currently just `Settings.draft_expiry_days`).
+  management (`/admin/users`), settings (`/admin/settings` - currently
+  just `Settings.draft_expiry_days`), and the finished-jobs/job-log views
+  (`/admin/jobs/finished`, `/admin/jobs/{id}/log`).
 - `routers/jobs.py` - serves a job's model/supports and the 3D preview
   page, usable by either the job's owner or any admin (not role-specific
   like the two routers above).

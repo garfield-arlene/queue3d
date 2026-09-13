@@ -9,7 +9,7 @@ from auth import (
     verify_secret,
 )
 from db import get_session
-from jobs import JobActionError, jobs_for_user, queue_position, slice_and_update, start_reslice, submit_draft
+from jobs import JobActionError, jobs_for_user, log_event, queue_position, slice_and_update, start_reslice, submit_draft
 from models import DRAFT_STATUSES, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, scratch_stl_path
 from templates_env import templates
@@ -191,6 +191,7 @@ def upload(
     stl_path.write_bytes(data)
     job.stl_path = str(stl_path)
     session.add(job)
+    log_event(session, job.id, f"user:{user.name}", "submitted", detail=filename)
     session.commit()
 
     # Slicing (OrcaSlicer + mbotmake, both real subprocesses) can take

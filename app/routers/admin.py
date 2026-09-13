@@ -11,7 +11,17 @@ from sqlmodel import Session, select
 from auth import admin_by_username, require_admin, verify_secret
 from backup import get_last_successful_backup, is_stale
 from db import get_session
-from jobs import JobActionError, active_jobs, approve, mark_finished, reject, release, user_has_active_jobs
+from jobs import (
+    JobActionError,
+    active_jobs,
+    approve,
+    finished_jobs,
+    job_events,
+    mark_finished,
+    reject,
+    release,
+    user_has_active_jobs,
+)
 from models import Admin, Job, Settings, User
 from templates_env import templates
 
@@ -124,7 +134,7 @@ def release_job(
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return _perform_action(request, session, admin, job_id, release)
+    return _perform_action(request, session, admin, job_id, release, admin)
 
 
 @router.post("/jobs/{job_id}/mark_done")
@@ -134,7 +144,7 @@ def mark_done_job(
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return _perform_action(request, session, admin, job_id, mark_finished, True)
+    return _perform_action(request, session, admin, job_id, mark_finished, admin, True)
 
 
 @router.post("/jobs/{job_id}/mark_failed")
@@ -144,7 +154,7 @@ def mark_failed_job(
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return _perform_action(request, session, admin, job_id, mark_finished, False)
+    return _perform_action(request, session, admin, job_id, mark_finished, admin, False)
 
 
 # ---- user account management ----
@@ -290,4 +300,51 @@ def update_settings(
         request,
         "admin_settings.html",
         {"admin": admin, "settings": get_settings(session), "error": error, "saved": error is None},
+    )
+
+
+# ---- finished jobs + audit log ----
+# Two distinct views (see README.md's To do list, "Audit log" and
+# "Job review & feedback" sections, for why they're kept separate rather
+# than combined into one): browsing past jobs (this app's data/archive/
+# contents, in effect) vs. one job's own full history of what happened to
+# it and when. Built together after a real report - a rejection had
+# actually recorded correctly (confirmed directly in the database) but an
+# admin had no page anywhere to go see that, so it read as if nothing had
+# happened at all.
+
+
+@router.get("/jobs/finished")
+def finished_jobs_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    rows = []
+    for job in finished_jobs(session):
+        user = session.get(User, job.user_id)
+        rows.append({"job": job, "user_name": user.name if user else "?"})
+    return templates.TemplateResponse(
+        request, "admin_finished_jobs.html", {"admin": admin, "rows": rows}
+    )
+
+
+@router.get("/jobs/{job_id}/log")
+def job_log_page(
+    request: Request,
+    job_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    job = _get_job_or_404(session, job_id)
+    user = session.get(User, job.user_id)
+    return templates.TemplateResponse(
+        request,
+        "admin_job_log.html",
+        {
+            "admin": admin,
+            "job": job,
+            "user_name": user.name if user else "?",
+            "events": job_events(session, job_id),
+        },
     )

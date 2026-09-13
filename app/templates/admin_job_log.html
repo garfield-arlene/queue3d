@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Job log - queue3d{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <a href="/admin/users">Users</a>
+  <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/settings">Settings</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>{{ job.original_filename }}</h2>
+  <p class="muted">
+    Submitted by {{ user_name }} - currently <strong>{{ job.status.value }}</strong>.
+    {% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}
+  </p>
+
+  <h3>History</h3>
+  {% if not events %}
+    <p class="muted">No recorded events yet.</p>
+  {% else %}
+    <table>
+      <tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>
+      {% for event in events %}
+        <tr>
+          <td class="muted">{{ event.at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+          <td>{{ event.actor }}</td>
+          <td>{{ event.action }}</td>
+          <td class="muted">
+            {% if event.detail and event.detail|length > 200 %}
+              <details class="tech-detail">
+                <summary>{{ event.detail[:80] }}&hellip;</summary>
+                <pre>{{ event.detail }}</pre>
+              </details>
+            {% else %}
+              {{ event.detail }}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+
+  <p><a href="javascript:history.back()">&laquo; Back</a></p>
+{% endblock %}

@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from sqlmodel import Session, select
 
 from db import engine, init_db
+from jobs import log_event
 from models import DRAFT_STATUSES, Job, JobStatus, Settings
 from storage import move_draft_to_archive
 
@@ -61,6 +62,7 @@ def run_cleanup() -> list[dict]:
             job.status = JobStatus.expired
             job.finished_at = datetime.now(timezone.utc)
             session.add(job)
+            log_event(session, job.id, "system", "expired")
         session.commit()
         return info
 

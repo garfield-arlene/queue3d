@@ -72,6 +72,14 @@ Managing user accounts:
   separate pre-review step before something counts as queued.
 - **Admin review** - approve, or reject with a required note explaining
   why, before anything reaches the printer.
+- **Browse finished jobs and a full audit log** - a rejected/done/failed/
+  expired job leaves the live queue view but stays reachable
+  (`/admin/jobs/finished`), and every admin can see the complete history
+  of what happened to any job and when - every submit, slice attempt,
+  re-slice, queue-submit, approve, reject (with the note), release, and
+  outcome, timestamped and attributed to whoever did it
+  (`/admin/jobs/{id}/log`, linked from both the active queue and the
+  finished-jobs list).
 - **Release to the printer over the network** - an approved job is sent
   and started directly; no walking a file over on a flash drive.
 - **One job on the printer at a time**, enforced - releasing a second job
@@ -112,7 +120,8 @@ Managing user accounts:
   currently total minutes only.
 - Show the date/time a job was submitted, and how long it's been sitting
   in the queue since (days/hours/minutes) - the timestamp is already
-  recorded (`Job.submitted_at`), it's just not displayed anywhere yet.
+  recorded (`Job.created_at`/`queued_at`), it's just not displayed
+  anywhere yet.
 - Let admins configure an age threshold (e.g. 30 days) and split
   still-waiting jobs into two separate views by it: the normal queue view
   for anything younger than the threshold, and a separate "old jobs" view
@@ -123,16 +132,6 @@ Managing user accounts:
   being acted on, so arguably shouldn't count as stale backlog). Jobs in
   this "old jobs" view should have an admin delete option - see "Audit
   log" below, since that delete has to be logged like any other change.
-- Give admins a way to browse finished jobs (`rejected`/`done`/`failed`) -
-  confirmed by testing that there currently isn't one: the admin queue
-  view only ever lists active jobs, so the moment a job leaves that list
-  its "View 3D" link disappears along with the row, even though the page
-  and its data are completely unaffected (a rejected job's model and
-  supports still load fine at its direct URL - this was mistaken for a
-  support-rendering bug before realizing the row itself was just gone, not
-  the feature). Distinct from "old jobs" above (which is about stale
-  *active* jobs) and from the audit log (which is about the event history,
-  not browsing a specific past job's files/preview).
 - Let a user restore an archived model (`slice_failed`, `rejected`,
   `failed`, or `done` - any job whose files ended up in `archive/`) back
   into their working space to modify and resubmit, rather than only being
@@ -166,19 +165,12 @@ Managing user accounts:
   log" below.
 
 **Audit log**
-- A "job log" view for admins: what status a job is currently in, and a
-  full history of when each change happened, by whom, and what the change
-  actually was - not just the current single snapshot (`Job.reviewed_at`/
-  `reviewed_by_admin_id`/`admin_note` today only capture the *latest*
-  review action, nothing earlier). Every job-affecting action gets an
-  entry with a date/time stamp, who did it (a user or an admin), and what
-  it was: submitted, approved, rejected (with the note), released,
-  done/failed, and both delete paths above (the user's own, and an admin
-  deleting an old job) - deletion specifically must say who deleted it.
-  This is genuinely for every change, by either a user or an admin, not
-  just admin actions. Likely needs its own log/event table rather than
-  cramming a full history into single fields on `Job` the way today's
-  reviewed_at/admin_note pair does.
+- The core job log is built (`models.JobEvent`, `/admin/jobs/{id}/log`) -
+  see Features below. Still open: once the two delete features above
+  (a user deleting their own queued model, an admin deleting an old one)
+  actually exist, each needs its own log entry too, and an admin
+  deletion specifically must say who did it - the log doesn't have
+  anything to log yet for actions that don't exist.
 
 **Backups & recovery**
 - Let admins see a list of backups taken and a manifest of what's actually

@@ -10,7 +10,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from db import engine
-from models import Admin, DRAFT_STATUSES, Job, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES
+from models import Admin, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES, User
 from pipeline import run_slice
 from printer import PrinterError, send_print_job
 from storage import move_job_to_archive, queue_paths, read_makerbot_duration_s, scratch_paths
@@ -21,6 +21,26 @@ class JobActionError(Exception):
     state - e.g. releasing a job that isn't approved, or releasing a second
     job while one is already printing (only one job can be on the printer
     at a time)."""
+
+
+def log_event(session: Session, job_id: int, actor: str, action: str, detail: str = "") -> None:
+    """Appends one row to the audit log (models.JobEvent) - see that
+    model's docstring for why this exists. Called from every function
+    below that changes a job's status (and from upload()/cleanup_drafts.py
+    for the two that don't live in this module), right alongside the
+    session.add(job)/commit() for that same change, so the log and the
+    job's own current state can never end up telling two different
+    stories about the same action."""
+    session.add(JobEvent(job_id=job_id, actor=actor, action=action, detail=detail))
+
+
+def _user_actor(session: Session, user_id: int) -> str:
+    user = session.get(User, user_id)
+    return f"user:{user.name}" if user else f"user:#{user_id}"
+
+
+def _admin_actor(admin: Admin) -> str:
+    return f"admin:{admin.username}"
 
 
 def jobs_for_user(session: Session, user_id: int) -> list[Job]:
@@ -40,6 +60,26 @@ def active_jobs(session: Session) -> list[Job]:
         select(Job)
         .where(Job.status.in_(list(QUEUE_STATUSES)))
         .order_by(Job.queued_at.asc())
+    ).all()
+
+
+def finished_jobs(session: Session) -> list[Job]:
+    """Everything done with (models.TERMINAL_STATUSES - rejected/done/
+    failed/expired), most-recently-finished first - the admin "browse
+    finished jobs" view. Distinct from active_jobs() (the live queue) and
+    from job_events() below (one job's full history, not a cross-job
+    list)."""
+    return session.exec(
+        select(Job)
+        .where(Job.status.in_(list(TERMINAL_STATUSES)))
+        .order_by(Job.finished_at.desc())
+    ).all()
+
+
+def job_events(session: Session, job_id: int) -> list[JobEvent]:
+    """A job's full audit trail, oldest first - see models.JobEvent."""
+    return session.exec(
+        select(JobEvent).where(JobEvent.job_id == job_id).order_by(JobEvent.at.asc())
     ).all()
 
 
@@ -93,6 +133,7 @@ def approve(session: Session, job: Job, admin: Admin) -> Job:
     job.reviewed_by_admin_id = admin.id
     job.admin_note = None
     session.add(job)
+    log_event(session, job.id, _admin_actor(admin), "approved")
     session.commit()
     session.refresh(job)
     return job
@@ -109,12 +150,13 @@ def reject(session: Session, job: Job, admin: Admin, note: str) -> Job:
     job.finished_at = datetime.now(timezone.utc)
     move_job_to_archive(job)
     session.add(job)
+    log_event(session, job.id, _admin_actor(admin), "rejected", detail=job.admin_note)
     session.commit()
     session.refresh(job)
     return job
 
 
-def release(session: Session, job: Job) -> Job:
+def release(session: Session, job: Job, admin: Admin) -> Job:
     """Sends an approved job to the printer and marks it printing. Actually
     talks to the hardware (see printer.py) - only flips the status once
     the upload genuinely succeeds, so a failed send leaves the job
@@ -138,6 +180,7 @@ def release(session: Session, job: Job) -> Job:
     job.status = JobStatus.printing
     job.released_at = datetime.now(timezone.utc)
     session.add(job)
+    log_event(session, job.id, _admin_actor(admin), "released")
     session.commit()
     session.refresh(job)
     return job
@@ -188,6 +231,7 @@ def slice_and_update(
         except Exception as e:
             success, detail = False, f"Unexpected error while slicing: {e}"
 
+        actor = _user_actor(session, job.user_id)
         if success:
             job.makerbot_path = str(scratch_makerbot)
             job.duration_estimate_s = read_makerbot_duration_s(scratch_makerbot)
@@ -197,9 +241,11 @@ def slice_and_update(
                 job.supports_path = None  # clear a stale one from a previous re-slice attempt
             job.slice_error = None  # clear a stale one from a previous failed attempt
             job.status = JobStatus.sliced
+            log_event(session, job.id, actor, "sliced")
         else:
             job.status = JobStatus.slice_failed
             job.slice_error = detail[-4000:]  # cap - slicer output can be long
+            log_event(session, job.id, actor, "slice_failed", detail=job.slice_error[-1000:])
 
         session.add(job)
         session.commit()
@@ -219,6 +265,8 @@ def start_reslice(
     job.status = JobStatus.submitted
     job.slice_error = None
     session.add(job)
+    style_detail = f"supports={enable_supports}" + (f" style={support_style}" if support_style else "")
+    log_event(session, job.id, _user_actor(session, job.user_id), "reslice_started", detail=style_detail)
     session.commit()
     return Path(job.stl_path)
 
@@ -244,12 +292,13 @@ def submit_draft(session: Session, job: Job) -> Job:
     job.status = JobStatus.queued
     job.queued_at = datetime.now(timezone.utc)
     session.add(job)
+    log_event(session, job.id, _user_actor(session, job.user_id), "queued")
     session.commit()
     session.refresh(job)
     return job
 
 
-def mark_finished(session: Session, job: Job, success: bool) -> Job:
+def mark_finished(session: Session, job: Job, admin: Admin, success: bool) -> Job:
     """Manual admin override to record a print's outcome, until live
     printer status reporting exists (see release() above)."""
     _require_status(job, JobStatus.printing)
@@ -257,6 +306,7 @@ def mark_finished(session: Session, job: Job, success: bool) -> Job:
     job.finished_at = datetime.now(timezone.utc)
     move_job_to_archive(job)
     session.add(job)
+    log_event(session, job.id, _admin_actor(admin), job.status.value)
     session.commit()
     session.refresh(job)
     return job
