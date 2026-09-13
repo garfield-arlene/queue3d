@@ -60,6 +60,53 @@ the session key and printer token both persist across restarts so logins
 and printer access survive a server restart without repeating either
 one-time step.
 
+## Database migrations
+
+No framework (Alembic, etc.) - deliberately, for something this small - so
+`db.py`'s `init_db()` (called on every startup, `main.py`'s
+`on_event("startup")`) does its own minimal version check instead:
+
+1. Read the current version from the `schemaversion` table (a single row -
+   `models.SchemaVersion`). No row/table yet, but `job` already exists ->
+   an old database that predates this mechanism, treated as version 0.
+   No `job` table either -> genuinely fresh, nothing to migrate.
+2. Run whatever's left in `db.MIGRATIONS` (a plain `{from_version: fn}`
+   dict, applied in order) to catch it up to `CURRENT_SCHEMA_VERSION`.
+3. `SQLModel.metadata.create_all()` - creates any table that's still
+   missing (including `schemaversion` itself, and any brand new table a
+   migration didn't need to touch, like `Settings` was when it first
+   showed up).
+4. Record the now-current version, whichever path got here.
+
+**Why this exists - a real incident, not foresight:** `create_all()` only
+ever creates tables that don't exist yet; it never alters an existing one.
+The slice/submit-split change (see "Drafts and expiry" below) renamed
+`Job.submitted_at` to `created_at` and added `queued_at` - on a database
+from before that change, neither existed under their new names, and every
+query referencing either crashed the app immediately after login, on a
+real running dev deployment nobody had touched by hand. `db.MIGRATIONS[0]`
+is that specific fix (rename the column, add the new one, backfill
+`queued_at` for already-queued jobs from their old `created_at`, since
+under the old model a successful slice meant immediately queued - there
+was no separate submit step yet to record a truer timestamp for).
+
+Checked on every startup rather than a one-time manual step, per the
+user - upgrading this app is "pull and restart," not "pull, restart, and
+remember which script to run and whether you already ran it." Verified by
+testing all three cases directly, not just the one that was broken: a
+fresh database (creates the current schema outright, migrations are a
+no-op), the actual pre-fix database recovered from the real incident
+(migrates and backfills correctly), and re-running `init_db()` against an
+already-migrated database (no-ops cleanly, safe to call on every startup
+indefinitely).
+
+**Adding a future migration:** write a new `_migrate_N_to_N+1(conn)`
+function next to `_migrate_0_to_1`, add it to `MIGRATIONS` keyed by the
+version it upgrades *from* (`CURRENT_SCHEMA_VERSION` derives from
+`len(MIGRATIONS)`, so it bumps itself), and test it the same three ways -
+fresh, an old real database, and re-running against an already-migrated
+one.
+
 ## Deployment: zero internet access, by design
 
 This runs on an isolated "island" LAN (Pi + printer wired to a router,
@@ -410,8 +457,9 @@ original STL's own dimensions) directly.
   `templates/base.html`, which is what actually prints the footer.
 - `models.py` - `User`, `Admin`, `Job` (with `JobStatus`), `BackupRecord`
   tables (SQLModel).
-- `db.py` - SQLite engine/session. One file, no separate DB server - this
-  runs on one Pi next to one printer.
+- `db.py` - SQLite engine/session (one file, no separate DB server - this
+  runs on one Pi next to one printer), plus `init_db()`'s own small
+  migration mechanism - see "Database migrations" above.
 - `storage.py` - the scratch/queue/archive directory layout and file-moving
   helpers (including moving a draft's files, not just a queued job's -
   see "Drafts and expiry" above), plus reading a `.makerbot`'s slice-time

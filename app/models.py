@@ -36,6 +36,23 @@ class Admin(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class SchemaVersion(SQLModel, table=True):
+    """A single-row marker of which hand-written migration (db.py's
+    `MIGRATIONS`) this database has had applied - not an ORM-schema
+    version in the Alembic sense (this project has no migration
+    framework, deliberately, for something this small - see db.py). Exists
+    because `SQLModel.metadata.create_all()` only ever creates tables that
+    don't exist yet; it never alters an existing one, so a running
+    deployment's database can silently fall behind the code's model
+    definitions after a `git pull` - confirmed the hard way (see db.py's
+    migration list for what broke). Checked on every startup so that
+    upgrading is "restart the app," not "remember to run a script and hope
+    you remember which one.\""""
+
+    id: int = Field(default=1, primary_key=True)
+    version: int
+
+
 class BackupRecord(SQLModel, table=True):
     """One row per backup attempt (success or failure), written by
     backup.py. The admin dashboard shows the most recent successful one so
