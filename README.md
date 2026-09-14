@@ -92,13 +92,14 @@ Managing user accounts:
 - **App version number** shown as a footer on every page, read from
   `app/VERSION` at startup - bump that file to change what's shown, no code
   change needed.
+- **Automated security checks** on every push and pull request
+  (`.github/workflows/security.yml`) - dependency vulnerability scanning
+  (`pip-audit`), static analysis for risky code patterns (`bandit`), and
+  secret scanning (`gitleaks`, alongside GitHub's own native scanning on
+  this public repo). Dependabot also opens a PR on its own when a
+  dependency has a newer version, rather than waiting to be asked.
 
 ## To do
-
-**Security & CI**
-- A pipeline to run security checks automatically (e.g. dependency
-  vulnerability scanning, static analysis, secret scanning) rather than
-  relying on manual review.
 
 **Upload**
 - Accept file types beyond `.stl` - `.3mf`, `.obj`, and `.zip` (presumably
