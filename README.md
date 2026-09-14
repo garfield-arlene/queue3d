@@ -74,12 +74,12 @@ Managing user accounts:
   why, before anything reaches the printer.
 - **Browse finished jobs and a full audit log** - a rejected/done/failed/
   expired job leaves the live queue view but stays reachable
-  (`/admin/jobs/finished`), and every admin can see the complete history
-  of what happened to any job and when - every submit, slice attempt,
-  re-slice, queue-submit, approve, reject (with the note), release, and
-  outcome, timestamped and attributed to whoever did it
-  (`/admin/jobs/{id}/log`, linked from both the active queue and the
-  finished-jobs list).
+  (`/admin/jobs/finished`). A global activity log (`/admin/log`) shows
+  every submit, slice attempt, re-slice, queue-submit, approve, reject
+  (with the note), release, and outcome, across every job, most recent
+  first, at a glance - plus each job's own history on its own page
+  (`/admin/jobs/{id}/log`, linked from the queue, the finished-jobs list,
+  and the global log).
 - **Release to the printer over the network** - an approved job is sent
   and started directly; no walking a file over on a flash drive.
 - **One job on the printer at a time**, enforced - releasing a second job
@@ -165,12 +165,18 @@ Managing user accounts:
   log" below.
 
 **Audit log**
-- The core job log is built (`models.JobEvent`, `/admin/jobs/{id}/log`) -
-  see Features below. Still open: once the two delete features above
-  (a user deleting their own queued model, an admin deleting an old one)
-  actually exist, each needs its own log entry too, and an admin
-  deletion specifically must say who did it - the log doesn't have
-  anything to log yet for actions that don't exist.
+- The core log is built (`models.JobEvent`; `/admin/log` - one global,
+  most-recent-first table across every job, which is the actual "admin
+  log view"; `/admin/jobs/{id}/log` for one job's own history) - see
+  Features below.
+- Filters for the global log (`/admin/log`) - by job, user/admin, action
+  type, date range. Explicitly deferred by the user rather than built
+  alongside the log itself; currently just capped at the 500 most recent
+  entries with no way to narrow that down.
+- Once the two delete features above (a user deleting their own queued
+  model, an admin deleting an old one) actually exist, each needs its own
+  log entry too, and an admin deletion specifically must say who did it -
+  the log doesn't have anything to log yet for actions that don't exist.
 
 **Backups & recovery**
 - Let admins see a list of backups taken and a manifest of what's actually
@@ -189,7 +195,8 @@ Managing user accounts:
 
 **Appearance**
 - Light/dark theme, with a toggle.
-- Selectable wallpaper/background themes.
+- Selectable themes - not just wallpaper/background/color, but ones that
+  change the page layout itself, not only its palette.
 
 **Printer**
 - Live print progress/status while a job is printing - `mark_done`/

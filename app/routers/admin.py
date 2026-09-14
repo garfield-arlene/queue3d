@@ -14,6 +14,7 @@ from db import get_session
 from jobs import (
     JobActionError,
     active_jobs,
+    all_events,
     approve,
     finished_jobs,
     job_events,
@@ -347,4 +348,29 @@ def job_log_page(
             "user_name": user.name if user else "?",
             "events": job_events(session, job_id),
         },
+    )
+
+
+# Global activity log - every event across every job, one table, most
+# recent first, so an admin can see what's been happening at a glance
+# without opening one job at a time. Per the user: this is the actual
+# "admin log view," distinct from (and more central than) the per-job
+# log above, which stays as a way to focus on one job's own history.
+ACTIVITY_LOG_LIMIT = 500
+
+
+@router.get("/log")
+def activity_log_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    rows = [
+        {"event": event, "filename": filename}
+        for event, filename in all_events(session, limit=ACTIVITY_LOG_LIMIT)
+    ]
+    return templates.TemplateResponse(
+        request,
+        "admin_log.html",
+        {"admin": admin, "rows": rows, "limit": ACTIVITY_LOG_LIMIT},
     )

@@ -1,29 +1,30 @@
 {% extends "base.html" %}
-{% block title %}Job log - queue3d{% endblock %}
+{% block title %}Activity log - queue3d{% endblock %}
 {% block nav %}
   <a href="/admin/dashboard">&laquo; Queue</a>
   <a href="/admin/users">Users</a>
   <a href="/admin/jobs/finished">Finished jobs</a>
-  <a href="/admin/log">Activity log</a>
   <a href="/admin/settings">Settings</a>
   <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
 {% endblock %}
 {% block content %}
-  <h2>{{ job.original_filename }}</h2>
+  <h2>Activity log</h2>
   <p class="muted">
-    Submitted by {{ user_name }} - currently <strong>{{ job.status.value }}</strong>.
-    {% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}
+    Every submit, slice, re-slice, queue-submit, approve, reject, release,
+    and outcome, across every job, most recent first.
+    {% if rows|length >= limit %}Showing the most recent {{ limit }} - filters for narrowing this down are on the to-do list.{% endif %}
   </p>
 
-  <h3>History</h3>
-  {% if not events %}
-    <p class="muted">No recorded events yet.</p>
+  {% if not rows %}
+    <p class="muted">No activity recorded yet.</p>
   {% else %}
     <table>
-      <tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>
-      {% for event in events %}
+      <tr><th>When</th><th>File</th><th>Actor</th><th>Action</th><th>Detail</th></tr>
+      {% for row in rows %}
+        {% set event = row.event %}
         <tr>
           <td class="muted">{{ event.at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+          <td><a href="/admin/jobs/{{ event.job_id }}/log">{{ row.filename }}</a></td>
           <td>{{ event.actor }}</td>
           <td>{{ event.action }}</td>
           <td class="muted">
@@ -40,6 +41,4 @@
       {% endfor %}
     </table>
   {% endif %}
-
-  <p><a href="javascript:history.back()">&laquo; Back</a></p>
 {% endblock %}

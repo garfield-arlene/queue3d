@@ -83,6 +83,29 @@ def job_events(session: Session, job_id: int) -> list[JobEvent]:
     ).all()
 
 
+def all_events(session: Session, limit: int = 500) -> list[tuple[JobEvent, str]]:
+    """Every event across every job, most-recent first - the global admin
+    activity log ("what's been happening, at a glance"), per the user:
+    a single table of everything, not just reachable one job at a time.
+    Distinct from job_events() above, which that per-job log still uses.
+
+    Returns (event, original_filename) pairs from one joined query rather
+    than N+1 separate lookups - `actor` is already a plain human-readable
+    label stored directly on JobEvent (see that model's docstring), so the
+    filename is the only other thing the log table needs to show.
+
+    Capped at `limit` for now, not paginated - full filtering is a
+    separate, later to-do (per the user: "I will ask for log filters
+    later"), so this is deliberately just "show recent activity," not a
+    complete unbounded history browser yet."""
+    return session.exec(
+        select(JobEvent, Job.original_filename)
+        .join(Job, JobEvent.job_id == Job.id)
+        .order_by(JobEvent.at.desc())
+        .limit(limit)
+    ).all()
+
+
 def user_has_active_jobs(session: Session, user_id: int) -> bool:
     """Used to guard deleting a user - see routers/admin.py's user
     management actions. Deleting someone with a job still in flight would
