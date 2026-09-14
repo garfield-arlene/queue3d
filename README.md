@@ -217,6 +217,16 @@ Managing user accounts:
   without error but didn't stick to the bed (first-layer/Z-offset/brim
   settings need dialing in for the actual printer).
 - Support for printer models/brands beyond the MakerBot Replicator+.
+- An admin UI for managing printers - add/remove a printer and pair it,
+  all from within the app, rather than today's CLI-only, server-access-
+  required flow (`pair_printer.py`, one `data/printer_auth.json`/
+  `QUEUE3D_PRINTER_HOST` implicitly assuming a single printer). Real
+  prerequisite, not just a UI wrapper around what exists: the data model
+  and `jobs.release()`'s one-job-at-a-time rule are currently written
+  for exactly one printer - this needs an actual multi-printer design
+  (which printer a job goes to, per-printer queues or one shared queue
+  with printer selection, per-printer pairing state) before it's just a
+  form.
 
 **Accounts**
 - Rate-limiting or lockout on login attempts - PINs are short by design
