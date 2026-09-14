@@ -197,6 +197,8 @@ Managing user accounts:
 - Light/dark theme, with a toggle.
 - Selectable themes - not just wallpaper/background/color, but ones that
   change the page layout itself, not only its palette.
+- A logo for the app, shown on every page next to the "queue3d" title in
+  the header (`templates/base.html`).
 
 **Printer**
 - Live print progress/status while a job is printing - `mark_done`/
