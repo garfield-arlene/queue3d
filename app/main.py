@@ -5,7 +5,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from auth import AuthRedirect, get_session_secret_key
 from db import init_db
-from routers import admin, user
+from routers import admin, jobs, user
 
 # docs_url/redoc_url disabled: FastAPI's built-in interactive docs load
 # their JS/CSS from cdn.jsdelivr.net by default, which is a dead link on a
@@ -33,3 +33,4 @@ def root():
 
 app.include_router(user.router)
 app.include_router(admin.router)
+app.include_router(jobs.router)

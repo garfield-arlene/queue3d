@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Finished jobs - queue3d{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <a href="/admin/users">Users</a>
+  <a href="/admin/log">Activity log</a>
+  <a href="/admin/settings">Settings</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Finished jobs</h2>
+  <p class="muted">
+    Rejected, done, failed, and expired (never-submitted-draft) jobs - the
+    live queue only ever shows what's still active. A job's own files and
+    3D preview stay reachable here after it leaves that list.
+  </p>
+
+  {% if not rows %}
+    <p class="muted">Nothing finished yet.</p>
+  {% else %}
+    <table>
+      <tr><th>User</th><th>File</th><th></th><th>Status</th><th>Finished</th><th>Note</th><th></th></tr>
+      {% for row in rows %}
+        {% set job = row.job %}
+        <tr>
+          <td>{{ row.user_name }}</td>
+          <td>{{ job.original_filename }}</td>
+          <td>{% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}</td>
+          <td>{{ job.status.value }}</td>
+          <td class="muted">{% if job.finished_at %}{{ job.finished_at.strftime('%Y-%m-%d %H:%M UTC') }}{% endif %}</td>
+          <td class="muted">{{ job.admin_note or "" }}</td>
+          <td><a href="/admin/jobs/{{ job.id }}/log">Log</a></td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+{% endblock %}

@@ -1,3 +1,14 @@
 __pycache__/
 *.pyc
 .venv/
+
+# OrcaSlicer drops these in the working directory when run outside its own
+# --outputdir (an ad-hoc/manual invocation, not the pipeline's own temp
+# dir) - incidental debug output, never something to commit.
+00000.log
+result.json
+
+# Debugging materials (real user-provided model, screenshots) - useful
+# locally while chasing a specific bug, not project fixtures.
+slicing/models/*.png
+slicing/models/USN ddg.stl

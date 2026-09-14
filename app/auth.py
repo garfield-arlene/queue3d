@@ -57,7 +57,14 @@ def get_current_user(
     user_id = request.session.get("user_id")
     if user_id is None:
         return None
-    return session.get(User, user_id)
+    user = session.get(User, user_id)
+    if user is None or user.disabled:
+        # A disabled user is logged out immediately, not just blocked from
+        # a future login attempt - re-checked fresh from the DB on every
+        # request, so an admin disabling someone takes effect right away
+        # even if that user already has an open session.
+        return None
+    return user
 
 
 def require_user(user: User | None = Depends(get_current_user)) -> User:

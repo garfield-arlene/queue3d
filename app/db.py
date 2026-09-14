@@ -4,7 +4,10 @@ trivial to back up."""
 
 from pathlib import Path
 
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
+
+from version import APP_VERSION
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -16,8 +19,124 @@ DB_PATH = DATA_DIR / "queue3d.db"
 engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
 
 
+def _migrate_to_2_1_0(conn):
+    """Job.submitted_at -> created_at, plus a new queued_at - the
+    slice/submit-split schema change (see app/README.md's "Drafts and
+    expiry"). Real incident, not a hypothetical: `create_all()` only
+    creates tables that don't exist yet, so a database from before this
+    change kept its old `submitted_at` column and had no `created_at`/
+    `queued_at` at all - every query referencing either crashed the app
+    right after login, on a database nobody had touched by hand. (This
+    shipped without a version bump at the time, which is the whole reason
+    the version-keyed scheme below exists now - see MIGRATIONS.)"""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "created_at" not in cols and "submitted_at" in cols:
+        conn.execute(text("ALTER TABLE job RENAME COLUMN submitted_at TO created_at"))
+    if "queued_at" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN queued_at DATETIME"))
+        # Backfill for jobs that predate this migration: under the old
+        # model, a successful slice meant immediately queued - there was
+        # no separate draft/submit step yet - so created_at is the
+        # closest true record of when each of these was actually queued.
+        # Anything never queued (an old-model failed/incomplete attempt)
+        # is left NULL, matching what a real never-submitted draft looks
+        # like today.
+        conn.execute(
+            text(
+                "UPDATE job SET queued_at = created_at "
+                "WHERE queued_at IS NULL "
+                "AND status IN ('queued', 'approved', 'printing', 'done', 'failed', 'rejected')"
+            )
+        )
+
+
+# Keyed by the app VERSION a schema change shipped in, not a separate
+# incrementing number - per the user, a schema change should always come
+# with a version bump, so there's exactly one number to keep track of,
+# not two that can drift apart (which is exactly what happened: the fix
+# above shipped without bumping VERSION at the time, so nothing recorded
+# that this database needed it). Applied in ascending version order,
+# regardless of dict insertion order - see _version_tuple.
+#
+# Adding a future migration: bump app/VERSION, write a new function next
+# to _migrate_to_2_1_0, and add it here keyed by that same new version.
+MIGRATIONS = {
+    "2.1.0": _migrate_to_2_1_0,
+}
+
+
+def _version_tuple(v: str) -> tuple[int, ...]:
+    """(2, 1, 0) from "2.1.0", ignoring a "-dev"-style suffix - just
+    enough to order two of this project's own version strings against
+    each other, not a general-purpose semver parser."""
+    return tuple(int(part) for part in v.split("-", 1)[0].split("."))
+
+
+def _table_exists(conn, name: str) -> bool:
+    return (
+        conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name=:name"),
+            {"name": name},
+        ).first()
+        is not None
+    )
+
+
 def init_db():
-    SQLModel.metadata.create_all(engine)
+    """Creates any missing tables, then runs whichever migrations (above)
+    this database hasn't had applied yet - checked on every startup, not
+    just once by hand, so upgrading to a new schema is "bump VERSION,
+    pull, restart" rather than "remember to run the right script.\""""
+    with engine.begin() as conn:
+        stored_version = None
+        if _table_exists(conn, "schemaversion"):
+            row = conn.execute(text("SELECT version FROM schemaversion WHERE id=1")).first()
+            if row is not None:
+                stored_version = row[0]
+        # This table briefly stored a small integer (1) rather than a
+        # version string, before the scheme above existed - translate the
+        # one real value that shipped that way to the version it actually
+        # corresponds to, so the comparison below works the same
+        # regardless of which era of this table wrote it.
+        if stored_version in (0, 1, "0", "1"):
+            stored_version = "2.1.0" if stored_version in (1, "1") else None
+
+        # No stored version at all means one of two things: a brand new
+        # database (nothing to migrate - create_all() below builds every
+        # table fresh from the current model definitions) or one old
+        # enough to predate this mechanism entirely. Tell them apart by
+        # whether `job` already exists: a new database doesn't have it
+        # yet, an old one does. Only run migrations for the latter,
+        # treating a missing version as older than anything in the list.
+        if _table_exists(conn, "job"):
+            pending = sorted(
+                (
+                    v
+                    for v in MIGRATIONS
+                    if stored_version is None or _version_tuple(v) > _version_tuple(stored_version)
+                ),
+                key=_version_tuple,
+            )
+            for v in pending:
+                MIGRATIONS[v](conn)
+
+    SQLModel.metadata.create_all(engine)  # creates schemaversion (and anything else new) if missing
+
+    with engine.begin() as conn:
+        # Upsert rather than a plain insert: a fresh database has no row
+        # yet (inserts clean), an old one just migrated needs its version
+        # recorded for the first time, and an already-current database's
+        # update here is a harmless no-op. Always the *running app's*
+        # version, not just the latest migration key - most version bumps
+        # won't have a schema change at all, and this still needs to
+        # reflect that the current code has looked at this database.
+        conn.execute(
+            text(
+                "INSERT INTO schemaversion (id, version) VALUES (1, :v) "
+                "ON CONFLICT(id) DO UPDATE SET version=:v"
+            ),
+            {"v": APP_VERSION},
+        )
 
 
 def get_session():
