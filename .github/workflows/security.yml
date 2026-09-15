@@ -1,0 +1,61 @@
+name: Security checks
+
+# Runs automatically on every push and pull request rather than relying on
+# manual review (see README.md's To do list, "Security & CI") - three
+# checks, each answering a different question:
+#   - dependency-audit: does anything we depend on have a known CVE?
+#   - static-analysis:  does our own code do anything bandit flags as risky?
+#   - secret-scan:      did a credential/token/key almost get committed?
+# GitHub's own secret scanning is already enabled on this repo (it's
+# public - see repo Settings > Code security), which covers the same
+# ground platform-side; gitleaks here makes that an explicit, visible
+# check in the pipeline itself rather than something that only shows up
+# as a separate alert.
+
+on:
+  push:
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      - name: Audit app/requirements.txt for known vulnerabilities
+        run: pip-audit -r app/requirements.txt
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install bandit
+      - name: Run bandit (fails on medium/high severity findings)
+        # -ll: only medium+high severity fail the build - low-severity
+        # informational findings (e.g. "you imported subprocess") still
+        # print in the log but don't block anything. Known, reviewed
+        # false positives are suppressed inline with `# nosec B<id>` and
+        # a comment explaining why, right where the finding is - not
+        # silenced globally here, so a *new* instance of the same pattern
+        # elsewhere still fails the build until it's reviewed the same way.
+        run: |
+          bandit -r app slicing test-print \
+            -x '*/.venv/*,*/tools/*,*/mbotmake/*,*/vendor/*' \
+            -ll
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks scans history, not just the current tree
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -561,6 +561,46 @@ they agreed with each other. The only check that catches a systematic
 transform bug is comparing against an independent third source (here: the
 original STL's own dimensions) directly.
 
+## Security checks (CI)
+
+`.github/workflows/security.yml` runs on every push and pull request -
+automatic, per the README's To do list, rather than relying on remembering
+to check by hand. Three independent jobs, each answering a different
+question:
+
+- **`dependency-audit`** (`pip-audit -r app/requirements.txt`) - does
+  anything the app depends on have a known CVE. Run locally first before
+  writing the gate: clean, no known vulnerabilities, at the time this was
+  added.
+- **`static-analysis`** (`bandit -r app slicing test-print -ll`) - does the
+  code itself do anything bandit flags as risky. `-ll` fails the build on
+  medium/high severity only; low-severity informational findings (mostly
+  "you imported subprocess" - true, and necessary, since this app shells
+  out to OrcaSlicer/mbotmake by design) still print in the log but don't
+  block anything.
+- **`secret-scan`** (`gitleaks`, full history via `fetch-depth: 0`) - did a
+  credential/token/key almost get committed. This repo also has GitHub's
+  own native secret scanning enabled already (a free default for a public
+  repo) - gitleaks here makes the same check an explicit, visible part of
+  the pipeline itself, not just a separate alert somewhere else.
+
+**Known, reviewed findings are suppressed inline, not globally, and only
+the specific ones actually reviewed:** two `urllib.request.urlopen()`
+calls (`app/printer.py`, `test-print/pairing.py`) trip bandit's B310
+check, which generically flags urlopen as an SSRF-style risk - a
+reasonable default, but a false positive here specifically, since `host`
+in both cases is always the printer's own LAN address from local
+config/env vars (`QUEUE3D_PRINTER_HOST`), never web request input. Marked
+`# nosec B310` right at each call, with a comment explaining why - not a
+blanket exemption for B310 everywhere, so a *new* urlopen call elsewhere
+in the codebase still fails the build until it's reviewed the same way.
+
+`.github/dependabot.yml` complements the audit job: `pip-audit` catches a
+*known* vulnerability on every push; Dependabot proactively opens a PR to
+bump a dependency (the pip ones in `app/requirements.txt`, and the GitHub
+Actions themselves, e.g. `actions/checkout`) on a weekly schedule, before
+a scan even has to catch one.
+
 ## Layout
 
 - `main.py` - app setup: session middleware, static files, the

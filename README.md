@@ -92,13 +92,14 @@ Managing user accounts:
 - **App version number** shown as a footer on every page, read from
   `app/VERSION` at startup - bump that file to change what's shown, no code
   change needed.
+- **Automated security checks** on every push and pull request
+  (`.github/workflows/security.yml`) - dependency vulnerability scanning
+  (`pip-audit`), static analysis for risky code patterns (`bandit`), and
+  secret scanning (`gitleaks`, alongside GitHub's own native scanning on
+  this public repo). Dependabot also opens a PR on its own when a
+  dependency has a newer version, rather than waiting to be asked.
 
 ## To do
-
-**Security & CI**
-- A pipeline to run security checks automatically (e.g. dependency
-  vulnerability scanning, static analysis, secret scanning) rather than
-  relying on manual review.
 
 **Upload**
 - Accept file types beyond `.stl` - `.3mf`, `.obj`, and `.zip` (presumably
@@ -204,6 +205,16 @@ Managing user accounts:
 - Live print progress/status while a job is printing - `mark_done`/
   `mark_failed` are still a manual admin action; the printer's protocol
   has a status-notification mechanism that isn't consumed yet.
+- Use the printer's camera to take a picture of the build plate when a
+  print stops, regardless of why - success, failure, or a manual stop -
+  and attach it to the job (useful both as proof of outcome and as a
+  record for whoever reviews a failure later). Not confirmed yet whether
+  the Replicator+ actually has a usable onboard camera or whether the
+  reverse-engineered JSON-RPC protocol exposes a way to capture a still
+  frame at all - unlike `get_system_information` (used for pairing/
+  status today), no camera/snapshot method has been seen or tried against
+  the real printer. Needs that confirmed against the actual hardware
+  before this is more than an idea.
 - More robust pairing: after a power-on, the printer's HTTP pairing
   service has been observed to take roughly a minute to come up after its
   network/JSON-RPC service already answers, causing pairing to fail if
@@ -216,6 +227,16 @@ Managing user accounts:
   without error but didn't stick to the bed (first-layer/Z-offset/brim
   settings need dialing in for the actual printer).
 - Support for printer models/brands beyond the MakerBot Replicator+.
+- An admin UI for managing printers - add/remove a printer and pair it,
+  all from within the app, rather than today's CLI-only, server-access-
+  required flow (`pair_printer.py`, one `data/printer_auth.json`/
+  `QUEUE3D_PRINTER_HOST` implicitly assuming a single printer). Real
+  prerequisite, not just a UI wrapper around what exists: the data model
+  and `jobs.release()`'s one-job-at-a-time rule are currently written
+  for exactly one printer - this needs an actual multi-printer design
+  (which printer a job goes to, per-printer queues or one shared queue
+  with printer selection, per-printer pairing state) before it's just a
+  form.
 
 **Accounts**
 - Rate-limiting or lockout on login attempts - PINs are short by design
