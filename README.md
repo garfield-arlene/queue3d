@@ -205,6 +205,16 @@ Managing user accounts:
 - Live print progress/status while a job is printing - `mark_done`/
   `mark_failed` are still a manual admin action; the printer's protocol
   has a status-notification mechanism that isn't consumed yet.
+- Use the printer's camera to take a picture of the build plate when a
+  print stops, regardless of why - success, failure, or a manual stop -
+  and attach it to the job (useful both as proof of outcome and as a
+  record for whoever reviews a failure later). Not confirmed yet whether
+  the Replicator+ actually has a usable onboard camera or whether the
+  reverse-engineered JSON-RPC protocol exposes a way to capture a still
+  frame at all - unlike `get_system_information` (used for pairing/
+  status today), no camera/snapshot method has been seen or tried against
+  the real printer. Needs that confirmed against the actual hardware
+  before this is more than an idea.
 - More robust pairing: after a power-on, the printer's HTTP pairing
   service has been observed to take roughly a minute to come up after its
   network/JSON-RPC service already answers, causing pairing to fail if
