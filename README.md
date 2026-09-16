@@ -224,26 +224,43 @@ Managing user accounts:
   investigation short before that could be confirmed). Next step:
   reproduce with a *stable* pairing session (see below) and actually
   listen for what `request_camera_stream` pushes afterward.
-- More robust pairing, **now with much more specific evidence than
-  before**: re-investigating the camera above, a freshly-paired token
-  worked exactly once - one authenticated connection completing its
-  calls - and then failed on every subsequent connection attempt with
-  the same `AuthenticationException`, reproduced three times in a row in
-  one sitting. Previously this was just "observed to stop working at
-  least once, cause not confirmed"; now it looks like it might not
-  survive a reconnect at all, at least not reliably - a materially
-  different (and more serious) problem than an occasional flake, since
-  the whole app's design assumes one pairing is good for many separate
-  future connections (e.g. `jobs.release()`, called whenever an admin
-  releases a job, potentially days after pairing). Not fully root-caused
-  yet - didn't get to test whether it's specifically "invalid after
-  disconnect" vs. "invalid after a few seconds" vs. something about
-  making several reconnects in quick succession, before running out of
-  dial-presses to spend confirming it further in one sitting. Pairing
-  should retry through the printer's slow-to-come-up HTTP service
-  automatically, and the app should detect and recover from a token
-  going bad without needing someone to notice and manually re-pair -
-  now a more urgent item than it looked before this session.
+- **A real, isolated, and fairly serious finding, not just "flaky
+  pairing" any more: a pairing token is only ever good for one
+  authenticated session, full stop** - confirmed with three separate
+  controlled tests against the real printer (`test-print/
+  token_lifetime_probe.py`, `token_close_probe.py`), each needing its own
+  fresh dial-press pairing: (1) a second, *simultaneous* connection with
+  the same token is rejected while the first is still open; (2) a new
+  connection after cleanly closing the first also fails; (3) - to rule
+  out a client-side bug rather than a real protocol limit - a
+  deliberately graceful close (half-closed write side, drained to a
+  confirmed zero unread bytes before closing, so there's no way our own
+  `close()` sent a TCP reset the printer could be reacting to) *still*
+  failed the next connection the same way. That third test is what
+  makes this conclusive rather than suspicious: it isn't a disconnect
+  style bug in `makerbot_client.py`, it's how the printer's tokens
+  actually behave. This breaks `jobs.release()`'s current design outright
+  - it reconnects and re-authenticates fresh every time an admin releases
+  a job, so only the *first* release after any given pairing would ever
+  actually work. The fix is architectural, not a retry/backoff tweak: one
+  connection, authenticated once, kept genuinely valid for as long as it
+  stayed open and was reused for repeated calls without incident during
+  this same investigation - so the app needs to hold one persistent,
+  long-lived connection to the printer (opened once, reused for every
+  `release()`/status call for as long as it stays healthy) rather than
+  connecting fresh per action, only reconnecting (and re-pairing, prompting
+  someone to press the dial again) if that persistent connection actually
+  drops. Separately, still true and still open: the printer's HTTP pairing
+  service has been observed to take roughly a minute to come up after its
+  network/JSON-RPC service already answers, so pairing immediately after
+  power-on can fail even before any of the above - and once during this
+  same investigation, a pairing request was accepted server-side (the
+  client got as far as "waiting for the dial press") but nothing ever
+  rendered on the printer's screen to press, requiring a wait (a power
+  cycle was offered as the likely fix but turned out not to be needed -
+  the next attempt some time later worked on its own) - cause not
+  confirmed, possibly a UI-state issue from repeated pairing attempts in
+  quick succession.
 - Bed adhesion tuning in the slicing profile - a test print completed
   without error but didn't stick to the bed (first-layer/Z-offset/brim
   settings need dialing in for the actual printer).
