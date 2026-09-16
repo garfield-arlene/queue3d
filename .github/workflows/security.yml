@@ -11,11 +11,19 @@ name: Security checks
 # ground platform-side; gitleaks here makes that an explicit, visible
 # check in the pipeline itself rather than something that only shows up
 # as a separate alert.
+#
+# `push:` below has no branch filter, so this already runs automatically
+# on every branch, not just main - `pull_request` is scoped to PRs
+# targeting main specifically. `workflow_dispatch` on top of that lets it
+# be pointed at any branch/tag manually too, from the Actions tab or
+# `gh workflow run security.yml --ref <branch>`.
 
 on:
   push:
   pull_request:
     branches: ["main"]
+  workflow_dispatch: # "Run workflow" in the Actions tab, or `gh workflow run` -
+    # picks whichever branch/tag you choose there, same jobs either way.
 
 jobs:
   dependency-audit:
