@@ -239,7 +239,18 @@ Managing user accounts:
   failed the next connection the same way. That third test is what
   makes this conclusive rather than suspicious: it isn't a disconnect
   style bug in `makerbot_client.py`, it's how the printer's tokens
-  actually behave. This breaks `jobs.release()`'s current design outright
+  actually behave. **Not a firmware bug to wait out or patch, either:**
+  checked against MakerBot's own (real, rendered - their support pages
+  are JS-heavy and don't come through a plain fetch) firmware release
+  notes - `2.6.2` (build `734`, released 2020-05-27) is both what this
+  printer is already running and the *last* firmware MakerBot ever
+  shipped for the Replicator+ line - nothing since, and the protocol
+  itself was never publicly documented in the first place, so there's no
+  bug tracker or changelog entry to find either way. Best-guess reading:
+  this is deliberate, not a defect - a one-token-per-session model is a
+  reasonable security posture, and it's probably exactly how MakerBot's
+  own client software already behaves (connect once, stay connected).
+  This breaks `jobs.release()`'s current design outright
   - it reconnects and re-authenticates fresh every time an admin releases
   a job, so only the *first* release after any given pairing would ever
   actually work. The fix is architectural, not a retry/backoff tweak: one
