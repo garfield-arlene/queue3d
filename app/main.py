@@ -5,6 +5,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from auth import AuthRedirect, get_session_secret_key
 from db import init_db
+from printer import close_connection
 from routers import admin, jobs, user
 
 # docs_url/redoc_url disabled: FastAPI's built-in interactive docs load
@@ -24,6 +25,15 @@ async def auth_redirect_handler(request: Request, exc: AuthRedirect):
 @app.on_event("startup")
 def on_startup():
     init_db()
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    # Not required for correctness - the OS reclaims the socket on process
+    # exit either way - but closes the printer's persistent connection
+    # (see printer.py) cleanly rather than leaving it lingering across a
+    # restart.
+    close_connection()
 
 
 @app.get("/")

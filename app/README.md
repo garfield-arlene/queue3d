@@ -371,19 +371,88 @@ instead, rather than claiming a print started that may not have. Verified
 against the real printer: releasing an approved job actually made it heat
 up and start printing.
 
-Pairing is a one-time step (`pair_printer.py`, needs someone physically at
-the printer's dial) that saves a long-lived access token to
-`data/printer_auth.json`. If that token stops working (observed once
-during testing after dismissing a printer error via its dial - unclear if
-that specifically invalidates it or if it was coincidental), re-run
-`pair_printer.py`; `QUEUE3D_PRINTER_HOST`/`QUEUE3D_PRINTER_PORT` env vars
-override the printer's address if it's not at the default.
+Pairing (`pair_printer.py`, needs someone physically at the printer's
+dial) saves an access token to `data/printer_auth.json`; `QUEUE3D_PRINTER_HOST`/
+`QUEUE3D_PRINTER_PORT` env vars override the printer's address if it's
+not at the default. **Not actually a one-time-ever step, despite how
+that reads** - see "Persistent printer connection" right below for why,
+and what that does and doesn't fix.
 
 Not yet built: live print progress/status polling (the printer's own
 `get_system_information` exists in the protocol but isn't wired up - see
 `printer.py`'s `_dispatch` for where unsolicited status notifications
 would need to be consumed) and detecting completion automatically -
 `mark_done`/`mark_failed` are still a manual admin action for now.
+
+### Persistent printer connection
+
+**Why this exists - a real, live-confirmed hardware limitation, not
+theoretical:** a pairing token is only good for exactly one authenticated
+session. Confirmed three separate ways against the real printer, each
+needing its own fresh dial-press pairing to test cleanly: a second,
+*simultaneous* connection with the same token is rejected while the first
+stays open; a new connection after cleanly closing the first also fails;
+and - to rule out our own client sending something the printer could
+reasonably react badly to, like an abrupt TCP reset - it still failed
+after a deliberately graceful close (half-closed write side, drained to a
+confirmed zero unread bytes, only then closed). That third result is what
+makes this conclusive: it isn't a disconnect-handling bug in
+`_MakerBotClient`, it's how the printer's tokens actually behave. Checked
+against MakerBot's own firmware release notes too (their support site is
+JS-rendered - a plain fetch gets nothing, needed a real browser to see
+it): `2.6.2` build `734`, what this printer runs, is the *last* firmware
+MakerBot ever shipped for the Replicator+ line, so this isn't a bug an
+update would fix even if one existed. Best guess, not confirmed: a
+deliberate one-token-per-session design, probably matching how MakerBot's
+own client software already behaves.
+
+The original design here connected fresh and re-authenticated for every
+single `send_print_job()` call - which the finding above means would only
+ever have worked for the *first* release after any given pairing, and
+failed authentication on every one after that. `_PersistentConnection`
+(`printer.py`) is the fix: one `_MakerBotClient`, authenticated once, held
+open and reused across every call for as long as it stays healthy, rather
+than reconnecting per action. `send_print_job()`'s own public signature
+didn't change at all - `jobs.release()` needed zero changes - the whole
+fix is internal to `printer.py`.
+
+- Before reusing the held connection, a cheap `handshake` call acts as a
+  health check; if that fails (printer rebooted, network dropped, the
+  connection just isn't alive any more), the dead client is dropped and a
+  fresh one is connected+authenticated in its place - which will itself
+  fail if the *previous* session already spent the saved token, correctly
+  surfacing as "this needs re-pairing," not a confusing raw exception.
+- `self._lock` (an `RLock`) is held for the full duration of one logical
+  operation (health-check-then-do-the-real-thing), not just around
+  individual `request()` calls - coarser than true request/response
+  pipelining would need, but it guarantees two things that actually
+  matter here: a file upload's `put_raw` announcement and its raw bytes
+  always land back-to-back with nothing else interleaved on the wire, and
+  a health check from one caller can never race a real upload from
+  another.
+- `close_connection()` (called from `main.py`'s shutdown handler) closes
+  the held connection cleanly on app shutdown/restart - not required for
+  correctness (the OS reclaims the socket on process exit regardless),
+  just tidy; the next call reconnects lazily either way.
+
+**What this does and doesn't actually fix - stated plainly, since it's
+easy to oversell:** it fixes releasing *multiple* jobs without needing to
+re-pair between each one, for as long as the app keeps running and the
+connection stays healthy - previously broken outright. It does **not**
+make pairing a true one-time-forever step: restarting the app, or the
+printer being power-cycled (its normal day-to-day usage pattern here),
+still drops the connection and needs one more dial-press before the next
+release. That's an inherent consequence of how the printer's tokens work,
+not something client-side code can engineer around.
+
+Verified live against the real printer, not assumed from the fix's
+design alone: three separate calls through `_PersistentConnection`
+returned the exact same connection object and stayed authenticated
+throughout, with no reconnect needed between them; separately, a second
+process was started fresh specifically to exercise the failure path, and
+correctly got the clear "needs re-pairing" `PrinterError` rather than a
+confusing raw exception, since that process's connection attempt was
+inherently a second session against an already-spent token.
 
 ### Browsing finished jobs, and the audit log
 
@@ -604,7 +673,9 @@ a scan even has to catch one.
 ## Layout
 
 - `main.py` - app setup: session middleware, static files, the
-  `AuthRedirect` -> real HTTP redirect exception handler, router mounting.
+  `AuthRedirect` -> real HTTP redirect exception handler, router mounting,
+  and closing the printer's persistent connection on shutdown (see
+  "Persistent printer connection" above).
 - `templates_env.py` - the one shared `Jinja2Templates` instance every
   router renders through (rather than each router making its own, as
   before), so a Jinja global set once - `APP_VERSION`, read from the
@@ -641,9 +712,11 @@ a scan even has to catch one.
   age threshold; see "Drafts and expiry" above. Same run-from-cron
   pattern as `backup.py` below.
 - `printer.py` - the printer's network protocol client (vendored from
-  `../test-print/`, see its docstring for why not imported) and
-  `send_print_job()`, the real hardware call behind `jobs.release()`.
-- `pair_printer.py` - CLI for the one-time printer pairing step.
+  `../test-print/`, see its docstring for why not imported),
+  `_PersistentConnection` (see "Persistent printer connection" above),
+  and `send_print_job()`, the real hardware call behind `jobs.release()`.
+- `pair_printer.py` - CLI for the printer pairing step - see "Persistent
+  printer connection" above for why this isn't actually one-time-ever.
 - `auth.py` - hashing (bcrypt, called directly - see note below) and the
   `require_user`/`require_admin` FastAPI dependencies that redirect to
   the right login page when not authenticated.

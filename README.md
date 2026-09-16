@@ -81,7 +81,12 @@ Managing user accounts:
   (`/admin/jobs/{id}/log`, linked from the queue, the finished-jobs list,
   and the global log).
 - **Release to the printer over the network** - an approved job is sent
-  and started directly; no walking a file over on a flash drive.
+  and started directly; no walking a file over on a flash drive. One
+  persistent, authenticated connection is held open for the app's whole
+  run rather than reconnecting per release - the printer's own pairing
+  tokens are only ever good for one authenticated session, confirmed live
+  against the real hardware, so reconnecting fresh every time would have
+  meant only the first release after any pairing ever actually worked.
 - **One job on the printer at a time**, enforced - releasing a second job
   while one is already printing is blocked with a clear error.
 - **Automated backups** - the database and finished-job archive back up
@@ -224,54 +229,27 @@ Managing user accounts:
   investigation short before that could be confirmed). Next step:
   reproduce with a *stable* pairing session (see below) and actually
   listen for what `request_camera_stream` pushes afterward.
-- **A real, isolated, and fairly serious finding, not just "flaky
-  pairing" any more: a pairing token is only ever good for one
-  authenticated session, full stop** - confirmed with three separate
-  controlled tests against the real printer (`test-print/
-  token_lifetime_probe.py`, `token_close_probe.py`), each needing its own
-  fresh dial-press pairing: (1) a second, *simultaneous* connection with
-  the same token is rejected while the first is still open; (2) a new
-  connection after cleanly closing the first also fails; (3) - to rule
-  out a client-side bug rather than a real protocol limit - a
-  deliberately graceful close (half-closed write side, drained to a
-  confirmed zero unread bytes before closing, so there's no way our own
-  `close()` sent a TCP reset the printer could be reacting to) *still*
-  failed the next connection the same way. That third test is what
-  makes this conclusive rather than suspicious: it isn't a disconnect
-  style bug in `makerbot_client.py`, it's how the printer's tokens
-  actually behave. **Not a firmware bug to wait out or patch, either:**
-  checked against MakerBot's own (real, rendered - their support pages
-  are JS-heavy and don't come through a plain fetch) firmware release
-  notes - `2.6.2` (build `734`, released 2020-05-27) is both what this
-  printer is already running and the *last* firmware MakerBot ever
-  shipped for the Replicator+ line - nothing since, and the protocol
-  itself was never publicly documented in the first place, so there's no
-  bug tracker or changelog entry to find either way. Best-guess reading:
-  this is deliberate, not a defect - a one-token-per-session model is a
-  reasonable security posture, and it's probably exactly how MakerBot's
-  own client software already behaves (connect once, stay connected).
-  This breaks `jobs.release()`'s current design outright
-  - it reconnects and re-authenticates fresh every time an admin releases
-  a job, so only the *first* release after any given pairing would ever
-  actually work. The fix is architectural, not a retry/backoff tweak: one
-  connection, authenticated once, kept genuinely valid for as long as it
-  stayed open and was reused for repeated calls without incident during
-  this same investigation - so the app needs to hold one persistent,
-  long-lived connection to the printer (opened once, reused for every
-  `release()`/status call for as long as it stays healthy) rather than
-  connecting fresh per action, only reconnecting (and re-pairing, prompting
-  someone to press the dial again) if that persistent connection actually
-  drops. Separately, still true and still open: the printer's HTTP pairing
+- **The persistent-connection fix is built** (see Features below) - the
+  investigation that found the underlying problem, and why the fix is
+  architectural rather than a retry/backoff tweak, is in `app/README.md`'s
+  "Persistent printer connection" section. Two things about it still
+  worth remembering as real limits, not bugs to chase further: it doesn't
+  make pairing permanent - an app restart or the printer being
+  power-cycled (this printer's normal day-to-day usage pattern) still
+  drops the connection and needs one more dial-press before the next
+  release, same as before, just not *between every single release*
+  within one continuous run any more; and the printer's HTTP pairing
   service has been observed to take roughly a minute to come up after its
   network/JSON-RPC service already answers, so pairing immediately after
-  power-on can fail even before any of the above - and once during this
-  same investigation, a pairing request was accepted server-side (the
-  client got as far as "waiting for the dial press") but nothing ever
-  rendered on the printer's screen to press, requiring a wait (a power
-  cycle was offered as the likely fix but turned out not to be needed -
-  the next attempt some time later worked on its own) - cause not
-  confirmed, possibly a UI-state issue from repeated pairing attempts in
-  quick succession.
+  power-on can still fail on timing alone. Once during the investigation,
+  a pairing request was also accepted server-side (got as far as "waiting
+  for the dial press") but nothing ever rendered on the printer's screen
+  to press - resolved on its own on a later attempt, cause not confirmed,
+  possibly a UI-state issue from repeated pairing attempts in quick
+  succession. Pairing should retry through the slow-HTTP-service case
+  automatically, and the app should surface a clear "needs re-pairing"
+  state on the admin dashboard rather than only a failed-release error
+  the next time someone tries to release a job.
 - Bed adhesion tuning in the slicing profile - a test print completed
   without error but didn't stick to the bed (first-layer/Z-offset/brim
   settings need dialing in for the actual printer).

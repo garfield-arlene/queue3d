@@ -10,11 +10,31 @@ is done. This is now the one, real client the app uses.
 Wire summary: TCP JSON-RPC 2.0 on port 9999 (messages are concatenated
 JSON objects, framed by brace-counting - no length prefix); a separate
 plaintext HTTP endpoint (port 80, "/auth") handles one-time pairing,
-producing a long-lived access token that authenticates the JSON-RPC
-socket; print jobs are pushed over that same socket - "print" announces
-the filename, then the file streams in chunks via put_init / put_raw (raw
-bytes immediately follow each put_raw's JSON) / put_term.
-"""
+producing an access token that authenticates the JSON-RPC socket; print
+jobs are pushed over that same socket - "print" announces the filename,
+then the file streams in chunks via put_init / put_raw (raw bytes
+immediately follow each put_raw's JSON) / put_term.
+
+**A pairing token is good for exactly one authenticated session, full
+stop - confirmed live against the real printer, three separate ways (see
+README.md's Printer to-do section and project memory
+makerbot-network-protocol for the investigation): a second simultaneous
+connection with the same token is rejected while the first stays open; a
+new connection after cleanly closing the first also fails; and it still
+fails even after a deliberately graceful close that rules out our own
+client sending a TCP reset the printer could be reacting to. This is not
+a firmware bug - 2.6.2 build 734, what this printer runs, is the last
+firmware MakerBot ever shipped for the Replicator+ line - and it's
+probably a deliberate one-token-per-session design, not a defect.
+
+That means connecting fresh per call (the original design here) only
+ever works for the *first* call after any given pairing - every `release()`
+after that would fail authentication. `_PersistentConnection` below is
+the fix: one connection, authenticated once, held open and reused for
+the app's entire lifetime, reconnecting (and needing a fresh dial-press
+re-pairing) only if that connection actually drops - which matches
+exactly what was confirmed to work without incident during the
+investigation (one connection, kept open, used repeatedly)."""
 
 import json
 import os
@@ -273,33 +293,112 @@ def pair(host, on_waiting=None, poll_interval=2, timeout=120) -> str:
     return resp["access_token"]
 
 
-# ---- sending a print job (the actual release() integration) ----
+# ---- the persistent connection (see this module's docstring for why) ----
+
+
+class _PersistentConnection:
+    """Holds one authenticated _MakerBotClient for the app's entire
+    lifetime, instead of connecting fresh per call. `self._lock` (an
+    RLock) is held for the full duration of one logical operation
+    (connect-if-needed, then do the real work) - that's coarser than it
+    needs to be for true request/response pipelining, but this client
+    only ever does one real thing at a time in practice (release a job,
+    eventually poll status), and it guarantees two things that matter
+    more here: two operations can never interleave their raw bytes on the
+    wire (critical during a file upload - a put_raw's announcement and
+    its raw bytes have to land back-to-back with nothing else between
+    them), and a health-check from one caller can't race a real upload
+    from another.
+    """
+
+    def __init__(self):
+        self._client: _MakerBotClient | None = None
+        self._lock = threading.RLock()
+
+    def _connected_client(self) -> "_MakerBotClient":
+        """Returns a live, authenticated client - the existing one if a
+        cheap health check still passes, otherwise a fresh connection.
+        Must be called with self._lock held."""
+        if self._client is not None:
+            try:
+                self._client.request("handshake", {}, timeout=5)
+                return self._client
+            except Exception:
+                # Dead (printer rebooted, network dropped, etc.) - drop it
+                # and fall through to reconnect rather than fail here.
+                self._client.close()
+                self._client = None
+
+        host = printer_host()
+        port = printer_port()
+        token = load_access_token()
+        if not token:
+            raise PrinterError("Printer isn't paired yet - run pair_printer.py once.")
+
+        client = _MakerBotClient(host, port)
+        try:
+            client.connect()
+            client.handshake()
+            client.request("authenticate", {"access_token": token})
+        except (_MakerBotError, OSError, TimeoutError) as e:
+            client.close()
+            # A token is only ever good for one session (see this
+            # module's docstring) - if this is a *second* connection
+            # attempt with the same saved token (the previous persistent
+            # connection died and we're reconnecting), authentication is
+            # expected to fail here every time until someone re-pairs.
+            # Say so plainly rather than leaving "authentication failed"
+            # unexplained.
+            raise PrinterError(
+                f"Couldn't establish a connection to the printer - if one was "
+                f"already established and this is a reconnect, the printer's "
+                f"pairing tokens are only good for one session, so this needs "
+                f"re-pairing (run pair_printer.py again): {e}"
+            )
+        self._client = client
+        return client
+
+    def send_print_job(self, makerbot_path: Path) -> None:
+        with self._lock:
+            client = self._connected_client()
+            try:
+                _upload_and_print(client, makerbot_path)
+            except PrinterError:
+                # An error here could mean the connection itself died
+                # mid-upload (not just the printer rejecting the request)
+                # - drop it so the *next* call reconnects fresh instead of
+                # repeatedly retrying against a socket already known bad.
+                self._client.close()
+                self._client = None
+                raise
+
+    def close(self) -> None:
+        """Cleanly closes the connection, if one is open - called on app
+        shutdown (see main.py) so a restart doesn't leave the old
+        process's socket lingering. Not required for correctness (the OS
+        reclaims it on process exit either way), just tidy; the next call
+        to send_print_job() reconnects lazily regardless."""
+        with self._lock:
+            if self._client is not None:
+                self._client.close()
+                self._client = None
+
+
+_connection = _PersistentConnection()
+
+
+def close_connection() -> None:
+    _connection.close()
 
 
 def send_print_job(makerbot_path: Path) -> None:
-    """Connect, authenticate, and upload+start a print job. Raises
-    PrinterError on any failure - callers must not consider the job
-    'printing' unless this returns without raising, since a failure partway
-    through the upload leaves no guarantee the printer actually started."""
-    host = printer_host()
-    port = printer_port()
-    token = load_access_token()
-    if not token:
-        raise PrinterError("Printer isn't paired yet - run pair_printer.py once.")
-
-    try:
-        with _MakerBotClient(host, port) as client:
-            client.handshake()
-            try:
-                client.request("authenticate", {"access_token": token})
-            except _MakerBotError as e:
-                raise PrinterError(
-                    f"Authentication failed - the pairing may have been invalidated; "
-                    f"try running pair_printer.py again: {e}"
-                )
-            _upload_and_print(client, makerbot_path)
-    except (OSError, TimeoutError) as e:
-        raise PrinterError(f"Couldn't reach the printer at {host}:{port}: {e}")
+    """Upload+start a print job over the app's one persistent connection
+    to the printer (connecting/authenticating first if it isn't already
+    connected). Raises PrinterError on any failure - callers must not
+    consider the job 'printing' unless this returns without raising,
+    since a failure partway through the upload leaves no guarantee the
+    printer actually started."""
+    _connection.send_print_job(makerbot_path)
 
 
 def _upload_and_print(client: "_MakerBotClient", makerbot_path: Path) -> None:
