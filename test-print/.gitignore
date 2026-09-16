@@ -1,2 +1,9 @@
 auth.json
 *.makerbot
+
+# Real captured camera output from camera_probe*.py - these are actual
+# photos of wherever the printer is sitting, never something to commit to
+# a public repo, even as a "proof it works" artifact.
+camera_probe*.bin
+camera_frame*.jpg
+camera_frame*.jpeg

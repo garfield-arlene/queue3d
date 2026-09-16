@@ -89,6 +89,13 @@ Managing user accounts:
   meant only the first release after any pairing ever actually worked.
 - **One job on the printer at a time**, enforced - releasing a second job
   while one is already printing is blocked with a clear error.
+- **Camera access confirmed** - the printer's onboard camera is reachable
+  over the same JSON-RPC connection (`request_camera_stream` pushes a
+  continuous sequence of JPEG frames as notifications; `end_camera_stream`
+  stops it), verified by actually capturing and decoding a real photo of
+  the build plate. Not wired into the app yet - see the To do list - this
+  confirms it's possible and how, not that a job's page shows a photo
+  today.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -210,25 +217,16 @@ Managing user accounts:
 - Live print progress/status while a job is printing - `mark_done`/
   `mark_failed` are still a manual admin action; the printer's protocol
   has a status-notification mechanism that isn't consumed yet.
-- Use the printer's camera to take a picture of the build plate when a
-  print stops, regardless of why - success, failure, or a manual stop -
-  and attach it to the job (useful both as proof of outcome and as a
-  record for whoever reviews a failure later). Checked against the real
-  printer (`test-print/camera_probe.py`/`camera_probe2.py`, firmware
-  2.6.2 build 734, api_version 1.9.0): `request_camera_frame`,
-  `get_available_cameras`, `get_camera_frame`, and `camera_frame` are all
-  `method not found`, but `request_camera_stream` *is* accepted (returns
-  success) - some camera capability exists at the RPC level, it's just
-  not the simple one-shot capture hoped for. A companion HTTP endpoint
-  (`http://<printer>/camera?token=...`, per community reverse-engineering
-  docs) also exists - it answered `401 Access Denied` rather than
-  connection-refused/404, meaning it's real but wants a different token
-  than the long-lived pairing `access_token`, not yet identified (maybe a
-  short-lived ticket `request_camera_stream`'s response or a follow-up
-  notification carries - the token instability below cut this
-  investigation short before that could be confirmed). Next step:
-  reproduce with a *stable* pairing session (see below) and actually
-  listen for what `request_camera_stream` pushes afterward.
+- **Camera access is confirmed working end-to-end** (see Features below
+  for the summary) - protocol fully understood and proven with a real
+  captured photo, not just a successful-looking RPC call. Not yet wired
+  into the app itself: this to-do item was "can we even do this," which
+  is now answered - actually capturing a photo when a job stops
+  (success, failure, or a manual stop) and attaching it to the job record
+  is still to be built into `jobs.py`/`printer.py`, using the persistent
+  connection above (calling `request_camera_stream`, saving the first
+  complete frame, then `end_camera_stream` - not leaving a stream running
+  in the background).
 - **The persistent-connection fix is built** (see Features below) - the
   investigation that found the underlying problem, and why the fix is
   architectural rather than a retry/backoff tweak, is in `app/README.md`'s
