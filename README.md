@@ -208,21 +208,42 @@ Managing user accounts:
 - Use the printer's camera to take a picture of the build plate when a
   print stops, regardless of why - success, failure, or a manual stop -
   and attach it to the job (useful both as proof of outcome and as a
-  record for whoever reviews a failure later). Not confirmed yet whether
-  the Replicator+ actually has a usable onboard camera or whether the
-  reverse-engineered JSON-RPC protocol exposes a way to capture a still
-  frame at all - unlike `get_system_information` (used for pairing/
-  status today), no camera/snapshot method has been seen or tried against
-  the real printer. Needs that confirmed against the actual hardware
-  before this is more than an idea.
-- More robust pairing: after a power-on, the printer's HTTP pairing
-  service has been observed to take roughly a minute to come up after its
-  network/JSON-RPC service already answers, causing pairing to fail if
-  attempted too early; and a saved pairing token has been observed to stop
-  working at least once (cause not confirmed - possibly related to
-  dismissing a printer error via its dial). Pairing should retry through
-  the former automatically and the app should detect and recover from the
-  latter without needing someone to notice and manually re-pair.
+  record for whoever reviews a failure later). Checked against the real
+  printer (`test-print/camera_probe.py`/`camera_probe2.py`, firmware
+  2.6.2 build 734, api_version 1.9.0): `request_camera_frame`,
+  `get_available_cameras`, `get_camera_frame`, and `camera_frame` are all
+  `method not found`, but `request_camera_stream` *is* accepted (returns
+  success) - some camera capability exists at the RPC level, it's just
+  not the simple one-shot capture hoped for. A companion HTTP endpoint
+  (`http://<printer>/camera?token=...`, per community reverse-engineering
+  docs) also exists - it answered `401 Access Denied` rather than
+  connection-refused/404, meaning it's real but wants a different token
+  than the long-lived pairing `access_token`, not yet identified (maybe a
+  short-lived ticket `request_camera_stream`'s response or a follow-up
+  notification carries - the token instability below cut this
+  investigation short before that could be confirmed). Next step:
+  reproduce with a *stable* pairing session (see below) and actually
+  listen for what `request_camera_stream` pushes afterward.
+- More robust pairing, **now with much more specific evidence than
+  before**: re-investigating the camera above, a freshly-paired token
+  worked exactly once - one authenticated connection completing its
+  calls - and then failed on every subsequent connection attempt with
+  the same `AuthenticationException`, reproduced three times in a row in
+  one sitting. Previously this was just "observed to stop working at
+  least once, cause not confirmed"; now it looks like it might not
+  survive a reconnect at all, at least not reliably - a materially
+  different (and more serious) problem than an occasional flake, since
+  the whole app's design assumes one pairing is good for many separate
+  future connections (e.g. `jobs.release()`, called whenever an admin
+  releases a job, potentially days after pairing). Not fully root-caused
+  yet - didn't get to test whether it's specifically "invalid after
+  disconnect" vs. "invalid after a few seconds" vs. something about
+  making several reconnects in quick succession, before running out of
+  dial-presses to spend confirming it further in one sitting. Pairing
+  should retry through the printer's slow-to-come-up HTTP service
+  automatically, and the app should detect and recover from a token
+  going bad without needing someone to notice and manually re-pair -
+  now a more urgent item than it looked before this session.
 - Bed adhesion tuning in the slicing profile - a test print completed
   without error but didn't stick to the bed (first-layer/Z-offset/brim
   settings need dialing in for the actual printer).
