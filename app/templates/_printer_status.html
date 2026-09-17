@@ -1,0 +1,33 @@
+{# Included by admin_dashboard.html, and re-rendered standalone by
+   GET /admin/printer-status for htmx polling below - same
+   self-terminating pattern as _jobs_table.html's slicing-progress
+   polling: only carries hx-get/hx-trigger while pairing is actually in
+   progress, so polling stops on its own the moment it finishes one way
+   or the other. #}
+<div id="printer-status"
+  {% if pairing.in_progress %}
+    hx-get="/admin/printer-status" hx-trigger="every 2s" hx-swap="outerHTML"
+  {% endif %}
+>
+  {% if pairing.in_progress %}
+    <p class="muted">Pairing with the printer - check its screen and press the dial to accept.</p>
+  {% elif printer_status == "connected" %}
+    <p class="muted">Printer connected.</p>
+  {% elif printer_status == "unreachable" %}
+    <p class="error">
+      Couldn't reach the printer on the last attempt - check that it's powered
+      on and on the network. (Re-pairing won't fix this specific problem.)
+    </p>
+  {% elif printer_status == "needs_pairing" %}
+    <p class="error">Printer needs to be paired before jobs can be released to it.</p>
+    <form method="post" action="/admin/printer/pair">
+      <button type="submit">Pair printer</button>
+    </form>
+    <p class="muted">After clicking, go to the printer and press its dial when prompted.</p>
+  {% else %}
+    <p class="muted">Printer connection not yet verified this session.</p>
+  {% endif %}
+  {% if not pairing.in_progress and pairing.error %}
+    <p class="error">Last pairing attempt failed: {{ pairing.error }}</p>
+  {% endif %}
+</div>

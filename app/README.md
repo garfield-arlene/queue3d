@@ -553,6 +553,62 @@ state. Served via `/jobs/{id}/photo.jpg` (`routers/jobs.py`), same
 access rule as the model/supports files: the job's own owner, or any
 admin.
 
+### Printer status and in-app pairing
+
+**Why this exists:** a real incident during this feature's own
+development, not a hypothetical - repeated test pairings against the
+same physical printer left the real production app's long-held
+connection unable to reconnect, and the only way to find out was a
+release failing with a raw "couldn't establish a connection" error and
+no indication of what to do about it. The admin dashboard now shows the
+printer's connection state plainly (`_printer_status.html`,
+`printer.connection_status()`), and a "Pair printer" button
+(`POST /admin/printer/pair`) starts pairing right from the dashboard,
+instead of needing shell access to run `pair_printer.py` by hand.
+
+**Deliberately never checks the actual connection to answer "what's the
+status":** `connection_status()` only reports the outcome of the most
+recent *real* attempt (a release or a photo capture) - it never itself
+opens a connection or tries to authenticate just to answer a status
+question. This isn't a shortcut, it's a hard requirement given how the
+printer's tokens work (see "Persistent printer connection" above): a
+token is good for exactly one authenticated session, so a speculative
+"let's just check if this token still works" call, if it happened to
+succeed, would spend that session before the real work ever gets to use
+it - confirmed the hard way in this same debugging session, when a
+verification check run purely to confirm a fresh pairing worked ended up
+being the thing that used up its one shot, requiring yet another
+dial-press to actually fix anything. One of four states, tracked on
+`_PersistentConnection`:
+
+- `connected` - currently holding a live, authenticated connection.
+- `needs_pairing` - never paired, or the last real attempt's failure
+  looked like an authentication problem (the printer's own
+  `AuthenticationException`). Shown with a "Pair printer" button.
+- `unreachable` - the last real attempt's failure looked like a network
+  problem instead (timeout, connection refused). Shown as an error too,
+  but *without* a pairing button - re-pairing doesn't fix a printer
+  that's off or unplugged, and offering the button anyway would send
+  someone chasing the wrong fix.
+- `unknown` - paired at some point, but nothing has actually been
+  attempted against the printer yet this run, so whether that token
+  still works genuinely isn't known without trying it for real. Shown
+  as a neutral "not yet verified this session," not an error.
+
+**Pairing runs in a background thread, not inline in the request:**
+`pair()` blocks for up to two minutes waiting on a real dial-press -
+tying up an HTTP request handler for that long would be its own problem.
+`printer.start_pairing()` starts it on a daemon thread and returns
+immediately; the dashboard redirects back to itself, sees pairing is now
+in progress, and polls `GET /admin/printer-status` every 2 seconds via
+htmx until it finishes - the exact same self-terminating pattern
+`_jobs_table.html` already uses for slicing progress (see "Upload and
+slicing progress" above): the re-rendered fragment simply stops carrying
+`hx-trigger` once there's nothing left to wait for, so there's no
+separate "stop polling" signal to manage. A failed attempt's error stays
+visible on the dashboard (via `pairing_status()`) until either a retry
+succeeds or someone tries again - it doesn't just silently disappear.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on

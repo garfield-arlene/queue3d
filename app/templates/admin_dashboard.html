@@ -19,6 +19,8 @@
     {% endif %}
   </p>
 
+  {% include "_printer_status.html" %}
+
   {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
 
   <h3>Queue</h3>

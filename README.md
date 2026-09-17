@@ -89,6 +89,12 @@ Managing user accounts:
   meant only the first release after any pairing ever actually worked.
 - **One job on the printer at a time**, enforced - releasing a second job
   while one is already printing is blocked with a clear error.
+- **Printer status on the admin dashboard** - rather than only finding
+  out the printer needs re-pairing when a release actually fails, the
+  dashboard shows its connection state plainly, and a "Pair printer"
+  button starts pairing right from there (with on-screen instructions to
+  go press the printer's dial) instead of needing server/CLI access to
+  run `pair_printer.py` by hand.
 - **A build-plate photo on every finished job** - marking a job done or
   failed automatically captures a photo from the printer's onboard camera
   (over the same persistent JSON-RPC connection) and links it from the
@@ -243,9 +249,11 @@ Managing user accounts:
   to press - resolved on its own on a later attempt, cause not confirmed,
   possibly a UI-state issue from repeated pairing attempts in quick
   succession. Pairing should retry through the slow-HTTP-service case
-  automatically, and the app should surface a clear "needs re-pairing"
-  state on the admin dashboard rather than only a failed-release error
-  the next time someone tries to release a job.
+  automatically.
+- ~~Surface a clear "needs re-pairing" state on the admin dashboard,
+  with a way to start pairing from there~~ **Done** - see Features below
+  ("Printer status on the admin dashboard") and `app/README.md`'s
+  "Printer status and in-app pairing" section.
 - Bed adhesion tuning in the slicing profile - a test print completed
   without error but didn't stick to the bed (first-layer/Z-offset/brim
   settings need dialing in for the actual printer).

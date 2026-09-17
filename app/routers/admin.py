@@ -24,6 +24,7 @@ from jobs import (
     user_has_active_jobs,
 )
 from models import Admin, Job, Settings, User
+from printer import connection_status, pairing_status, start_pairing
 from templates_env import templates
 
 router = APIRouter(prefix="/admin")
@@ -71,6 +72,8 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
         "backup_stale": is_stale(last_backup),
         "rows": rows,
         "action_error": action_error,
+        "printer_status": connection_status(),
+        "pairing": pairing_status(),
     }
 
 
@@ -83,6 +86,35 @@ def dashboard(
     return templates.TemplateResponse(
         request, "admin_dashboard.html", _dashboard_context(session, admin)
     )
+
+
+@router.get("/printer-status")
+def printer_status_fragment(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """Just the printer-status banner, for the htmx polling in
+    templates/_printer_status.html to re-fetch while pairing is in
+    progress - see that template for why polling stops on its own once
+    it's done."""
+    return templates.TemplateResponse(
+        request,
+        "_printer_status.html",
+        {"printer_status": connection_status(), "pairing": pairing_status()},
+    )
+
+
+@router.post("/printer/pair")
+def printer_pair(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """Kicks off pairing in the background (see printer.start_pairing) -
+    a no-op if one's already running - then sends the admin straight back
+    to the dashboard, which shows the "waiting for the dial press" state
+    (and starts polling for it) from _dashboard_context above."""
+    start_pairing()
+    return RedirectResponse("/admin/dashboard", status_code=303)
 
 
 def _get_job_or_404(session: Session, job_id: int) -> Job:

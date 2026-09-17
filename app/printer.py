@@ -477,6 +477,20 @@ class _PersistentConnection:
     def __init__(self):
         self._client: _MakerBotClient | None = None
         self._lock = threading.RLock()
+        # Reflects the outcome of the most recent *real* connection
+        # attempt, for connection_status() below to report - deliberately
+        # never updated by a speculative check, only by an actual
+        # send_print_job()/capture_photo() call, since probing "is the
+        # saved token still good" on its own would risk spending a fresh
+        # token's one-time session just to answer a status question
+        # (found out the hard way: see project memory
+        # makerbot-network-protocol). One of "unknown" (nothing's been
+        # attempted this run yet - the saved token, if any, might be
+        # perfectly fine), "needs_pairing" (the last attempt's failure
+        # looked like an authentication problem), or "unreachable" (the
+        # last attempt's failure looked like a network problem instead -
+        # printer off/unplugged, wrong host - re-pairing wouldn't help).
+        self._last_error = "unknown"
 
     def _connected_client(self) -> "_MakerBotClient":
         """Returns a live, authenticated client - the existing one if a
@@ -496,6 +510,7 @@ class _PersistentConnection:
         port = printer_port()
         token = load_access_token()
         if not token:
+            self._last_error = "needs_pairing"
             raise PrinterError("Printer isn't paired yet - run pair_printer.py once.")
 
         client = _MakerBotClient(host, port)
@@ -511,7 +526,10 @@ class _PersistentConnection:
             # connection died and we're reconnecting), authentication is
             # expected to fail here every time until someone re-pairs.
             # Say so plainly rather than leaving "authentication failed"
-            # unexplained.
+            # unexplained. Distinguish that case (an actual reply from the
+            # printer rejecting authentication) from a network-level
+            # failure (can't even reach it) for connection_status().
+            self._last_error = "needs_pairing" if isinstance(e, _MakerBotError) else "unreachable"
             raise PrinterError(
                 f"Couldn't establish a connection to the printer - if one was "
                 f"already established and this is a reconnect, the printer's "
@@ -519,6 +537,7 @@ class _PersistentConnection:
                 f"re-pairing (run pair_printer.py again): {e}"
             )
         self._client = client
+        self._last_error = "unknown"  # healthy now; stale on the *next* failure, not before
         return client
 
     def send_print_job(self, makerbot_path: Path) -> None:
@@ -561,12 +580,83 @@ class _PersistentConnection:
                 self._client.close()
                 self._client = None
 
+    def status(self) -> str:
+        """See connection_status() below - this just adds the lock."""
+        with self._lock:
+            if self._client is not None:
+                return "connected"
+            if not load_access_token():
+                return "needs_pairing"
+            return self._last_error
+
 
 _connection = _PersistentConnection()
 
 
 def close_connection() -> None:
     _connection.close()
+
+
+def connection_status() -> str:
+    """One of "connected" (currently holding a live, authenticated
+    connection), "needs_pairing" (never paired, or the last real attempt
+    looked like an authentication failure), "unreachable" (the last real
+    attempt looked like a network failure instead - pairing again won't
+    help), or "unknown" (paired at some point, nothing's actually been
+    attempted against the printer yet this run, so whether that token
+    still works genuinely isn't known - see _PersistentConnection's
+    docstring for why this is never checked speculatively). For display
+    only (see admin_dashboard.html's printer status banner) - never
+    itself touches the network."""
+    return _connection.status()
+
+
+# ---- background pairing, triggered from the admin dashboard ----
+# pair() blocks for up to two minutes waiting on a real dial-press, so
+# running it inline in a request handler would tie up that request the
+# whole time. A single daemon thread plus this small bit of shared state
+# lets the dashboard kick it off, then just poll (via htmx, same
+# self-terminating pattern as _jobs_table.html's slicing-progress
+# polling) until it's done.
+_pairing_lock = threading.Lock()
+_pairing_state: dict = {"in_progress": False, "error": None}
+
+
+def start_pairing() -> bool:
+    """Kicks off pairing in the background if one isn't already running.
+    Returns False (a no-op) if one is - the caller should just show the
+    existing in-progress state rather than start a second, competing
+    pairing request against the printer."""
+    with _pairing_lock:
+        if _pairing_state["in_progress"]:
+            return False
+        _pairing_state["in_progress"] = True
+        _pairing_state["error"] = None
+
+    def run():
+        try:
+            token = pair(printer_host())
+            save_access_token(token)
+            with _connection._lock:
+                _connection._last_error = "unknown"  # untested-but-fresh, not a known failure
+        except Exception as e:
+            with _pairing_lock:
+                _pairing_state["error"] = str(e)
+        finally:
+            with _pairing_lock:
+                _pairing_state["in_progress"] = False
+
+    threading.Thread(target=run, daemon=True).start()
+    return True
+
+
+def pairing_status() -> dict:
+    """{"in_progress": bool, "error": str | None} - error is only ever
+    set from the *previous* completed attempt (cleared the moment a new
+    one starts), so a failed attempt's message stays visible on the
+    dashboard until either it succeeds or someone tries again."""
+    with _pairing_lock:
+        return dict(_pairing_state)
 
 
 def send_print_job(makerbot_path: Path) -> None:
