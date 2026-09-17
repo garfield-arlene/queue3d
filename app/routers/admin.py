@@ -13,11 +13,13 @@ from backup import get_last_successful_backup, is_stale
 from db import get_session
 from jobs import (
     JobActionError,
+    _admin_actor,
     active_jobs,
     all_events,
     approve,
     finished_jobs,
     job_events,
+    log_event,
     mark_finished,
     reject,
     release,
@@ -229,6 +231,7 @@ def disable_user(
     user = _get_user_or_404(session, user_id)
     user.disabled = True
     session.add(user)
+    log_event(session, None, _admin_actor(admin), "user_disabled", detail=user.name)
     session.commit()
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -243,6 +246,7 @@ def enable_user(
     user = _get_user_or_404(session, user_id)
     user.disabled = False
     session.add(user)
+    log_event(session, None, _admin_actor(admin), "user_enabled", detail=user.name)
     session.commit()
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -258,6 +262,7 @@ def delete_user(
     if user_has_active_jobs(session, user.id):
         error = f"Can't delete {user.name} - they still have a job in the queue or printing. Resolve it first."
         return templates.TemplateResponse(request, "admin_users.html", _users_context(session, admin, error))
+    log_event(session, None, _admin_actor(admin), "user_deleted", detail=user.name)
     session.delete(user)
     session.commit()
     return RedirectResponse("/admin/users", status_code=303)
@@ -278,6 +283,7 @@ def delete_all_users(
         )
         return templates.TemplateResponse(request, "admin_users.html", _users_context(session, admin, error))
     for user in users:
+        log_event(session, None, _admin_actor(admin), "user_deleted", detail=user.name)
         session.delete(user)
     session.commit()
     return RedirectResponse("/admin/users", status_code=303)

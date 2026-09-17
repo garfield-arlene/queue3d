@@ -273,6 +273,13 @@ Managing user accounts:
 - Rate-limiting or lockout on login attempts - PINs are short by design
   for low signup friction, which also makes them easier to guess; nothing
   currently slows down repeated attempts.
+- Let an admin reset a user's PIN, in case they forget it - today there's
+  no recovery path at all short of the user just signing up under a new
+  name (losing their submission history) or an admin deleting/recreating
+  the account outright.
+- ~~Capture account lifecycle actions (registration, disable, re-enable,
+  delete) in the activity log, not just job actions~~ **Done** - see
+  `app/README.md`'s "Account actions in the activity log" section.
 - ~~Let admins manage user accounts from the UI~~ **Done** - any admin can
   disable/re-enable or permanently delete a user, individually or all at
   once, from `/admin/users`. Disabling blocks login immediately, even from

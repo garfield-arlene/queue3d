@@ -63,6 +63,41 @@ def _migrate_to_2_4_0(conn):
         conn.execute(text("ALTER TABLE job ADD COLUMN photo_path VARCHAR"))
 
 
+def _migrate_to_2_5_0(conn):
+    """JobEvent.job_id becomes nullable - the activity log now also
+    records account lifecycle actions (signup, disable, re-enable,
+    delete) that aren't tied to any one job (see that model's docstring).
+    SQLite can't relax a column's NOT NULL constraint with a plain ALTER
+    TABLE, so this rebuilds the table: a new one with the relaxed schema,
+    every existing row copied across unchanged (a job_id that was never
+    NULL before is trivially still valid once NULL is merely *allowed*),
+    the old one dropped, the new one renamed into its place."""
+    info = conn.execute(text("PRAGMA table_info(jobevent)")).fetchall()
+    job_id_col = next((c for c in info if c[1] == "job_id"), None)
+    if job_id_col is None or job_id_col[3] == 0:  # column gone, or already nullable
+        return
+    conn.execute(
+        text(
+            "CREATE TABLE jobevent_new ("
+            "id INTEGER NOT NULL, "
+            "job_id INTEGER, "
+            "at DATETIME NOT NULL, "
+            "actor VARCHAR NOT NULL, "
+            "action VARCHAR NOT NULL, "
+            "detail VARCHAR NOT NULL, "
+            "PRIMARY KEY (id), "
+            "FOREIGN KEY(job_id) REFERENCES job (id))"
+        )
+    )
+    conn.execute(
+        text("INSERT INTO jobevent_new (id, job_id, at, actor, action, detail) "
+             "SELECT id, job_id, at, actor, action, detail FROM jobevent")
+    )
+    conn.execute(text("DROP TABLE jobevent"))
+    conn.execute(text("ALTER TABLE jobevent_new RENAME TO jobevent"))
+    conn.execute(text("CREATE INDEX ix_jobevent_job_id ON jobevent (job_id)"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -76,6 +111,7 @@ def _migrate_to_2_4_0(conn):
 MIGRATIONS = {
     "2.1.0": _migrate_to_2_1_0,
     "2.4.0": _migrate_to_2_4_0,
+    "2.5.0": _migrate_to_2_5_0,
 }
 
 

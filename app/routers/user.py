@@ -65,6 +65,9 @@ def signup(
     session.commit()
     session.refresh(user)
 
+    log_event(session, None, f"user:{user.name}", "user_registered")
+    session.commit()
+
     request.session["user_id"] = user.id
     return RedirectResponse("/dashboard", status_code=303)
 

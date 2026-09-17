@@ -609,6 +609,54 @@ separate "stop polling" signal to manage. A failed attempt's error stays
 visible on the dashboard (via `pairing_status()`) until either a retry
 succeeds or someone tries again - it doesn't just silently disappear.
 
+### Account actions in the activity log
+
+**Why this exists:** per the user, "all actions should be captured in
+the activity log" - registration, disable, re-enable, and delete, not
+just job actions. `JobEvent.job_id` (schema `2.5.0`) is now nullable for
+exactly this: `None` for an account lifecycle action that isn't tied to
+any one job, with the affected user's name in `detail` instead of a
+job's filename. `all_events()`'s join with `Job` became an outer join
+accordingly - an inner join would silently drop every account row from
+the global log, since there's no job on the other side of it to match.
+`admin_log.html` shows `(account)` in the File column for these rows
+instead of a job link. Logged from `routers/user.py`'s `signup` (actor is
+the new user themselves, action `user_registered`) and
+`routers/admin.py`'s disable/enable/delete endpoints (actor is the
+admin, action `user_disabled`/`user_enabled`/`user_deleted`) - "delete
+all" logs one row per user actually deleted, not one combined entry, so
+each is still individually visible in the log.
+
+**A different kind of migration than the ones before it:** every prior
+`MIGRATIONS` entry was a plain `ALTER TABLE ... ADD COLUMN` - additive,
+one statement. Relaxing an existing column's `NOT NULL` constraint isn't
+something SQLite supports via `ALTER TABLE` at all, so `_migrate_to_2_5_0`
+uses SQLite's standard workaround instead: create a new table with the
+relaxed schema, copy every row across unchanged, drop the old table,
+rename the new one into its place, recreate the index. Tested the same
+way as every migration here - a fresh database (this shape comes
+straight from `create_all()`, no migration involved), and a real copy of
+the user's own production database (confirmed: version recorded
+correctly, every existing row preserved with its original `job_id`
+intact, not touched by the "constraint" that's now just permissive
+rather than required).
+
+**Caught only after the fact, worth remembering:** `models.py`,
+`db.py`, and every router are the *actual* files the user's live dev
+server runs, not a copy - `uvicorn --reload` watches them directly, so
+saving this migration mid-development applied it to the user's real
+production database automatically, the moment the file changed, well
+before it had been reviewed or tested in isolation. It happened to be
+safe here (a purely additive relaxation can't corrupt data that already
+satisfied the stricter constraint), but it's a real gap in how this
+project's schema changes get validated: there's no separation between
+"editing the code" and "it's live on the real database" when the dev
+server has `--reload` watching the actual repo. Test a *risky* migration
+(a rename, a backfill, anything that touches existing data - see
+"Database migrations" above for why `2.1.0` needed exactly that
+distinction) against an isolated copy of the database first, not the
+live one, regardless of how confident the migration looks on paper.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on

@@ -29,14 +29,16 @@ class JobActionError(Exception):
     at a time)."""
 
 
-def log_event(session: Session, job_id: int, actor: str, action: str, detail: str = "") -> None:
-    """Appends one row to the audit log (models.JobEvent) - see that
+def log_event(session: Session, job_id: int | None, actor: str, action: str, detail: str = "") -> None:
+    """Appends one row to the activity log (models.JobEvent) - see that
     model's docstring for why this exists. Called from every function
     below that changes a job's status (and from upload()/cleanup_drafts.py
     for the two that don't live in this module), right alongside the
     session.add(job)/commit() for that same change, so the log and the
     job's own current state can never end up telling two different
-    stories about the same action."""
+    stories about the same action. `job_id=None` for an account
+    lifecycle action (see routers/user.py's signup, routers/admin.py's
+    disable/enable/delete) that isn't tied to any one job."""
     session.add(JobEvent(job_id=job_id, actor=actor, action=action, detail=detail))
 
 
@@ -100,6 +102,10 @@ def all_events(session: Session, limit: int = 500) -> list[tuple[JobEvent, str, 
     plain human-readable label stored directly on JobEvent (see that
     model's docstring), so the job's filename and (for a done/failed
     event) its photo are the only other things the log table needs.
+    An *outer* join, not an inner one - an account lifecycle event
+    (job_id=None, see that model's docstring) has no job to join at all,
+    and should still show up here rather than silently vanishing from the
+    query; original_filename/photo_path both come back None for those.
 
     Capped at `limit` for now, not paginated - full filtering is a
     separate, later to-do (per the user: "I will ask for log filters
@@ -107,7 +113,7 @@ def all_events(session: Session, limit: int = 500) -> list[tuple[JobEvent, str, 
     complete unbounded history browser yet."""
     return session.exec(
         select(JobEvent, Job.original_filename, Job.photo_path)
-        .join(Job, JobEvent.job_id == Job.id)
+        .join(Job, JobEvent.job_id == Job.id, isouter=True)
         .order_by(JobEvent.at.desc())
         .limit(limit)
     ).all()

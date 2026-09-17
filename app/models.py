@@ -143,14 +143,19 @@ class Settings(SQLModel, table=True):
 
 
 class JobEvent(SQLModel, table=True):
-    """One row per job-affecting action - the audit log. `Job` itself only
+    """One row per audited action - the activity log. `Job` itself only
     ever holds the *current* snapshot (`reviewed_at`/`reviewed_by_admin_id`/
     `admin_note` capture just the latest review, nothing earlier), which
     was the actual gap that prompted this: a rejection was recorded
     correctly but there was nowhere to go *see* that it had been, so it
     read as if nothing had happened. This is the full history instead -
     every submit, slice attempt, re-slice, queue-submit, approve, reject,
-    release, done/failed, and expiry, in order, for a given job.
+    release, done/failed, and expiry, in order, for a given job - plus,
+    per the user ("all actions should be captured"), account lifecycle
+    actions that aren't tied to any one job at all: a user registering,
+    and an admin disabling/re-enabling/deleting one. `job_id` is nullable
+    for exactly that reason (schema 2.5.0) - None for an account action,
+    with the affected user's name in `detail` instead of a job's filename.
 
     `actor` is a plain label (`"user:<name>"`, `"admin:<username>"`, or
     `"system"` for an automated action like draft expiry) rather than a
@@ -160,7 +165,7 @@ class JobEvent(SQLModel, table=True):
     displayed, never joined against."""
 
     id: int | None = Field(default=None, primary_key=True)
-    job_id: int = Field(foreign_key="job.id", index=True)
+    job_id: int | None = Field(default=None, foreign_key="job.id", index=True)
     at: datetime = Field(default_factory=utcnow)
     actor: str
     action: str  # short verb: "submitted", "sliced", "slice_failed", "reslice_started", "queued", "approved", "rejected", "released", "done", "failed", "expired"
