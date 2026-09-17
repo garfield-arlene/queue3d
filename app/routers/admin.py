@@ -366,8 +366,8 @@ def activity_log_page(
     session: Session = Depends(get_session),
 ):
     rows = [
-        {"event": event, "filename": filename}
-        for event, filename in all_events(session, limit=ACTIVITY_LOG_LIMIT)
+        {"event": event, "filename": filename, "photo_path": photo_path}
+        for event, filename, photo_path in all_events(session, limit=ACTIVITY_LOG_LIMIT)
     ]
     return templates.TemplateResponse(
         request,

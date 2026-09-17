@@ -65,6 +65,15 @@ def archive_paths(job_id: int) -> tuple[Path, Path, Path]:
     )
 
 
+def archive_photo_path(job_id: int) -> Path:
+    """Where a job's build-plate photo is saved (see jobs.mark_finished)
+    - directly here in archive/, not scratch/ or queue/ first, since the
+    photo is only ever captured at the moment a job reaches a terminal
+    state, unlike the stl/makerbot/supports files which exist earlier and
+    get moved."""
+    return ARCHIVE_DIR / f"{job_id}.photo.jpg"
+
+
 def move_job_to_archive(job) -> None:
     """Move a job's files from queue/ to archive/ once it reaches a
     terminal state (done/failed/rejected). Tolerant of any file being

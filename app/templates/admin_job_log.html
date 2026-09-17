@@ -13,6 +13,7 @@
   <p class="muted">
     Submitted by {{ user_name }} - currently <strong>{{ job.status.value }}</strong>.
     {% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}
+    {% if job.photo_path %}<a href="/jobs/{{ job.id }}/photo.jpg">Photo</a>{% endif %}
   </p>
 
   <h3>History</h3>
@@ -20,7 +21,7 @@
     <p class="muted">No recorded events yet.</p>
   {% else %}
     <table>
-      <tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>
+      <tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th><th></th></tr>
       {% for event in events %}
         <tr>
           <td class="muted">{{ event.at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
@@ -34,6 +35,11 @@
               </details>
             {% else %}
               {{ event.detail }}
+            {% endif %}
+          </td>
+          <td>
+            {% if event.action in ('done', 'failed') and job.photo_path %}
+              <a href="/jobs/{{ job.id }}/photo.jpg">Photo</a>
             {% endif %}
           </td>
         </tr>

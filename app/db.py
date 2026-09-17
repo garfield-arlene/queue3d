@@ -50,6 +50,19 @@ def _migrate_to_2_1_0(conn):
         )
 
 
+def _migrate_to_2_4_0(conn):
+    """New Job.photo_path column - a photo of the build plate, captured
+    via the printer's camera when a job is marked done/failed (see
+    jobs.mark_finished, app/README.md's "Printer camera"). Purely
+    additive (a new nullable column, nothing renamed or backfilled), but
+    still needs a real ALTER TABLE - create_all() only creates tables
+    that don't exist yet, it never alters an existing one, same as every
+    other entry in this dict."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "photo_path" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN photo_path VARCHAR"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -62,6 +75,7 @@ def _migrate_to_2_1_0(conn):
 # to _migrate_to_2_1_0, and add it here keyed by that same new version.
 MIGRATIONS = {
     "2.1.0": _migrate_to_2_1_0,
+    "2.4.0": _migrate_to_2_4_0,
 }
 
 

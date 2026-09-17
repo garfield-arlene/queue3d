@@ -203,3 +203,11 @@ class Job(SQLModel, table=True):
     admin_note: str | None = Field(default=None)
     released_at: datetime | None = Field(default=None)
     finished_at: datetime | None = Field(default=None)
+    # A photo of the build plate, taken via the printer's camera the
+    # moment an admin marks this job done or failed (see jobs.mark_finished)
+    # - regardless of outcome, so both the submitter and an admin have a
+    # visual record of what actually happened, not just a status word.
+    # None if capture failed (camera/printer unreachable, etc.) - a
+    # missing photo never blocks recording the print's own outcome, see
+    # that function's docstring.
+    photo_path: str | None = Field(default=None)

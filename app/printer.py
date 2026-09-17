@@ -40,6 +40,7 @@ import json
 import os
 import queue
 import socket
+import struct
 import threading
 import time
 import urllib.error
@@ -99,6 +100,22 @@ class _MakerBotClient:
         self._next_id = 0
         self._reader_thread = None
         self._stop = False
+        # Camera-frame handling (see capture_one_frame) - deliberately
+        # state on this same reader thread rather than a second thread
+        # racing it for the socket. _camera_mode_until is a monotonic
+        # deadline (0 = not in camera mode); while now < that deadline,
+        # _read_loop peeks at the next byte before trying to parse a JSON
+        # message at all - a raw frame's binary header can't start with
+        # '{', so this tells raw frame data apart from a real JSON message
+        # (a "camera_frame" notification, or the end_camera_stream reply)
+        # without having to assume which one the printer sends next; it's
+        # a *sliding* window, not a fixed one (see _consume_camera_frame) -
+        # the printer keeps pushing frames for an unpredictable stretch
+        # after end_camera_stream, and it only closes once frames actually
+        # stop arriving for _camera_grace_period seconds.
+        self._camera_mode_until = 0.0
+        self._camera_grace_period = 3.0
+        self._camera_result: queue.Queue | None = None
 
     def __enter__(self):
         self.connect()
@@ -129,18 +146,112 @@ class _MakerBotClient:
     def _read_loop(self):
         buf = b""
         while not self._stop:
-            try:
-                chunk = self._sock.recv(4096)
-            except OSError:
-                break
-            if not chunk:
-                break
-            buf += chunk
-            while True:
-                msg, buf = self._extract_message(buf)
-                if msg is None:
+            if not buf:
+                try:
+                    chunk = self._sock.recv(4096)
+                except OSError:
                     break
-                self._dispatch(msg)
+                if not chunk:
+                    break
+                buf += chunk
+                continue
+
+            # While a capture is active (or was, recently - see
+            # _camera_mode_until's docstring), don't assume every frame is
+            # preceded by its own "camera_frame" JSON notification: turns
+            # out that's only sometimes true, and guessing wrong crashed
+            # this thread by brace-counting straight into raw JPEG bytes
+            # (some of which happen to equal '{'/'}'). A raw frame header
+            # can never start with '{' (that'd make frame_size itself
+            # nonsense, in the billions), so peeking at the next byte is a
+            # cheap, structural way to tell the two apart regardless of
+            # which framing the printer is actually using right now.
+            if time.monotonic() < self._camera_mode_until and buf[:1] != b"{":
+                buf = self._consume_camera_frame(buf)
+                continue
+
+            msg, buf = self._extract_message(buf)
+            if msg is None:
+                try:
+                    chunk = self._sock.recv(4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                buf += chunk
+                continue
+
+            parsed = self._try_parse(msg)
+            if (
+                parsed is not None
+                and parsed.get("method") == "camera_frame"
+                and time.monotonic() < self._camera_mode_until
+            ):
+                # The 16-byte frame header + JPEG bytes immediately
+                # follow this notification - not the start of another
+                # JSON message. Read them here, in this same thread,
+                # rather than have some other thread race this one for
+                # the socket (see capture_one_frame's docstring for
+                # why that was the original, buggier approach).
+                buf = self._consume_camera_frame(buf)
+                continue
+            self._dispatch(parsed)
+
+    def _consume_camera_frame(self, buf: bytes) -> bytes:
+        """Reads this camera_frame notification's 16-byte header + JPEG
+        payload directly off the socket (blocking further recv()s as
+        needed, same as the outer loop would) and, if a capture is
+        currently waiting for one (self._camera_result is set), delivers
+        it there - the *first* frame after a request_camera_stream, not
+        every one of the continuous stream that follows. Returns
+        whatever's left in `buf` afterward. Must only be called from
+        _read_loop, on its own thread.
+
+        Slides _camera_mode_until forward on every frame actually consumed
+        here (not just the first) - see that attribute's docstring in
+        __init__ for why a fixed deadline isn't safe.
+
+        A bounded per-recv timeout (_FRAME_RECV_TIMEOUT) is a deliberate
+        safety net, not a normal-path expectation: this thread's socket
+        otherwise has no timeout at all (see connect()), so any bug in
+        this method - a miscomputed frame_size chief among them - would
+        otherwise block forever with nothing to surface it. A timeout here
+        propagates out of _read_loop and ends the thread; _connected_client's
+        health check then notices the dead connection on the next call and
+        reconnects (needing a fresh pairing) rather than hanging forever."""
+        _FRAME_RECV_TIMEOUT = 30
+        orig_timeout = self._sock.gettimeout()
+        self._sock.settimeout(_FRAME_RECV_TIMEOUT)
+        try:
+            while len(buf) < 16:
+                chunk = self._sock.recv(65536)
+                if not chunk:
+                    return b""
+                buf += chunk
+            header, buf = buf[:16], buf[16:]
+            frame_size, _width, _height, _fourth = struct.unpack(">IIII", header)
+
+            while len(buf) < frame_size:
+                chunk = self._sock.recv(65536)
+                if not chunk:
+                    return b""
+                buf += chunk
+            jpeg_data, buf = buf[:frame_size], buf[frame_size:]
+        finally:
+            self._sock.settimeout(orig_timeout)
+
+        self._camera_mode_until = time.monotonic() + self._camera_grace_period
+        if self._camera_result is not None:
+            self._camera_result.put(jpeg_data)
+            self._camera_result = None  # only the first frame goes to a waiting caller
+        return buf
+
+    @staticmethod
+    def _try_parse(raw: bytes):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
 
     @staticmethod
     def _extract_message(buf):
@@ -176,10 +287,8 @@ class _MakerBotClient:
                     return buf[: i + 1], buf[i + 1 :]
         return None, buf
 
-    def _dispatch(self, raw):
-        try:
-            msg = json.loads(raw)
-        except json.JSONDecodeError:
+    def _dispatch(self, msg):
+        if msg is None:  # failed to parse - nothing usable to do with it
             return
         msg_id = msg.get("id")
         if msg_id is None:
@@ -229,6 +338,60 @@ class _MakerBotClient:
         """Works even before authentication; returns basic machine info
         (name, type, firmware version, serial...)."""
         return self.request("handshake", {})
+
+    def capture_one_frame(self, timeout=15, grace_period=3.0) -> bytes:
+        """Returns one JPEG frame's raw bytes from the printer's camera.
+
+        There's no true one-shot capture method on this firmware -
+        confirmed live (see project memory makerbot-network-protocol):
+        request_camera_frame/get_available_cameras/get_camera_frame are
+        all "method not found". What actually works is
+        request_camera_stream, which makes the printer immediately start
+        pushing, repeatedly, on this same socket: a `camera_frame`
+        JSON-RPC *notification* (no "id" - a push, not a reply to
+        anything we asked), immediately followed by a 16-byte big-endian
+        binary header (frame_size, width, height, and an unidentified 4th
+        field), immediately followed by exactly frame_size bytes of a
+        real JPEG image - a continuous MJPEG-style stream, not one frame
+        per call.
+
+        An earlier version of this method tried to pause the background
+        reader thread and take over the raw socket from the calling
+        thread instead - genuinely broken, caught by testing before this
+        ever shipped: a thread blocked in recv() doesn't notice a "please
+        stop" flag until data actually arrives, so both threads ended up
+        racing to read the same socket. The fix is _read_loop/
+        _consume_camera_frame handling the binary payload inline, on the
+        *same* thread that's already reading the socket - this method
+        just requests the stream, waits on a queue for that thread to
+        hand back the first frame, then requests the stream stop.
+
+        `grace_period` is how long, after each frame actually seen,
+        _read_loop keeps treating a *further* camera_frame notification
+        specially (consuming its raw payload, just not delivering it
+        anywhere) - a sliding window, not a fixed one (see
+        _consume_camera_frame): the printer keeps pushing frames for an
+        unpredictable stretch after end_camera_stream, and it only
+        re-arms normal JSON parsing once frames actually stop arriving
+        for this long.
+        """
+        result: queue.Queue = queue.Queue(maxsize=1)
+        self._camera_result = result
+        self._camera_grace_period = grace_period
+        self._camera_mode_until = time.monotonic() + timeout
+
+        try:
+            self.request("request_camera_stream", {})
+            try:
+                jpeg_data = result.get(timeout=timeout)
+            except queue.Empty:
+                raise _MakerBotError("Timed out waiting for a camera frame")
+            finally:
+                self._camera_result = None  # in case our own wait timed out, not the read loop
+            self.request("end_camera_stream", {})
+            return jpeg_data
+        finally:
+            self._camera_mode_until = time.monotonic() + grace_period
 
 
 # ---- one-time pairing (see pair_printer.py) ----
@@ -372,6 +535,21 @@ class _PersistentConnection:
                 self._client = None
                 raise
 
+    def capture_photo(self) -> bytes:
+        with self._lock:
+            client = self._connected_client()
+            try:
+                return client.capture_one_frame()
+            except (_MakerBotError, OSError, TimeoutError) as e:
+                # Same reasoning as send_print_job's except clause: an
+                # error here could mean the connection itself is bad now
+                # (capture_one_frame's raw socket handling is more
+                # invasive than a normal request()), not just a rejected
+                # request - drop it so the next call reconnects fresh.
+                self._client.close()
+                self._client = None
+                raise PrinterError(f"Couldn't capture a photo from the printer's camera: {e}")
+
     def close(self) -> None:
         """Cleanly closes the connection, if one is open - called on app
         shutdown (see main.py) so a restart doesn't leave the old
@@ -399,6 +577,16 @@ def send_print_job(makerbot_path: Path) -> None:
     since a failure partway through the upload leaves no guarantee the
     printer actually started."""
     _connection.send_print_job(makerbot_path)
+
+
+def capture_photo() -> bytes:
+    """Returns one JPEG frame from the printer's camera, over the same
+    persistent connection as send_print_job() (connecting/authenticating
+    first if needed). Raises PrinterError on any failure - callers should
+    treat a failed capture as "no photo this time," not something that
+    should block recording a job's actual outcome (see
+    jobs.mark_finished)."""
+    return _connection.capture_photo()
 
 
 def _upload_and_print(client: "_MakerBotClient", makerbot_path: Path) -> None:

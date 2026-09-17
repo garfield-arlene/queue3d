@@ -53,6 +53,9 @@
             {% elif job.stl_path %}
               <a href="/jobs/{{ job.id }}/preview">View 3D</a>
             {% endif %}
+            {% if job.photo_path %}
+              <a href="/jobs/{{ job.id }}/photo.jpg">Photo</a>
+            {% endif %}
           </td>
           <td>
             {% if job.status.value == 'sliced' %}

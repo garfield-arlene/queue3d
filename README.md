@@ -89,13 +89,18 @@ Managing user accounts:
   meant only the first release after any pairing ever actually worked.
 - **One job on the printer at a time**, enforced - releasing a second job
   while one is already printing is blocked with a clear error.
-- **Camera access confirmed** - the printer's onboard camera is reachable
-  over the same JSON-RPC connection (`request_camera_stream` pushes a
-  continuous sequence of JPEG frames as notifications; `end_camera_stream`
-  stops it), verified by actually capturing and decoding a real photo of
-  the build plate. Not wired into the app yet - see the To do list - this
-  confirms it's possible and how, not that a job's page shows a photo
-  today.
+- **A build-plate photo on every finished job** - marking a job done or
+  failed automatically captures a photo from the printer's onboard camera
+  (over the same persistent JSON-RPC connection) and links it from the
+  job's own log, the global activity log, and the submitting user's own
+  dashboard row - so both the user and an admin can see what actually
+  happened, and an admin can visually confirm which physical print
+  belongs to which submitter's claim. A failed capture (camera or printer
+  unreachable at the moment) never blocks recording the job's own
+  outcome - it's logged as a failed-capture detail instead, not an error
+  that stops the done/failed action. See `app/README.md`'s "Printer
+  camera" section for the protocol write-up and the framing bug this
+  surfaced.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -217,16 +222,9 @@ Managing user accounts:
 - Live print progress/status while a job is printing - `mark_done`/
   `mark_failed` are still a manual admin action; the printer's protocol
   has a status-notification mechanism that isn't consumed yet.
-- **Camera access is confirmed working end-to-end** (see Features below
-  for the summary) - protocol fully understood and proven with a real
-  captured photo, not just a successful-looking RPC call. Not yet wired
-  into the app itself: this to-do item was "can we even do this," which
-  is now answered - actually capturing a photo when a job stops
-  (success, failure, or a manual stop) and attaching it to the job record
-  is still to be built into `jobs.py`/`printer.py`, using the persistent
-  connection above (calling `request_camera_stream`, saving the first
-  complete frame, then `end_camera_stream` - not leaving a stream running
-  in the background).
+- ~~Camera access confirmed, wire a photo into the job record~~ **Done** -
+  see Features above ("A build-plate photo on every finished job") and
+  `app/README.md`'s "Printer camera" section.
 - **The persistent-connection fix is built** (see Features below) - the
   investigation that found the underlying problem, and why the fix is
   architectural rather than a retry/backoff tweak, is in `app/README.md`'s

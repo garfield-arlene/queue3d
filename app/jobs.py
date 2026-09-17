@@ -12,8 +12,14 @@ from sqlmodel import Session, select
 from db import engine
 from models import Admin, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES, User
 from pipeline import run_slice
-from printer import PrinterError, send_print_job
-from storage import move_job_to_archive, queue_paths, read_makerbot_duration_s, scratch_paths
+from printer import PrinterError, capture_photo, send_print_job
+from storage import (
+    archive_photo_path,
+    move_job_to_archive,
+    queue_paths,
+    read_makerbot_duration_s,
+    scratch_paths,
+)
 
 
 class JobActionError(Exception):
@@ -83,23 +89,24 @@ def job_events(session: Session, job_id: int) -> list[JobEvent]:
     ).all()
 
 
-def all_events(session: Session, limit: int = 500) -> list[tuple[JobEvent, str]]:
+def all_events(session: Session, limit: int = 500) -> list[tuple[JobEvent, str, str | None]]:
     """Every event across every job, most-recent first - the global admin
     activity log ("what's been happening, at a glance"), per the user:
     a single table of everything, not just reachable one job at a time.
     Distinct from job_events() above, which that per-job log still uses.
 
-    Returns (event, original_filename) pairs from one joined query rather
-    than N+1 separate lookups - `actor` is already a plain human-readable
-    label stored directly on JobEvent (see that model's docstring), so the
-    filename is the only other thing the log table needs to show.
+    Returns (event, original_filename, photo_path) triples from one
+    joined query rather than N+1 separate lookups - `actor` is already a
+    plain human-readable label stored directly on JobEvent (see that
+    model's docstring), so the job's filename and (for a done/failed
+    event) its photo are the only other things the log table needs.
 
     Capped at `limit` for now, not paginated - full filtering is a
     separate, later to-do (per the user: "I will ask for log filters
     later"), so this is deliberately just "show recent activity," not a
     complete unbounded history browser yet."""
     return session.exec(
-        select(JobEvent, Job.original_filename)
+        select(JobEvent, Job.original_filename, Job.photo_path)
         .join(Job, JobEvent.job_id == Job.id)
         .order_by(JobEvent.at.desc())
         .limit(limit)
@@ -323,13 +330,35 @@ def submit_draft(session: Session, job: Job) -> Job:
 
 def mark_finished(session: Session, job: Job, admin: Admin, success: bool) -> Job:
     """Manual admin override to record a print's outcome, until live
-    printer status reporting exists (see release() above)."""
+    printer status reporting exists (see release() above).
+
+    Also captures a photo of the build plate via the printer's camera,
+    regardless of outcome - success, failure, or (today, since there's no
+    separate "stopped manually" state yet) whatever this was marked as -
+    so both the submitting user and an admin have a visual record of what
+    actually happened, not just a status word. Per the user: this also
+    lets an admin visually confirm which physical print belongs to which
+    submitter's claim. A failed capture (camera unreachable, printer
+    already powered back off, etc.) never blocks recording the print's
+    own outcome - it's a best-effort extra, not a precondition, and the
+    reason for a missing photo is still recorded in the log entry either
+    way."""
     _require_status(job, JobStatus.printing)
     job.status = JobStatus.done if success else JobStatus.failed
     job.finished_at = datetime.now(timezone.utc)
     move_job_to_archive(job)
+
+    try:
+        jpeg_data = capture_photo()
+        photo_path = archive_photo_path(job.id)
+        photo_path.write_bytes(jpeg_data)
+        job.photo_path = str(photo_path)
+        photo_detail = "photo captured"
+    except PrinterError as e:
+        photo_detail = f"photo capture failed: {e}"
+
     session.add(job)
-    log_event(session, job.id, _admin_actor(admin), job.status.value)
+    log_event(session, job.id, _admin_actor(admin), job.status.value, detail=photo_detail)
     session.commit()
     session.refresh(job)
     return job

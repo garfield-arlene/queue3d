@@ -51,3 +51,15 @@ def supports_file(job_id: int, request: Request, session: Session = Depends(get_
     if job.supports_path and Path(job.supports_path).exists():
         return FileResponse(job.supports_path, media_type="application/json")
     return JSONResponse([])
+
+
+@router.get("/{job_id}/photo.jpg")
+def photo_file(job_id: int, request: Request, session: Session = Depends(get_session)):
+    """The build-plate photo captured when this job was marked done/failed
+    (see jobs.mark_finished) - same access rule as everything else here,
+    the job's own owner or any admin. 404 if none was ever captured
+    (camera unreachable at the time, or the job hasn't finished yet)."""
+    job = _job_with_access(job_id, request, session)
+    if not job.photo_path or not Path(job.photo_path).exists():
+        raise HTTPException(status_code=404, detail="No photo for this job")
+    return FileResponse(job.photo_path, media_type="image/jpeg")

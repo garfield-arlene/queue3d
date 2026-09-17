@@ -454,6 +454,105 @@ correctly got the clear "needs re-pairing" `PrinterError` rather than a
 confusing raw exception, since that process's connection attempt was
 inherently a second session against an already-spent token.
 
+### Printer camera
+
+**Why this exists:** per the user, both the submitting user and an admin
+should be able to see what actually happened to a print, not just a status
+word - and an admin specifically needs to be able to visually confirm
+which physical print on the bed belongs to which submitter's claim.
+`jobs.mark_finished()` now captures a photo of the build plate,
+automatically, the moment a job is marked done or failed - regardless of
+which outcome - and links it from the job's own log, the global activity
+log, and the submitting user's dashboard row.
+
+**The protocol (reverse-engineered, undocumented by MakerBot):** there's
+no true one-shot "take a photo" method on this firmware -
+`request_camera_frame`/`get_available_cameras`/`get_camera_frame` are all
+`method not found`, confirmed live. What actually works is
+`request_camera_stream`: the printer immediately starts pushing frames
+continuously on the same JSON-RPC socket, each one a 16-byte big-endian
+binary header (`frame_size, width, height`, and a 4th field whose meaning
+isn't identified) immediately followed by exactly `frame_size` bytes of a
+real JPEG image - 640x480, roughly 4fps, roughly 33-34KB/frame observed.
+`end_camera_stream` stops it. `capture_one_frame()` (`printer.py`) drives
+this: request the stream, hand the *first* frame back to the caller,
+request the stream to stop.
+
+**Two bugs this surfaced, both found by testing against the real
+printer, not in review:**
+
+1. **Binary frame data isn't JSON, and can't share a naive parser with
+   the frames that are.** The wire format is otherwise "concatenated JSON
+   objects, framed by brace-counting" (see `_extract_message`) - fine for
+   ordinary request/response traffic, but raw JPEG bytes routinely contain
+   byte values equal to `{`/`}`, and brace-counting straight into one
+   crashes with a `UnicodeDecodeError` trying to `json.loads` binary
+   nonsense. The first fix attempt paused the background reader thread,
+   had the calling thread take over the raw socket directly, then
+   restarted the reader thread afterward - genuinely broken, caught by
+   live testing (a `mark_done` call hung indefinitely) before it ever
+   shipped: a thread blocked in `recv()` doesn't notice a "please stop"
+   flag until data actually arrives, so the two threads ended up racing to
+   read the same socket. The real fix keeps all of it on the *one* reader
+   thread that's already reading the socket (`_read_loop`/
+   `_consume_camera_frame`), handing a captured frame to the waiting
+   caller through a `queue.Queue` instead.
+
+   Getting frame boundaries right within that one thread took a second
+   round, also only caught live: the original assumption was that every
+   single frame is preceded by its own `camera_frame` JSON-RPC
+   notification (matching how the very first frame looked), so
+   `_read_loop` would go back to normal JSON parsing after each frame,
+   expecting another notification next. That assumption was wrong -
+   subsequent frames in the stream aren't necessarily preceded by a fresh
+   notification - and guessing wrong meant trying to brace-count straight
+   into the next frame's raw binary header, the exact same crash as above.
+   The fix doesn't guess: while a capture is active (or was, recently -
+   see `_camera_mode_until`, a *sliding* deadline that keeps extending as
+   long as frames keep arriving, since the printer keeps pushing for an
+   unpredictable stretch after `end_camera_stream`), `_read_loop` peeks at
+   the next byte before attempting to parse anything as JSON at all. A raw
+   frame's binary header can never start with `{` - that would make its
+   declared `frame_size` a nonsense value in the billions - so this cheap,
+   structural check tells raw frame data apart from a real JSON message
+   (a notification, or the `end_camera_stream` reply) without needing to
+   assume which one is coming next.
+
+2. **Killing a process that holds the connection with `SIGKILL` (`kill
+   -9`) instead of letting it shut down cleanly can wedge the printer's
+   session state**, observed directly while iterating on the fix above:
+   after a hard-killed test process (whose reader thread had already
+   crashed from bug #1, leaving its socket open but unread), a *brand
+   new* pairing's very first `authenticate` call was rejected outright
+   with `AuthenticationException` - not the already-understood
+   already-spent-token case (see "Persistent printer connection" above),
+   since this was a token that had never been used. This is why
+   `close_connection()` (`main.py`'s shutdown handler) matters in
+   practice, not just tidiness: a normal shutdown (`SIGTERM`) reaches it
+   and closes the socket cleanly; forcibly killing the process does not,
+   and the printer's firmware appears not to reliably notice the
+   connection is gone until something like a power cycle. Not something
+   client-side code can engineer around further - just a real operational
+   note (and the reason a couple of test cycles during this feature's own
+   development needed the printer power-cycled to recover).
+
+**Failure handling:** `capture_photo()` (`printer.py`) raises
+`PrinterError` on any failure - camera unreachable, printer powered off,
+a capture that time out - and `mark_finished()` treats that as
+"no photo this time," never as a reason to block recording the job's
+actual outcome. The reason for a missing photo is still recorded in that
+job's log entry either way (`"photo captured"` or `"photo capture failed:
+..."`), so a missing photo reads as "camera unavailable at that moment,"
+not silence.
+
+`Job.photo_path` (nullable, added in schema `2.4.0`) points at
+`archive/{job_id}.photo.jpg`, saved directly there rather than through
+`scratch/`/`queue/` first - unlike the stl/makerbot/supports files, a
+job's photo only ever exists once the job has already reached a terminal
+state. Served via `/jobs/{id}/photo.jpg` (`routers/jobs.py`), same
+access rule as the model/supports files: the job's own owner, or any
+admin.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on
