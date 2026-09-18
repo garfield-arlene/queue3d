@@ -177,6 +177,11 @@ Managing user accounts:
   right there, to relay to the user in person. The old PIN stops working
   immediately. Logged in the activity log like any other account action
   - who did it and for whom, never the PIN value itself.
+- **Print duration estimates shown as days/hours/minutes**, not raw
+  total minutes - "1d 1h" or "2h 5m" instead of "1500 min"/"125 min",
+  everywhere a duration is displayed (queued/approved/sliced estimates,
+  and the live "time remaining"/"over the estimate" countdown for a job
+  that's printing).
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -213,8 +218,8 @@ Managing user accounts:
   **Done** - see Features above. (Slicing-error detail turned out to
   already be visible to the user, via the draft edit page - only the
   manual "Mark failed" gap was real.)
-- Break the estimated print duration into days/hours/minutes - it's
-  currently total minutes only.
+- ~~Break the estimated print duration into days/hours/minutes - it's
+  currently total minutes only.~~ **Done** - see Features above.
 - Show the date/time a job was submitted, and how long it's been sitting
   in the queue since (days/hours/minutes) - the timestamp is already
   recorded (`Job.created_at`/`queued_at`), it's just not displayed

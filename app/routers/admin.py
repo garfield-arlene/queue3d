@@ -28,6 +28,7 @@ from jobs import (
     approve,
     corrected_duration_estimate_s,
     finished_jobs,
+    format_duration,
     job_events,
     log_event,
     mark_finished,
@@ -89,12 +90,14 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
     rows = []
     for job in active_jobs(session):
         user = session.get(User, job.user_id)
+        estimate_s = corrected_duration_estimate_s(session, job)
         rows.append(
             {
                 "job": job,
                 "user_name": user.name if user else "?",
                 "eta": printing_eta(session, job),
-                "duration_estimate_s": corrected_duration_estimate_s(session, job),
+                "duration_estimate_s": estimate_s,
+                "duration_display": format_duration(estimate_s) if estimate_s else None,
             }
         )
     return {

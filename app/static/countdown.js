@@ -16,11 +16,28 @@
 // matter: whatever [data-countdown-eta] elements exist right now just
 // get updated, whether they're the original nodes or htmx's replacements.
 (function () {
+  // Mirrors jobs.format_duration() (Python) - same "1d 2h 15m", drop
+  // leading/trailing zero units, round to the nearest whole minute
+  // first rather than each unit separately. Kept as a parallel JS copy
+  // rather than shared code: there's no build step in this app to share
+  // a module between a Jinja-rendered page and a plain <script>, and
+  // this is small/stable enough that duplicating it beats adding one.
+  function formatDuration(totalMin) {
+    const days = Math.floor(totalMin / (24 * 60));
+    const hours = Math.floor((totalMin % (24 * 60)) / 60);
+    const minutes = totalMin % 60;
+    const parts = [];
+    if (days) parts.push(`${days}d`);
+    if (hours) parts.push(`${hours}h`);
+    if (minutes || !parts.length) parts.push(`${minutes}m`);
+    return parts.join(" ");
+  }
+
   function formatRemaining(ms) {
     const totalMin = Math.round(ms / 60000);
-    if (totalMin > 1) return `~${totalMin} min remaining`;
+    if (totalMin > 1) return `~${formatDuration(totalMin)} remaining`;
     if (totalMin >= 0) return "any minute now";
-    return `~${Math.abs(totalMin)} min over the estimate`;
+    return `~${formatDuration(Math.abs(totalMin))} over the estimate`;
   }
 
   function tick() {

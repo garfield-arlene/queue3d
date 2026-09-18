@@ -15,6 +15,7 @@ from db import get_session
 from jobs import (
     JobActionError,
     corrected_duration_estimate_s,
+    format_duration,
     jobs_for_user,
     log_event,
     printing_eta,
@@ -177,15 +178,18 @@ def update_settings(
 
 def _dashboard_context(session: Session, user: User, flash_error: str | None = None):
     jobs = jobs_for_user(session, user.id)
-    rows = [
-        {
-            "job": job,
-            "position": queue_position(session, job),
-            "eta": printing_eta(session, job),
-            "duration_estimate_s": corrected_duration_estimate_s(session, job),
-        }
-        for job in jobs
-    ]
+    rows = []
+    for job in jobs:
+        estimate_s = corrected_duration_estimate_s(session, job)
+        rows.append(
+            {
+                "job": job,
+                "position": queue_position(session, job),
+                "eta": printing_eta(session, job),
+                "duration_estimate_s": estimate_s,
+                "duration_display": format_duration(estimate_s) if estimate_s else None,
+            }
+        )
     return {
         "user": user,
         "rows": rows,

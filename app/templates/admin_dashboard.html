@@ -46,8 +46,8 @@
                  required, not decorative: without it, the browser's
                  Date() would parse this as *local* time instead. #}
               <span data-countdown-eta="{{ row.eta.isoformat() }}Z"></span>
-            {% elif row.duration_estimate_s %}
-              {{ (row.duration_estimate_s / 60) | round | int }} min
+            {% elif row.duration_display %}
+              {{ row.duration_display }}
             {% endif %}
           </td>
           <td>

@@ -1217,6 +1217,53 @@ any other wrong PIN), the new one logs in successfully, and the activity
 log shows `admin:<username>` / `pin_reset` / the user's name - never the
 PIN value.
 
+### Duration estimates as days/hours/minutes
+
+**Why this exists:** raw total minutes reads badly once a print's
+estimate crosses an hour, and outright unreadable past a day - "1500
+min" instead of "1d 1h" - per README.md's to-do list.
+
+**`jobs.format_duration(seconds)`** is the one place this formatting
+happens, called wherever a duration was previously rendered as
+`(seconds / 60) | round | int` directly in a template
+(`admin_dashboard.html`, `_jobs_table.html`) - both routers'
+`_dashboard_context()` now compute `row.duration_display` once per row,
+same pattern already established for `duration_estimate_s` itself (see
+"A history-corrected time estimate"), rather than repeating the
+formatting logic in Jinja. Rounds to the nearest whole *minute* first,
+then decomposes that single number into days/hours/minutes - not each
+unit rounded separately, which risks e.g. 59.6 minutes independently
+rounding its own minutes-place to `"1h 0m"` from an input that should
+just round to `"1h"` as a whole. Drops leading *and* trailing zero-value
+units (`"2h"`, not `"0d 2h 0m"`), but always shows at least `"0m"` for
+the (unrealistic but not impossible) case of an estimate under 30
+seconds.
+
+**`static/countdown.js`'s live "time remaining"/"over the estimate"
+countdown gets the identical treatment**, via a parallel
+`formatDuration()` written directly in JS rather than shared code -
+this app has no build step to share a module between a Jinja-rendered
+page and a plain `<script>` tag, and the logic is small and stable
+enough that a second copy is the simpler choice. Same algorithm (floor/
+modulo decomposition of one whole-number input, not per-unit rounding),
+operating on the already-rounded `totalMin` the countdown already
+computed from `Date` arithmetic, so this is genuinely the same
+formatting rule applied twice, not two different ones that happen to
+agree on short durations.
+
+Verified in isolated testing: `format_duration()` against a table of
+boundary cases (under a minute, exactly on an hour, exactly on a day,
+a value that would round differently unit-by-unit than as a whole,
+zero), and both dashboards' rendered HTML for a sliced/queued/approved
+job seeded with a >24-hour estimate, confirming `"1d 1h"` renders
+correctly end-to-end through the real routes and templates, not just
+from the function in isolation. The `countdown.js` side was checked by
+direct algorithmic parity and manual trace of the same boundary cases
+against the already-verified Python version, not a live browser render
+- this project has no JS runtime or browser-automation tool available
+in the environment it's being built in right now, worth being upfront
+about rather than claiming a check that didn't actually happen.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on

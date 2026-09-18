@@ -222,6 +222,32 @@ def corrected_duration_estimate_s(session: Session, job: Job) -> float | None:
     return job.duration_estimate_s * _duration_correction_factor(session)
 
 
+def format_duration(seconds: float) -> str:
+    """"1d 2h 15m"-style formatting for any duration this app shows - a
+    print's estimated length, previously always rendered as raw total
+    minutes ("1500 min" for a genuinely multi-day print, per README.md's
+    to-do list). Rounds to the nearest whole minute first (matching what
+    was already shown - this never claimed second-level precision), then
+    decomposes that into days/hours/minutes rather than rounding each
+    unit separately, which would risk e.g. 59.6 minutes independently
+    rounding to "1h 0m" out of an input that only rounds to "1h" as a
+    whole. Drops leading AND trailing zero-value units ("2h" not
+    "0d 2h 0m") but always shows at least "0m" rather than an empty
+    string, for a (unrealistic in practice, but not impossible) estimate
+    under 30 seconds."""
+    total_minutes = round(seconds / 60)
+    days, remainder = divmod(total_minutes, 24 * 60)
+    hours, minutes = divmod(remainder, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes or not parts:
+        parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
 def printing_eta(session: Session, job: Job) -> datetime | None:
     """Estimated completion time for a job that's actively printing, or
     None if it isn't printing or there's nothing to estimate from
