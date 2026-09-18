@@ -721,16 +721,40 @@ dial-press to actually fix anything. One of four states, tracked on
 - `connected` - currently holding a live, authenticated connection.
 - `needs_pairing` - never paired, or the last real attempt's failure
   looked like an authentication problem (the printer's own
-  `AuthenticationException`). Shown with a "Pair printer" button.
+  `AuthenticationException`).
 - `unreachable` - the last real attempt's failure looked like a network
-  problem instead (timeout, connection refused). Shown as an error too,
-  but *without* a pairing button - re-pairing doesn't fix a printer
-  that's off or unplugged, and offering the button anyway would send
-  someone chasing the wrong fix.
+  problem instead (timeout, connection refused).
 - `unknown` - paired at some point, but nothing has actually been
   attempted against the printer yet this run, so whether that token
   still works genuinely isn't known without trying it for real. Shown
   as a neutral "not yet verified this session," not an error.
+
+**The "Pair printer" button is shown for all four states, not just
+`needs_pairing` - a deliberate change from this feature's first version,
+made after a real incident exposed why that gating was wrong.** This
+status is in-memory only (see `_PersistentConnection.__init__`) and
+therefore can't survive an app restart - a real one happened between a
+photo-capture failure that correctly recorded `needs_pairing` and the
+next page load, silently resetting the banner back to `unknown` with no
+button, even though the connection genuinely still needed re-pairing.
+Rather than try to make the status survive restarts (persisting it to
+disk was considered and explicitly rejected - the deployment pattern
+this is actually built for, per the user, is being turned on once each
+weekday morning, i.e. restarting is the normal case, not the exception,
+so a disk-persisted "last known status" would just as often be stale
+*information* pretending to be current), the fix is structural: the
+status text stays best-effort and is never load-bearing for whether the
+fix is available. Clicking "Pair printer" is safe regardless of the
+current status - `start_pairing()` only ever requests a new token over
+HTTP and saves it; it never touches or re-authenticates an
+already-`connected` client, so it can't break a connection that's
+actually still working unless that new pairing is actually completed
+(dial pressed). The only real side effect of clicking it unnecessarily:
+if a job is actively printing, it pops a pairing prompt on the printer's
+own screen - a momentary surprise for whoever's standing there, not
+something that touches the physical print itself (same control-plane/
+physical-printing separation already established throughout this
+section).
 
 **Pairing runs in a background thread, not inline in the request:**
 `pair()` blocks for up to two minutes waiting on a real dial-press -

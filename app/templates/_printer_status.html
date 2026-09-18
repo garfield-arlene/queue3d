@@ -11,21 +11,38 @@
 >
   {% if pairing.in_progress %}
     <p class="muted">Pairing with the printer - check its screen and press the dial to accept.</p>
-  {% elif printer_status == "connected" %}
-    <p class="muted">Printer connected.</p>
-  {% elif printer_status == "unreachable" %}
-    <p class="error">
-      Couldn't reach the printer on the last attempt - check that it's powered
-      on and on the network. (Re-pairing won't fix this specific problem.)
-    </p>
-  {% elif printer_status == "needs_pairing" %}
-    <p class="error">Printer needs to be paired before jobs can be released to it.</p>
+  {% else %}
+    {% if printer_status == "connected" %}
+      <p class="muted">Printer connected.</p>
+    {% elif printer_status == "unreachable" %}
+      <p class="error">
+        Couldn't reach the printer on the last attempt - check that it's powered
+        on and on the network. (Re-pairing won't fix this specific problem.)
+      </p>
+    {% elif printer_status == "needs_pairing" %}
+      <p class="error">Printer needs to be paired before jobs can be released to it.</p>
+    {% else %}
+      <p class="muted">Printer connection not yet verified this session.</p>
+    {% endif %}
+    {# The button is always available, regardless of the status above -
+       that status is only ever a best-effort snapshot of the last real
+       attempt (see printer.connection_status()'s docstring) and, being
+       in-memory, can't survive an app restart either, so it can't always
+       be trusted to say "you need this" precisely when you do. Pairing
+       again is safe to try any time the connection seems stuck: it only
+       ever requests a new token over HTTP and saves it - it doesn't
+       touch or re-authenticate an already-live connection, so it can't
+       break one that's actually still working unless the new pairing is
+       actually completed (dial pressed). #}
     <form method="post" action="/admin/printer/pair">
       <button type="submit">Pair printer</button>
     </form>
-    <p class="muted">After clicking, go to the printer and press its dial when prompted.</p>
-  {% else %}
-    <p class="muted">Printer connection not yet verified this session.</p>
+    <p class="muted">
+      After clicking, go to the printer and press its dial when prompted.
+      Safe to use any time, even if the status above says "connected" -
+      if a job is actively printing, this will pop a prompt on the
+      printer's own screen, but won't affect the print itself.
+    </p>
   {% endif %}
   {% if not pairing.in_progress and pairing.error %}
     <p class="error">Last pairing attempt failed: {{ pairing.error }}</p>
