@@ -4,6 +4,7 @@ and routers stay thin HTTP glue.
 """
 
 import shutil
+import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -156,22 +157,72 @@ def queue_position(session: Session, job: Job) -> int | None:
     return len(ahead) + 1
 
 
-def printing_eta(job: Job) -> datetime | None:
+def _duration_correction_factor(session: Session) -> float:
+    """Median ratio of actual-to-estimated duration across past
+    *successful* prints, applied to future estimates in printing_eta()
+    below - per the user, after noticing the slicer's own estimate run
+    consistently short in real use. Only `done` jobs count, never
+    `failed` ones: a failed print's duration says nothing about how long
+    a full print actually takes - it could have been cut short at any
+    point, 5% or 95% of the way through, by a cancellation or a real
+    fault alike, and averaging that in would corrupt the correction
+    rather than improve it. `max(1.0, ...)` - only ever corrects
+    *upward* - since underestimating is the specific, observed problem;
+    there's no evidence yet that a future estimate running long needs
+    correcting the other way, and assuming so could make things worse.
+    Median rather than mean so one unusually slow print doesn't skew
+    every future estimate as more data accumulates. Returns 1.0 (no
+    correction) with no `done` jobs yet to learn from.
+
+    Necessarily includes whatever time elapsed between a print actually
+    finishing and an admin noticing and clicking "Mark done" -
+    `finished_at` is when that click happened, not confirmed to be the
+    exact moment the printer itself actually stopped (`released_at` is
+    accurate the other direction - see jobs.release). Rough by nature
+    this way, but still meaningfully better than trusting the raw,
+    uncorrected slicer estimate outright. Precisely fixing this would
+    mean capturing the printer's own `current_process.elapsed_time` (see
+    jobs.print_progress) at the moment of that click instead - not done
+    here, since that reading has often been unavailable exactly when
+    needed (the connection dying is the common case that motivated
+    building the printer status banner in the first place) - see
+    README.md's Printer to-do list."""
+    done_jobs = session.exec(
+        select(Job).where(
+            Job.status == JobStatus.done,
+            Job.released_at.is_not(None),
+            Job.finished_at.is_not(None),
+            Job.duration_estimate_s.is_not(None),
+            Job.duration_estimate_s > 0,
+        )
+    ).all()
+    ratios = [
+        (job.finished_at - job.released_at).total_seconds() / job.duration_estimate_s
+        for job in done_jobs
+    ]
+    if not ratios:
+        return 1.0
+    return max(1.0, statistics.median(ratios))
+
+
+def printing_eta(session: Session, job: Job) -> datetime | None:
     """Estimated completion time for a job that's actively printing, or
     None if it isn't printing or there's nothing to estimate from
     (released_at/duration_estimate_s both need to be set - a job released
     before duration estimation existed, or one the slicer couldn't
-    estimate for, has neither). Purely `released_at + duration_estimate_s`
-    - a fallback for whenever a live read isn't available (see
-    print_progress below for the real thing), so per the user, this is a
-    clearly-labeled countdown from the original estimate on its own, not
-    a claim of real progress. Rendered client-side (see
-    static/countdown.js) rather than recomputed "minutes remaining"
-    server-side, so it keeps ticking between page loads/htmx polls
-    without needing a matching request each time."""
+    estimate for, has neither). `released_at + duration_estimate_s`,
+    scaled by _duration_correction_factor() above - a fallback for
+    whenever a live read isn't available (see print_progress below for
+    the real thing), so per the user, this is a clearly-labeled countdown
+    from the (history-corrected) original estimate, not a claim of real
+    progress. Rendered client-side (see static/countdown.js) rather than
+    recomputed "minutes remaining" server-side, so it keeps ticking
+    between page loads/htmx polls without needing a matching request each
+    time."""
     if job.status != JobStatus.printing or job.released_at is None or job.duration_estimate_s is None:
         return None
-    return job.released_at + timedelta(seconds=job.duration_estimate_s)
+    factor = _duration_correction_factor(session)
+    return job.released_at + timedelta(seconds=job.duration_estimate_s * factor)
 
 
 def print_progress(job: Job) -> dict | None:

@@ -118,6 +118,15 @@ Managing user accounts:
   `app/README.md`'s "Live print progress" section for how this was
   confirmed, and `/admin/printer/info` for the raw reply this is read
   from.
+- **A history-corrected time estimate** - the fallback countdown shown
+  whenever a live progress reading isn't available no longer trusts the
+  slicer's own time estimate outright: it's scaled by the median
+  actual-vs-estimated ratio across past successful prints (the first one
+  in real use took 43.5% longer than estimated), so the estimate gets
+  more realistic as more prints complete, without ever needing to be set
+  by hand. Only learns from completed ("done") prints, never cancelled
+  or failed ones, whose duration says nothing about how long a full
+  print actually takes.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -249,6 +258,16 @@ Managing user accounts:
   `current_process`'s `complete`/`cancelled`/`error` fields (found
   alongside `progress`, see the print-progress feature above) look like
   a real path to this, just not built yet.
+- ~~Correct the fallback time estimate using real completion history~~
+  **Done** - see Features below ("A history-corrected time estimate")
+  and `app/README.md`'s "Live print progress" section. What's still
+  open: the correction is based on `finished_at` (when an admin clicked
+  "Mark done"), not the printer's own recorded elapsed time for that
+  print - the two automatic-detection and precise-history items above
+  both point at capturing `current_process.elapsed_time` at the moment a
+  job is marked finished, which would let the correction stop
+  inheriting whatever delay elapsed between the physical print actually
+  finishing and someone noticing.
 - ~~Camera access confirmed, wire a photo into the job record~~ **Done** -
   see Features above ("A build-plate photo on every finished job") and
   `app/README.md`'s "Printer camera" section.

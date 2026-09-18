@@ -68,7 +68,7 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
     rows = []
     for job in active_jobs(session):
         user = session.get(User, job.user_id)
-        rows.append({"job": job, "user_name": user.name if user else "?", "eta": printing_eta(job)})
+        rows.append({"job": job, "user_name": user.name if user else "?", "eta": printing_eta(session, job)})
     return {
         "admin": admin,
         "last_backup": last_backup,

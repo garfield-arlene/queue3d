@@ -482,6 +482,45 @@ never documented this method and a future investigation (see the
 list, towards detecting a print's outcome automatically) will need to
 look at the raw shape again.
 
+**Correcting the fallback estimate itself, from real history.** Even
+with live progress now available, `printing_eta()`'s estimate-based
+countdown still matters as the fallback for whenever a live reading
+isn't - and the slicer's own `duration_estimate_s` was observed running
+well short in real use (the first real completed print took 43.5% longer
+than estimated). `_duration_correction_factor()` computes the median
+ratio of actual (`finished_at - released_at`) to estimated duration
+across past `done` jobs, and `printing_eta()` scales the current job's
+estimate by it. Deliberately narrow about what counts as a valid data
+point:
+
+- Only `done` jobs, never `failed` ones - a failed print's duration says
+  nothing about how long a full print takes; it could have been cut
+  short at any point; averaging that in would corrupt the correction
+  rather than improve it. (Confirmed necessary directly: 2 of the first
+  3 finished jobs in real use were cancellations for bed adhesion,
+  finishing in well under their estimated time - including those would
+  have corrected the estimate *downward*, exactly backwards.)
+- Median, not mean, so one unusually slow print doesn't dominate every
+  future estimate as more data accumulates.
+- `max(1.0, ...)` - only ever corrects upward, since underestimating is
+  the specific, observed problem. No evidence yet that a future estimate
+  running long needs correcting the other way, and assuming so on no
+  evidence could make things worse, not better.
+
+**A known, accepted imprecision, not silently glossed over:**
+`finished_at` is when an admin clicked "Mark done," not confirmed to be
+the exact moment the printer itself actually finished - any delay
+between the two inflates every ratio computed from it. Precisely fixing
+this would mean capturing the printer's own `current_process.elapsed_time`
+(see `print_progress` above) at the moment of that click instead - not
+built here, since that reading has often been unavailable exactly when
+needed during this same investigation (the connection dying being the
+common case that motivated the printer status banner/pairing button in
+the first place). Still meaningfully better than trusting the raw,
+uncorrected slicer estimate outright - see README.md's Printer to-do
+list for capturing the printer's own elapsed time as a future
+refinement.
+
 ### Persistent printer connection
 
 **Why this exists - a real, live-confirmed hardware limitation, not

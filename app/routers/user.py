@@ -120,7 +120,7 @@ def logout(request: Request):
 def _dashboard_context(session: Session, user: User, flash_error: str | None = None):
     jobs = jobs_for_user(session, user.id)
     rows = [
-        {"job": job, "position": queue_position(session, job), "eta": printing_eta(job)}
+        {"job": job, "position": queue_position(session, job), "eta": printing_eta(session, job)}
         for job in jobs
     ]
     return {
