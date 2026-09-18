@@ -398,7 +398,23 @@ class _MakerBotClient:
                 raise _MakerBotError("Timed out waiting for a camera frame")
             finally:
                 self._camera_result = None  # in case our own wait timed out, not the read loop
-            self.request("end_camera_stream", {})
+            try:
+                self.request("end_camera_stream", {})
+            except (_MakerBotError, TimeoutError):
+                # Best-effort cleanup, not a precondition for success -
+                # confirmed live: this timed out once with a real frame
+                # already captured (the printer was presumably still busy
+                # settling right at print completion, the exact moment
+                # this gets called from - see jobs.check_and_finish_active_print),
+                # and the old code below this point discarded that
+                # already-good photo just because the "please stop"
+                # acknowledgment didn't arrive in time. It's safe to move
+                # on regardless: the sliding grace-period window
+                # (_camera_mode_until, extended in the finally below)
+                # keeps the reader thread correctly consuming/discarding
+                # any further trailing frames either way, whether or not
+                # this specific request got a reply.
+                pass
             return jpeg_data
         finally:
             self._camera_mode_until = time.monotonic() + grace_period

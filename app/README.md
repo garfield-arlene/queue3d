@@ -737,6 +737,26 @@ printer, not in review:**
    note (and the reason a couple of test cycles during this feature's own
    development needed the printer power-cycled to recover).
 
+3. **A successfully-captured frame was being discarded because of a
+   failure in the cleanup step *after* it, not the capture itself** -
+   caught live, from the very first real end-to-end success of automatic
+   completion detection (see that section above): the job's log showed
+   `"photo capture failed: No response to 'end_camera_stream' within
+   10s"` - that specific error only happens *after* a real frame is
+   already sitting in hand, while waiting for the printer to acknowledge
+   "okay, I'll stop pushing frames now." The old code required that
+   acknowledgment to succeed before returning the frame at all, so a
+   slow/missing reply (plausibly the printer being genuinely busy
+   settling right at print completion - the exact moment this now gets
+   called from) threw the photo away for a reason that had nothing to do
+   with whether the photo itself was good. Fixed: `end_camera_stream`'s
+   own failure is now caught and ignored - safe to do, since the sliding
+   grace-period window (`_camera_mode_until`) already keeps the reader
+   thread correctly consuming/discarding any further trailing frames
+   regardless of whether this specific acknowledgment ever arrives.
+   Verified with a focused unit test (mocking `request()` to simulate
+   exactly this sequence) before deploying, not just reasoned about.
+
 **Failure handling:** `capture_photo()` (`printer.py`) raises
 `PrinterError` on any failure - camera unreachable, printer powered off,
 a capture that time out - and `mark_finished()` treats that as
