@@ -130,6 +130,34 @@ and add it to `MIGRATIONS` keyed by that same version string. Test it the
 same way - fresh, an old real database, and re-running against an
 already-migrated one.
 
+**A second real incident, worse than the first: `VERSION` got bumped
+before the matching migration existed, not just alongside a code
+change.** While adding `Job.failure_reason` (schema `3.4.0`): `models.py`
+was edited first, then `VERSION` was bumped to `3.4.0`, then - before
+`_migrate_to_3_4_0` and its `MIGRATIONS` entry were even written - a
+*different*, unrelated `.py` file was edited for the same feature. That
+save triggered `--reload`, which ran `init_db()` against the real
+database with `APP_VERSION` already reading `"3.4.0"` but `MIGRATIONS`
+still topping out at `"3.3.0"` - so nothing was pending to run, yet
+`init_db()`'s final step unconditionally records
+`schemaversion.version = APP_VERSION` regardless. The real database was
+left claiming `3.4.0` while still missing the actual column, crashing
+every query touching `Job` - and unable to self-heal even once the
+migration function was later written, since a stored version of `3.4.0`
+means nothing is ever "pending" for it again. Caught while testing the
+new migration against a copy of the real database (as always) - the
+copy was already in this broken state, meaning it was already live.
+Fixed by hand (the same `ALTER TABLE` the migration function itself
+would have run) rather than by any change to the mechanism, since the
+mechanism did exactly what it's specified to do - the ordering of the
+*edits*, not the code, was the bug. **Revised rule:** the migration
+function must be written and saved *before* `VERSION` is bumped, not
+just in the same commit - on this project, where any `.py` save can
+trigger a reload against the real live database at any moment, `VERSION`
+is the one edit in a schema change that should always happen last,
+right before committing, with no further `.py` edits still to come
+after it.
+
 ## Deployment: zero internet access, by design
 
 This runs on an isolated "island" LAN (Pi + printer wired to a router,
@@ -1009,6 +1037,472 @@ in isolated testing: one shared cookie holding both a user session (mode
 `dark`) and an admin session (mode `light`) at once, confirming
 `/dashboard` and `/admin/dashboard` each independently resolved to the
 right one.
+
+### Login rate-limiting
+
+**Why this exists:** per the user - PINs are short by design (low
+signup friction), which also makes them easier to guess, and nothing
+previously slowed down repeated attempts at all, for either account
+type. An admin's password is a higher-stakes target than any one
+user's PIN, so this applies to both, not just the short-PIN case that
+motivated it.
+
+**Deliberately simple: a fixed threshold and a fixed lockout duration**
+(`auth.LOGIN_LOCKOUT_THRESHOLD = 5`, `LOGIN_LOCKOUT_DURATION = 15
+minutes`), not escalating durations or per-IP tracking. **Per-account,
+not per-IP or global** - the actual threat here is one person guessing
+a specific other person's credentials, not general anti-abuse; an IP
+on a shared LAN says nothing useful about who's actually attempting a
+login, and a global limit would let one person's failed attempts lock
+everyone else out.
+
+**`User.failed_login_attempts`/`locked_until` and the identical pair on
+`Admin`** (schema `3.3.0`) - both account types work identically via
+plain duck typing in `auth.py`'s `check_lockout()`/
+`record_failed_login()`/`record_successful_login()`, rather than a
+shared base class, matching how little else in this codebase bothers
+abstracting over the two account types. `check_lockout()` runs
+*before* even checking the submitted password/PIN - both so a
+locked-out login doesn't do needless bcrypt work and so a correct
+password/PIN submitted while locked out is still rejected with the
+"try again in N minutes" message, not "didn't match" - a lockout can't
+be probed around by anyone who happens to already know the real
+credentials. Reaching the threshold resets the attempt counter back to
+0 (rather than letting it climb forever) as it sets `locked_until`;
+a real successful login clears both fields outright.
+
+**Caught in isolated testing, the same naive/aware `datetime` gotcha
+this app has already hit for `released_at`/`finished_at`/`event.at`:**
+the first version of `check_lockout()` did
+`account.locked_until - datetime.now(timezone.utc)` directly, and
+crashed with `TypeError: can't subtract offset-naive and
+offset-aware datetimes`. `locked_until` is always *written* as UTC,
+but SQLite round-trips a written datetime back as tzinfo-naive once
+re-read - while a value just set moments ago on the same in-memory
+object (not yet re-fetched from the DB) is still tzinfo-aware, so this
+can't be fixed by just assuming one or the other. Fixed by stripping
+tzinfo from both sides (`.replace(tzinfo=None)`) before comparing.
+Verified by retesting the exact failing scenario (a correct password/
+PIN submitted while locked out) after the fix, confirming the correct
+"Too many failed attempts" message renders instead of crashing.
+
+Verified in isolated testing: 4 failed attempts (below threshold)
+leaves the account usable with no lockout; the 5th sets `locked_until`
+~15 minutes out and resets the counter; a correct password/PIN
+submitted while locked out is still rejected with the lockout message;
+manually expiring `locked_until` into the past lets a correct
+password/PIN through normally and clears both fields; identical
+behavior confirmed for admin login; and the `3.3.0` migration applies
+cleanly against both a fresh database and a real copy of the actual
+production database, correctly defaulting every existing account (4
+users, 1 admin) to `failed_login_attempts=0, locked_until=None`.
+
+### Failure reasons shown to the user
+
+**Why this exists:** per README.md's own to-do list - rejection already
+shows a required note on the submitter's dashboard, but a `failed` print
+showed nothing at all beyond the bare status word, and slicing errors
+were believed to be admin-only. Checking the code first (rather than
+guessing from the to-do item's own wording, which turned out to be
+stale) found the slicing-error half already done: `job_edit.html` (a
+user's own draft-editing page) has shown `Job.slice_error` in a
+collapsed `<details>` disclosure since that page was built, identically
+to the admin dashboard's own tooltip. The real, only gap was
+`mark_finished`'s manual failure path having no reason field at all.
+
+**`Job.failure_reason`** (schema `3.4.0`, nullable/additive) is set
+whenever a job is actually marked failed - required from an admin's
+manual "Mark failed" click (`reason: str = Form(...)` in
+`routers/admin.py`, the same required-field pattern `reject()`'s
+`admin_note` already uses), and always supplied by the automatic
+poller (`check_and_finish_active_print`, e.g. `"detected automatically
+- cancelled at the printer"`) - so there is never a `failed` job with
+a reason silently omitted going forward, only ones that predate this
+change. `jobs.mark_finished()`'s existing `detail` parameter (already
+used to prefix the photo-capture log note - see "A build-plate photo on
+every finished job") was renamed to `reason` and reused for both jobs:
+the exact same string that already explained *why* in the activity log
+is now also the one shown directly to the submitter, rather than
+inventing a second, separately-worded field for the same fact. Ignored
+on success - a `done` job has nothing to explain. Shown in
+`_jobs_table.html` ("print failed - nozzle clogged", falling back to
+"no reason given" for a `failed` job that predates this field) and in
+`admin_finished_jobs.html`'s existing "Note" column, alongside
+`admin_note` (a job is only ever one or the other, never both, since
+`rejected` and `failed` are different terminal statuses).
+
+**A second, worse real incident from the same migration-ordering class
+this project has already hit once - see [[queue3d-version-policy]]'s
+2026-09-18 addendum for the full story.** `VERSION` got bumped to
+`3.4.0` before `_migrate_to_3_4_0` itself was written, and a later,
+unrelated `.py` save in the same work session triggered `--reload`
+in between - `init_db()` ran against the real database with the new
+version number already in `VERSION` but no matching entry in
+`MIGRATIONS` yet, so nothing was pending, nothing migrated, and its
+final step still unconditionally recorded `schemaversion.version =
+"3.4.0"` regardless. The real database was left *claiming* `3.4.0`
+while still missing the `failure_reason` column outright - confirmed
+directly (`PRAGMA table_info(job)`, no such column;
+`SELECT * FROM job` raised `OperationalError: no such column:
+job.failure_reason`) - and, worse than the first incident, this
+couldn't self-heal on any later restart either, since a stored version
+of `3.4.0` means `init_db()` never sees anything pending for it again,
+even once the migration function exists. Caught while testing the new
+migration against a copy of the real database, as always - the copy
+was already in this broken state, meaning it had already gone live
+that way. Fixed by hand: the exact same `ALTER TABLE job ADD COLUMN
+failure_reason VARCHAR` the migration function itself performs, applied
+directly - not a mechanism change, since `init_db()` did exactly what
+it's specified to do; the bug was purely in the *order* the edits were
+saved in. The background auto-finish poller never crashed outright
+during the broken window (it wraps every tick in a bare
+`except Exception: pass`, by design - see "Automatic completion
+detection" below) but would have silently missed detecting any print
+finishing during it, and any real dashboard load touching `Job` in that
+window would have hit a raw 500. Revised rule going forward, recorded in
+[[queue3d-version-policy]]: the migration function must be written and
+saved *before* `VERSION` is bumped, not just in the same commit -
+`VERSION` should always be the last edit in a schema change, with no
+further `.py` edits still to come after it.
+
+### Admin PIN reset for users
+
+**Why this exists:** the last open item in README.md's Accounts to-do
+list - today there's no recovery path at all for a forgotten PIN short
+of signing up under a new name (losing submission history) or an admin
+deleting and recreating the account outright.
+
+**No self-service reset flow, by design** - there's no email in this
+deployment (see "Deployment: zero internet access, by design") to send
+a reset link to, and no security question would mean anything for a
+name+PIN account anyway. The only real recovery path in a LAN-only,
+in-person deployment is an admin doing it directly: `/admin/users`
+grows a "Reset PIN" button per row (`POST
+/admin/users/{id}/reset_pin`), same place disable/enable/delete already
+live.
+
+**`auth.generate_pin()`** produces a random 4-digit numeric PIN
+(`secrets.choice`, not `random` - still a credential, even a
+short-lived low-stakes one) rather than taking one typed into a form:
+nothing for the admin to type or get wrong, and no chance of a genuinely
+guessable choice. No schema change needed - this just re-hashes
+`User.pin_hash`, the same field signup already sets.
+
+**Shown back to the admin exactly once**, via the same session-flash
+pattern `routers/user.py` already uses for `flash_error`
+(`request.session["flash_notice"]`, popped - not just read - by
+`users_page`) - a page refresh must not keep re-displaying a credential
+that's already been relayed. Styled with a new `.notice` class in
+`base.html`, built from the same neutral `--detail-bg`/`--border-strong`
+tokens `details.tech-detail` already uses rather than inventing a new
+semantic color, since this is the only other place that needs any
+highlight beyond plain text or `.error`.
+
+**Logged like any other account action, deliberately without the PIN
+itself in the log:** `log_event(session, None, _admin_actor(admin),
+"pin_reset", detail=user.name)` - matching `user_disabled`/
+`user_enabled`/`user_deleted`'s exact shape (see "Account actions in the
+activity log"). The activity log is visible to every admin indefinitely;
+a plaintext credential belongs in the one-time flash message an admin
+sees and relays immediately, never in a permanent, broadly-visible
+record.
+
+Verified end-to-end against an isolated instance, through the real HTTP
+routes: the old PIN logs in successfully before a reset, an admin reset
+generates and displays a new one, the flash is gone on a second page
+load, the old PIN is then rejected ("Name and PIN didn't match" - the
+generic mismatch message, not a special "your PIN was reset" one, since
+from the login form's own perspective this is indistinguishable from
+any other wrong PIN), the new one logs in successfully, and the activity
+log shows `admin:<username>` / `pin_reset` / the user's name - never the
+PIN value.
+
+### Duration estimates as days/hours/minutes
+
+**Why this exists:** raw total minutes reads badly once a print's
+estimate crosses an hour, and outright unreadable past a day - "1500
+min" instead of "1d 1h" - per README.md's to-do list.
+
+**`jobs.format_duration(seconds)`** is the one place this formatting
+happens, called wherever a duration was previously rendered as
+`(seconds / 60) | round | int` directly in a template
+(`admin_dashboard.html`, `_jobs_table.html`) - both routers'
+`_dashboard_context()` now compute `row.duration_display` once per row,
+same pattern already established for `duration_estimate_s` itself (see
+"A history-corrected time estimate"), rather than repeating the
+formatting logic in Jinja. Rounds to the nearest whole *minute* first,
+then decomposes that single number into days/hours/minutes - not each
+unit rounded separately, which risks e.g. 59.6 minutes independently
+rounding its own minutes-place to `"1h 0m"` from an input that should
+just round to `"1h"` as a whole. Drops leading *and* trailing zero-value
+units (`"2h"`, not `"0d 2h 0m"`), but always shows at least `"0m"` for
+the (unrealistic but not impossible) case of an estimate under 30
+seconds.
+
+**`static/countdown.js`'s live "time remaining"/"over the estimate"
+countdown gets the identical treatment**, via a parallel
+`formatDuration()` written directly in JS rather than shared code -
+this app has no build step to share a module between a Jinja-rendered
+page and a plain `<script>` tag, and the logic is small and stable
+enough that a second copy is the simpler choice. Same algorithm (floor/
+modulo decomposition of one whole-number input, not per-unit rounding),
+operating on the already-rounded `totalMin` the countdown already
+computed from `Date` arithmetic, so this is genuinely the same
+formatting rule applied twice, not two different ones that happen to
+agree on short durations.
+
+Verified in isolated testing: `format_duration()` against a table of
+boundary cases (under a minute, exactly on an hour, exactly on a day,
+a value that would round differently unit-by-unit than as a whole,
+zero), and both dashboards' rendered HTML for a sliced/queued/approved
+job seeded with a >24-hour estimate, confirming `"1d 1h"` renders
+correctly end-to-end through the real routes and templates, not just
+from the function in isolation. The `countdown.js` side was checked by
+direct algorithmic parity and manual trace of the same boundary cases
+against the already-verified Python version, not a live browser render
+- this project has no JS runtime or browser-automation tool available
+in the environment it's being built in right now, worth being upfront
+about rather than claiming a check that didn't actually happen.
+
+### Submission timestamp and queue-wait for still-waiting jobs
+
+**Why this exists:** per README.md's to-do list, right after the
+duration-formatting item above and phrased almost identically ("the
+days/hours/minutes display") - the two are adjacent but distinct asks.
+This one is specifically about surfacing *when a job joined the queue*
+and *how long it's been waiting since*, not the print's own estimated
+length. Ties directly into the next to-do item (an admin-configurable
+"old jobs" age threshold) - this is the timestamp/duration that feature
+will actually split on.
+
+**`jobs.queue_wait_seconds(job)`** - `job.queued_at` (when
+`submit_draft()` actually moved it into the queue) is already recorded
+and already used for `queue_position()`'s own ordering; this is the
+first thing to actually *display* it. Deliberately `queued_at`, not
+`created_at` (upload time) - same reasoning `queue_position()` already
+documents: time spent sitting on a draft before submitting isn't queue
+wait anyone actually experienced. Same naive/aware handling as
+`auth.check_lockout()` (see that function's docstring) - `queued_at` is
+always written as UTC but comes back tzinfo-naive once round-tripped
+through SQLite, while a freshly-created "now" is tzinfo-aware; both
+sides have tzinfo stripped before subtracting. Feeds the same
+`jobs.format_duration()` the print-duration estimates already use (see
+above) - "waiting 2d 3h 15m" is the identical formatting rule, not a
+second one that happens to look similar.
+
+**Scoped to `queued`/`approved` only, not `printing`** - both routers'
+`_dashboard_context()` compute `row.queue_wait_display` unconditionally
+(it's cheap, and `queued_at` is still set once a job starts printing),
+but the templates only ever reference it inside the queued/approved
+branch. A printing job already shows live progress and an ETA countdown
+(see "Live print progress" and "What release does") - a "waiting since"
+figure would read as stale or actively wrong once a job is no longer
+waiting on anything, it's being acted on.
+
+**Shown on the admin dashboard as a new "Queued" column** (date/time +
+"waiting Xh Ym", the raw timestamp printed directly since `job.queued_at`
+is already in scope - only the elapsed-time half needs server-side
+computation) and **folded into the user's own dashboard's existing
+"position N in queue" line** (`_jobs_table.html`) rather than a new
+column there - that page's row already reads as one flowing sentence
+per status, and this is one more clause in it, not a separate fact that
+needs its own column.
+
+Verified end-to-end against an isolated instance: two real queued/
+approved jobs seeded with distinct `queued_at` values (one ~5 minutes
+ago, one just over 2 days ago) rendered as `"waiting 5m"` and
+`"waiting 2d 3h 15m"` respectively through the real routes/templates on
+both dashboards, and a still-`sliced` draft (never queued) correctly
+showed neither a timestamp nor a wait time on either page.
+
+### Admin-configurable display timezone
+
+**Why this exists:** per README.md's Appearance to-do list - every
+timestamp shown anywhere in the app was UTC, unlabeled as such in most
+places even though that's genuinely what was stored and compared
+against internally. "Should apply everywhere at once, not per-page" per
+the user - a site-wide admin setting, not a per-account preference like
+theme/mode.
+
+**`Settings.display_timezone`** (schema `4.4.0`, an IANA zone name
+string, defaults to `"UTC"`) - the shared, site-wide `Settings` singleton
+table already used for `draft_expiry_days` gets its second field, per
+that model's own stated policy of adding columns there rather than
+reaching for a generic key/value store until there's a real need.
+Deliberately site-wide, not per-account: unlike theme/mode (see
+"Themes"), there's no reasonable case here for two people looking at the
+same job's timestamp to see two different times - a shared printer used
+in one physical place has one real local time.
+
+**`templates_env.local_time`** - a Jinja *filter*
+(`{{ some_utc_datetime | local_time }}`), not a global function like
+`current_theme`/`current_mode`, since this operates on a value being
+displayed rather than reading `request` - most timestamp displays just
+swap a raw `.strftime(...)` call for the filter directly. Converts to the
+configured zone and formats with `%Z` by default, so what's shown is a
+real zone abbreviation ("EST"/"EDT"/"UTC") rather than the old hardcoded
+`"UTC"` string every display used to have baked into its own format
+regardless of whether that was still accurate. Same naive/aware handling
+as `auth.check_lockout()` and `jobs.queue_wait_seconds()` (see either's
+docstring) - every stored datetime is UTC but comes back tzinfo-naive
+from SQLite, while one just created in-process is still tzinfo-aware;
+`.replace(tzinfo=None)` first normalizes either case the same way before
+attaching real UTC tzinfo and converting. `dt=None` returns `""` rather
+than requiring a separate `{% if %}` guard in every template that uses
+it - several existing call sites (`admin_finished_jobs.html`'s
+`finished_at`, for a job that hasn't finished yet) had exactly that
+guard, now redundant and removed.
+
+**Cached in-process, not re-read from the DB on every call - a real
+design choice, not a premature optimization:** `local_time()` runs once
+per *timestamp shown*, not once per page - `/admin/log` alone can render
+hundreds of rows. A module-level global (`templates_env`'s
+`_display_timezone`/`_display_timezone_name`, updated via
+`set_display_timezone()`) avoids hundreds of redundant single-row
+lookups for a value that only ever changes when an admin explicitly
+saves a new one. Safe specifically because this app is single-process
+(one Pi, one SQLite file - see "Deployment: zero internet access, by
+design") - there's no other worker process that could see a stale
+value. Primed once at startup (`main.py`, from the stored `Settings` row
+- falling back to a fresh `Settings()`'s own "UTC" default on a brand
+new database with no row yet) and updated immediately in
+`routers/admin.py`'s `update_settings()` the moment a new value is
+actually saved - a change takes effect for every viewer right away, no
+restart required, confirmed live in isolated testing (saved a new
+timezone through the real route, then re-rendered the dashboard and
+activity log in the same running process and saw both switch
+immediately).
+
+**Validated against Python's own `zoneinfo.available_timezones()`**
+(`templates_env.is_valid_timezone`) - 598 real IANA names on this
+machine, backed by the system's own tzdata (confirmed working with no
+`tzdata` pip package installed - Python's `zoneinfo` module falls back
+to the OS's `/usr/share/zoneinfo`, present by default on essentially
+every Linux distribution, so this needs no extra dependency and no
+internet access to work, consistent with this project's zero-internet
+deployment target). An invalid submitted value is rejected with a clear
+error and never saved, same pattern as every other settings-form
+validation in this app; `set_display_timezone()` itself also falls back
+to UTC defensively for a bad *stored* value (should never happen given
+that validation, but a template filter is the wrong place to let a bad
+value take down every page that shows a timestamp). The settings page
+offers the full sorted list in a plain `<select>` rather than a curated
+short list - a school deployment could be anywhere, and there's no way
+to guess which handful of zones would actually be relevant.
+
+**A genuinely different migration-ordering outcome than either previous
+incident (see [[queue3d-version-policy]]) - this time following the
+revised rule worked exactly as intended, worth recording precisely.**
+The migration function was written and registered in `MIGRATIONS`
+*before* `VERSION` was bumped, per that rule. Because `init_db()`
+compares `MIGRATIONS`' own keys against the *stored* version - not
+against `APP_VERSION` - the `4.4.0` migration actually ran on the very
+next `.py`-triggered reload, *before* `VERSION` was bumped at all:
+confirmed directly by copying the real production database mid-task and
+finding `display_timezone='UTC'` already present while
+`schemaversion.version` still read `"4.3.0"`. This is a real, different
+side effect from either prior incident (the first: a stored version
+correctly bumped, no schema change; the second: a stored version bumped
+too early, the promised column never added) - here the opposite
+happened, an under-reported version with the column already genuinely
+correct - and it's the *safe* direction to be wrong in: `VERSION`
+merely lagged reality for one bump cycle rather than a table missing a
+column it was recorded as already having. Confirmed self-correcting:
+once `VERSION` was actually bumped to `4.4.0`, the next reload re-ran
+`_migrate_to_4_4_0` (a safe no-op, guarded by the same "column already
+exists" check every migration here uses) and `schemaversion.version`
+caught up to the true state.
+
+### Old jobs (age-threshold backlog view)
+
+**Why this exists:** per README.md's to-do list - a still-undecided
+queued/approved job could sit indefinitely with nothing surfacing that
+it's been forgotten. Builds directly on the queue-wait timestamp/display
+work above (same "Queued" section) - this is the exact data that feature
+made visible, now actually split on.
+
+**The one design question the to-do list itself left open - confirmed
+directly with the user rather than guessed:** does the threshold apply
+to `printing` jobs too, or only `queued`/`approved`? Answer: queued/
+approved only. A printing job is being actively acted on, not sitting in
+an undecided backlog, and already has its own live progress/ETA display
+(see "Live print progress") - a second, different kind of staleness
+signal mixed into the same view would just be confusing. `jobs.is_old_job()`
+encodes this scoping in one place, matching the same reasoning
+`queue_wait_seconds()` already uses.
+
+**`Settings.old_job_threshold_days`** (schema `4.5.0`, defaults to 30 -
+the to-do list's own example value) - the shared, site-wide `Settings`
+singleton gets its third field, same pattern as `draft_expiry_days`/
+`display_timezone`.
+
+**Mutually exclusive, not just flagged - a real split, per the user:**
+`_dashboard_context()` (the normal `/admin/dashboard` queue) now excludes
+anything `is_old_job()` returns true for, and `/admin/jobs/old`
+(`admin_old_jobs.html`) shows exactly that excluded set, computed by
+`_old_jobs_context()` from the same `active_jobs(session)` query filtered
+the other way - one shared source of truth, not two independently-built
+lists that could drift apart. The main dashboard still flags the count
+(`old_job_count`) with a link straight to the backlog view, so a growing
+backlog doesn't go unnoticed just because it's out of the way.
+
+**Fully actionable from the old-jobs page, not just a read-only list -
+a real design wrinkle this raised:** since an old job is excluded from
+the main dashboard entirely, approve/reject/release have to actually
+*work* from `/admin/jobs/old` too - there's nowhere else left to reach
+them from. `_perform_action()` (shared by every queue-action route)
+gained a `return_to` form field and a small `_RETURN_TARGETS` lookup
+(return path -> which template/context re-renders an error) - every
+pre-existing form on the main dashboard keeps working unchanged (it
+never sends the field, so it defaults to `/admin/dashboard`), while the
+old-jobs page's own copies of those same forms send
+`return_to=/admin/jobs/old` so a successful action - or an inline error,
+same as always - lands back on the page the admin was actually looking
+at, not silently back on the main dashboard.
+
+**Two new actions specific to this page, added after the user tried it
+and asked for both as immediate follow-ups:**
+- **`jobs.requeue_job()`** - "move to back of queue" - resets
+  `queued_at` to now without touching status, so the job goes back to
+  being a normal, fully live queue entry (and, since `queue_position()`
+  orders by `queued_at`, genuinely back of the line, not just redisplayed
+  differently). The "still relevant, just needs another chance" option
+  next to outright deleting one.
+- **`jobs.delete_old_job()`/`delete_all_old_jobs()`** - a *genuine*
+  delete, not another terminal status like `reject()` (which deliberately
+  keeps the job and archives its files as a permanent record) - per the
+  user, "removes the job... and deletes the model files, with no undo,"
+  the same delete semantics as the separate (not yet built) to-do item
+  for a user deleting their own queued job. `storage.delete_job_files()`
+  is the one place this app actually unlinks files outright rather than
+  archiving them. The job's own prior event history (submit, slice,
+  queue-submission, etc.) is deleted right along with it - once the job
+  itself is gone, an orphaned row a global log join can no longer resolve
+  to a filename is clutter, not history worth keeping - and what actually
+  persists is one new, `job_id=None` event recording the deletion itself
+  (who did it, the filename, and who originally submitted it), the exact
+  same pattern `user_deleted` already uses for a `User` that's gone by
+  the time anyone reads that log entry back. `delete_all_old_jobs()` is
+  the same logic looped over every currently-old job (re-checked fresh,
+  not trusting whatever the page happened to render a moment earlier),
+  one commit per job rather than a single batched one - simple over
+  optimal for what's expected to be a handful of jobs at once, not
+  thousands.
+
+Verified end-to-end against an isolated instance, through the real HTTP
+routes: a queued job past the threshold and an approved one past a
+different threshold both excluded from the main dashboard and shown on
+`/admin/jobs/old`; a job seeded as `printing` with an old `queued_at`
+confirmed to stay off the old-jobs list entirely; approving and
+rejecting from the old-jobs page confirmed to redirect back to it, not
+the main dashboard; deleting one job confirmed to remove its DB row,
+its queued files, and its own prior event history, while leaving exactly
+one `job_deleted` entry (with the right actor/filename/submitter) in the
+global log; requeuing confirmed to reset `queued_at` to a fresh
+timestamp, move the job back onto the main dashboard, and log a
+`requeued` event; and "delete all" confirmed to remove every currently-
+old job in one request while correctly sparing a job that was never old
+to begin with.
 
 ### Browsing finished jobs, and the audit log
 

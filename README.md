@@ -153,6 +153,62 @@ Managing user accounts:
   Logged with actor `"system"` so the activity log always shows whether
   a given outcome was a human's click or the poller's own. See
   `app/README.md`'s "Automatic completion detection" section.
+- **Login rate-limiting** - both account types lock out for 15 minutes
+  after 5 failed attempts in a row, since PINs are short by design (low
+  signup friction) and an admin password is a higher-stakes target -
+  nothing previously slowed down repeated guessing at all. Per-account,
+  not per-IP or global: the actual threat is one person guessing a
+  specific other person's credentials, not general abuse. A correct
+  password/PIN submitted while locked out is still rejected with the
+  lockout message, not "didn't match" - so a lockout can't be probed
+  around by anyone who happens to already know the real credentials.
+  See `app/README.md`'s "Login rate-limiting" section.
+- **Failure reasons shown to the user, not just admins** - a manual
+  "Mark failed" now requires an admin to say why, same as rejecting
+  already required a note, and that reason shows right on the
+  submitter's own dashboard row instead of just "print failed" with no
+  explanation. Automatic completion detection (above) always supplies
+  its own reason on the same field. Slicing-error detail was already
+  visible to the user (on the draft's own edit page) once checked - only
+  the manual failure case was really missing an explanation.
+- **Admin PIN reset for users** - the only recovery path for a forgotten
+  PIN, since there's no email to send a reset link to: an admin resets
+  it from the Users page, a random new PIN is generated and shown once,
+  right there, to relay to the user in person. The old PIN stops working
+  immediately. Logged in the activity log like any other account action
+  - who did it and for whom, never the PIN value itself.
+- **Print duration estimates shown as days/hours/minutes**, not raw
+  total minutes - "1d 1h" or "2h 5m" instead of "1500 min"/"125 min",
+  everywhere a duration is displayed (queued/approved/sliced estimates,
+  and the live "time remaining"/"over the estimate" countdown for a job
+  that's printing).
+- **Submission timestamp and queue-wait shown for still-waiting jobs** -
+  both the admin queue and a user's own dashboard now show exactly when
+  a `queued`/`approved` job actually joined the queue and how long it's
+  been waiting since (days/hours/minutes, same formatting as duration
+  estimates above) - not just its position in line.
+- **Admin-configurable display timezone** - one setting
+  (`/admin/settings`, any IANA zone name) controls what timezone every
+  timestamp in the app is shown in - the activity log, job history,
+  "finished at", queue-wait, backup times, all of it, everywhere at
+  once, not per-page or per-account. Data is still stored and compared
+  internally as UTC regardless; this only changes what a viewer reads
+  on the page, and now shows a real zone abbreviation (EST/EDT/UTC/etc.)
+  instead of a hardcoded "UTC" label that wasn't always accurate to
+  what was actually displayed. Takes effect immediately for every
+  viewer on save, no restart needed.
+- **An "Old jobs" backlog view for still-undecided jobs** - a
+  queued/approved job that's been waiting longer than an admin-configured
+  threshold (`/admin/settings`, default 30 days) moves out of the normal
+  queue entirely into a separate view, so a growing backlog doesn't get
+  lost among everything else. Fully actionable there - approve, reject,
+  release, or move it back to the queue with a fresh wait clock - or
+  delete it outright (one at a time or all at once), which genuinely
+  removes the job and its model file with no undo, unlike every other
+  outcome in this app. Deliberately excludes `printing` jobs, confirmed
+  with the user - a print actively running is being acted on, not
+  sitting in an undecided backlog. The main dashboard flags how many
+  are waiting, with a link straight to the backlog view.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -181,18 +237,21 @@ Managing user accounts:
   options to build it on.
 
 **Job review & feedback**
-- Show failure reasons to the user, not just rejection notes - rejection
+- ~~Show failure reasons to the user, not just rejection notes - rejection
   notes already display (required, and shown on the user's dashboard); a
   failed print currently has no reason at all (`mark_failed` only flips
   status, no note field), and slicing-error detail is currently only
-  visible to an admin (as a hover tooltip), never shown to the user.
-- Break the estimated print duration into days/hours/minutes - it's
-  currently total minutes only.
-- Show the date/time a job was submitted, and how long it's been sitting
-  in the queue since (days/hours/minutes) - the timestamp is already
-  recorded (`Job.created_at`/`queued_at`), it's just not displayed
-  anywhere yet.
-- Let admins configure an age threshold (e.g. 30 days) and split
+  visible to an admin (as a hover tooltip), never shown to the user.~~
+  **Done** - see Features above. (Slicing-error detail turned out to
+  already be visible to the user, via the draft edit page - only the
+  manual "Mark failed" gap was real.)
+- ~~Break the estimated print duration into days/hours/minutes - it's
+  currently total minutes only.~~ **Done** - see Features above.
+- ~~Show the date/time a job was submitted, and how long it's been
+  sitting in the queue since (days/hours/minutes) - the timestamp is
+  already recorded (`Job.created_at`/`queued_at`), it's just not
+  displayed anywhere yet.~~ **Done** - see Features above.
+- ~~Let admins configure an age threshold (e.g. 30 days) and split
   still-waiting jobs into two separate views by it: the normal queue view
   for anything younger than the threshold, and a separate "old jobs" view
   for anything at or past it - mutually exclusive, not shown in both.
@@ -201,7 +260,9 @@ Managing user accounts:
   (still awaiting a decision), or also to ones that are `printing` (already
   being acted on, so arguably shouldn't count as stale backlog). Jobs in
   this "old jobs" view should have an admin delete option - see "Audit
-  log" below, since that delete has to be logged like any other change.
+  log" below, since that delete has to be logged like any other change.~~
+  **Done** - see Features above (confirmed by the user: queued/approved
+  only, not printing).
 - Let a user restore an archived model (`slice_failed`, `rejected`,
   `failed`, or `done` - any job whose files ended up in `archive/`) back
   into their working space to modify and resubmit, rather than only being
@@ -243,10 +304,14 @@ Managing user accounts:
   type, date range. Explicitly deferred by the user rather than built
   alongside the log itself; currently just capped at the 500 most recent
   entries with no way to narrow that down.
-- Once the two delete features above (a user deleting their own queued
+- ~~Once the two delete features above (a user deleting their own queued
   model, an admin deleting an old one) actually exist, each needs its own
   log entry too, and an admin deletion specifically must say who did it -
-  the log doesn't have anything to log yet for actions that don't exist.
+  the log doesn't have anything to log yet for actions that don't exist.~~
+  Half done: an admin deleting an old job is logged (`job_deleted`, actor
+  + filename + submitter) - see "Old jobs" in Features. Still waiting on
+  the other half (a user deleting their own queued job) actually being
+  built.
 
 **Backups & recovery**
 - Let admins see a list of backups taken and a manifest of what's actually
@@ -264,11 +329,11 @@ Managing user accounts:
 - Controls for resizing a model before submitting.
 
 **Appearance**
-- An admin setting for the display timezone - every timestamp shown
+- ~~An admin setting for the display timezone - every timestamp shown
   anywhere in the app (the activity log, job history, "finished at",
   etc.) is UTC today, unlabeled as such in most places even though it's
   what's actually stored and compared against. Should apply everywhere
-  at once, not per-page.
+  at once, not per-page.~~ **Done** - see Features below.
 - ~~Convert the current look into a real, named "Default" theme, with a
   per-user/per-admin settings page to pick one, persisting across
   logins~~ **Done** - see Features below ("Per-account theme and
@@ -389,13 +454,14 @@ Managing user accounts:
   form.
 
 **Accounts**
-- Rate-limiting or lockout on login attempts - PINs are short by design
+- ~~Rate-limiting or lockout on login attempts - PINs are short by design
   for low signup friction, which also makes them easier to guess; nothing
-  currently slows down repeated attempts.
-- Let an admin reset a user's PIN, in case they forget it - today there's
-  no recovery path at all short of the user just signing up under a new
-  name (losing their submission history) or an admin deleting/recreating
-  the account outright.
+  currently slows down repeated attempts.~~ **Done** - see Features above.
+- ~~Let an admin reset a user's PIN, in case they forget it - today
+  there's no recovery path at all short of the user just signing up
+  under a new name (losing their submission history) or an admin
+  deleting/recreating the account outright.~~ **Done** - see Features
+  above.
 - ~~Capture account lifecycle actions (registration, disable, re-enable,
   delete) in the activity log, not just job actions~~ **Done** - see
   `app/README.md`'s "Account actions in the activity log" section.

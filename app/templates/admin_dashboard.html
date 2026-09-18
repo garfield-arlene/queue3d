@@ -3,6 +3,7 @@
 {% block nav %}
   <a href="/admin/users">Users</a>
   <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
   <a href="/admin/log">Activity log</a>
   <a href="/admin/settings">Settings</a>
   <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
@@ -12,7 +13,7 @@
 
   <p{% if backup_stale %} class="error"{% else %} class="muted"{% endif %}>
     {% if last_backup %}
-      Last successful backup: {{ last_backup.started_at.strftime('%Y-%m-%d %H:%M UTC') }}
+      Last successful backup: {{ last_backup.started_at | local_time }}
       (drive {{ last_backup.target_label }}){% if backup_stale %} - overdue, check the backup cron job{% endif %}
     {% else %}
       No successful backup on record yet{% if backup_stale %} - check the backup cron job{% endif %}.
@@ -21,6 +22,14 @@
 
   {% include "_printer_status.html" %}
 
+  {% if old_job_count %}
+    <p class="notice">
+      {{ old_job_count }} job{{ "s" if old_job_count != 1 else "" }} waiting
+      longer than {{ old_job_threshold_days }} day{{ "s" if old_job_threshold_days != 1 else "" }}
+      - <a href="/admin/jobs/old">view old jobs</a>.
+    </p>
+  {% endif %}
+
   {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
 
   <h3>Queue</h3>
@@ -28,7 +37,7 @@
     <p class="muted">Nothing in the queue.</p>
   {% else %}
     <table>
-      <tr><th>User</th><th>File</th><th></th><th></th><th>Status</th><th>Est.</th><th>Actions</th></tr>
+      <tr><th>User</th><th>File</th><th></th><th></th><th>Status</th><th>Queued</th><th>Est.</th><th>Actions</th></tr>
       {% for row in rows %}
         {% set job = row.job %}
         <tr>
@@ -38,6 +47,12 @@
           <td><a href="/admin/jobs/{{ job.id }}/log">Log</a></td>
           <td>{{ job.status.value }}</td>
           <td class="muted">
+            {% if job.status.value in ('queued', 'approved') and job.queued_at %}
+              {{ job.queued_at | local_time }}<br>
+              waiting {{ row.queue_wait_display }}
+            {% endif %}
+          </td>
+          <td class="muted">
             {% if row.eta %}
               {% include "_print_progress.html" %}
               {# .isoformat() alone has no offset - these datetimes are
@@ -46,8 +61,8 @@
                  required, not decorative: without it, the browser's
                  Date() would parse this as *local* time instead. #}
               <span data-countdown-eta="{{ row.eta.isoformat() }}Z"></span>
-            {% elif row.duration_estimate_s %}
-              {{ (row.duration_estimate_s / 60) | round | int }} min
+            {% elif row.duration_display %}
+              {{ row.duration_display }}
             {% endif %}
           </td>
           <td>
@@ -72,6 +87,7 @@
                 <button type="submit">Mark done</button>
               </form>
               <form method="post" action="/admin/jobs/{{ job.id }}/mark_failed" style="display:inline">
+                <input type="text" name="reason" placeholder="reason" required size="16">
                 <button type="submit">Mark failed</button>
               </form>
             {% elif job.status.value == 'slice_failed' %}

@@ -18,6 +18,7 @@ from pipeline import run_slice
 from printer import PrinterError, capture_photo, send_print_job, system_information
 from storage import (
     archive_photo_path,
+    delete_job_files,
     move_job_to_archive,
     queue_paths,
     read_makerbot_duration_s,
@@ -159,6 +160,42 @@ def queue_position(session: Session, job: Job) -> int | None:
     return len(ahead) + 1
 
 
+def queue_wait_seconds(job: Job) -> float | None:
+    """How long ago a job actually joined the queue (job.queued_at), or
+    None if it hasn't yet (still a draft) - same reasoning
+    queue_position() above already uses for ordering: created_at (upload
+    time) isn't queue time, since sitting on a draft for a while before
+    submitting isn't time spent waiting in line. Same naive/aware
+    handling as auth.check_lockout() (see that function's docstring for
+    the full explanation) - queued_at is always written as UTC but comes
+    back tzinfo-naive once round-tripped through SQLite."""
+    if job.queued_at is None:
+        return None
+    queued_at = job.queued_at.replace(tzinfo=None)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    return max(0.0, (now - queued_at).total_seconds())
+
+
+def is_old_job(job: Job, threshold_days: int) -> bool:
+    """True once a still-undecided job has been waiting at least
+    threshold_days (models.Settings.old_job_threshold_days) - the split
+    point between the normal admin queue view and /admin/jobs/old.
+
+    Deliberately queued/approved only, never printing - per the user,
+    confirmed directly rather than guessed (README.md's to-do list
+    explicitly flagged this as an open question): a print that's
+    actively running is being acted on, not sitting in an undecided
+    backlog, and already has its own live progress/ETA display (see
+    "Live print progress") - a separate "this is old" signal on top of
+    that would just be a second, different kind of staleness mixed into
+    one view. Same scoping queue_wait_seconds() above already uses for
+    exactly that reason."""
+    if job.status not in (JobStatus.queued, JobStatus.approved):
+        return False
+    wait_s = queue_wait_seconds(job)
+    return wait_s is not None and wait_s >= threshold_days * 86400
+
+
 def _duration_correction_factor(session: Session) -> float:
     """Median ratio of actual-to-estimated duration across past
     *successful* prints, applied to future estimates in printing_eta()
@@ -220,6 +257,32 @@ def corrected_duration_estimate_s(session: Session, job: Job) -> float | None:
     if job.duration_estimate_s is None:
         return None
     return job.duration_estimate_s * _duration_correction_factor(session)
+
+
+def format_duration(seconds: float) -> str:
+    """"1d 2h 15m"-style formatting for any duration this app shows - a
+    print's estimated length, previously always rendered as raw total
+    minutes ("1500 min" for a genuinely multi-day print, per README.md's
+    to-do list). Rounds to the nearest whole minute first (matching what
+    was already shown - this never claimed second-level precision), then
+    decomposes that into days/hours/minutes rather than rounding each
+    unit separately, which would risk e.g. 59.6 minutes independently
+    rounding to "1h 0m" out of an input that only rounds to "1h" as a
+    whole. Drops leading AND trailing zero-value units ("2h" not
+    "0d 2h 0m") but always shows at least "0m" rather than an empty
+    string, for a (unrealistic in practice, but not impossible) estimate
+    under 30 seconds."""
+    total_minutes = round(seconds / 60)
+    days, remainder = divmod(total_minutes, 24 * 60)
+    hours, minutes = divmod(remainder, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes or not parts:
+        parts.append(f"{minutes}m")
+    return " ".join(parts)
 
 
 def printing_eta(session: Session, job: Job) -> datetime | None:
@@ -316,6 +379,82 @@ def reject(session: Session, job: Job, admin: Admin, note: str) -> Job:
     session.commit()
     session.refresh(job)
     return job
+
+
+def delete_old_job(session: Session, job: Job, admin: Admin) -> None:
+    """Genuinely deletes a stale, still-undecided job - reachable only
+    from /admin/jobs/old (routers/admin.py), never a general "delete any
+    queued job" action. Not another terminal status like reject() above
+    (which deliberately keeps the job and archives its files as a
+    permanent record) - per the user, this specific action "removes the
+    job... and deletes the model files, with no undo," the same delete
+    semantics as the separate to-do item for a user deleting their own
+    queued job (this is the admin-side equivalent for one that's gone
+    stale instead, not a different kind of delete).
+
+    The job's own prior event history (submit, slice, queue-submission,
+    etc.) is deleted along with it rather than left behind as orphaned
+    rows a global log join can no longer resolve to a filename - once
+    the job itself is gone, that per-job history has nothing left to
+    attach meaningfully to. What actually persists is one new,
+    job_id=None event recording the deletion itself (who did it, and
+    what/whose it was) - the exact same pattern user_deleted already
+    uses for a User that's gone by the time anyone reads that log entry
+    back."""
+    _require_status(job, JobStatus.queued, JobStatus.approved)
+    user = session.get(User, job.user_id)
+    submitter = user.name if user else "?"
+    for event in session.exec(select(JobEvent).where(JobEvent.job_id == job.id)).all():
+        session.delete(event)
+    delete_job_files(job)
+    log_event(
+        session,
+        None,
+        _admin_actor(admin),
+        "job_deleted",
+        detail=f"{job.original_filename} (submitted by {submitter})",
+    )
+    session.delete(job)
+    session.commit()
+
+
+def requeue_job(session: Session, job: Job, admin: Admin) -> Job:
+    """The "still relevant, just give it another chance" option
+    alongside delete_old_job() above, on /admin/jobs/old - per the user,
+    a way to move a stale job back to the normal queue rather than only
+    being able to delete or reject it. Status is untouched (still
+    queued or approved); only queued_at resets to now, which is also
+    what queue_position() orders by - so this genuinely sends it to the
+    back of the line again, the same as if it had just been submitted,
+    not just a display change that leaves it cutting ahead of jobs that
+    have been waiting less time."""
+    _require_status(job, JobStatus.queued, JobStatus.approved)
+    job.queued_at = datetime.now(timezone.utc)
+    session.add(job)
+    log_event(session, job.id, _admin_actor(admin), "requeued")
+    session.commit()
+    session.refresh(job)
+    return job
+
+
+def delete_all_old_jobs(session: Session, admin: Admin, threshold_days: int) -> int:
+    """Bulk version of delete_old_job() above, for clearing an entire
+    backlog in one click rather than one job at a time - per the user.
+    Re-checks is_old_job() itself against the current threshold rather
+    than trusting whatever a caller's own page happened to render a
+    moment earlier, so this can't delete something that's since been
+    requeued or is otherwise no longer actually old. Each job is deleted
+    exactly the way delete_old_job() deletes one (its own event history
+    removed, files deleted, one job_id=None "job_deleted" event logged) -
+    just looped, not a separate bulk-specific code path; one commit per
+    job rather than a single batched commit, same as calling the
+    single-job delete route N times by hand would do - simple over
+    optimal for what's expected to be a handful of jobs at once, not
+    thousands. Returns how many were actually deleted."""
+    to_delete = [job for job in active_jobs(session) if is_old_job(job, threshold_days)]
+    for job in to_delete:
+        delete_old_job(session, job, admin)
+    return len(to_delete)
 
 
 def release(session: Session, job: Job, admin: Admin) -> Job:
@@ -460,7 +599,7 @@ def submit_draft(session: Session, job: Job) -> Job:
     return job
 
 
-def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool, detail: str = "") -> Job:
+def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool, reason: str = "") -> Job:
     """Records a print's outcome - a manual admin action (`admin` set), or
     an automatic one (`admin=None`, actor logged as `"system"` - same
     convention `cleanup_drafts.py` already uses for automated draft
@@ -478,11 +617,19 @@ def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool
     already powered back off, etc.) never blocks recording the print's
     own outcome - it's a best-effort extra, not a precondition, and the
     reason for a missing photo is still recorded in the log entry either
-    way. `detail` is prepended to that photo-outcome note - e.g. why an
-    automatic detection decided this was a failure."""
+    way. `reason` is prepended to that photo-outcome log note either way
+    (e.g. why an automatic detection decided this was a failure, or that
+    it detected completion), and - on a failure specifically - is also
+    stored on Job.failure_reason so the submitter sees *why*, not just
+    that it failed (see routers/admin.py's mark_failed_job, which
+    requires one from a manual "Mark failed" the same way reject()
+    requires admin_note). Ignored on success: a 'done' job has nothing to
+    explain."""
     _require_status(job, JobStatus.printing)
     job.status = JobStatus.done if success else JobStatus.failed
     job.finished_at = datetime.now(timezone.utc)
+    if not success and reason:
+        job.failure_reason = reason
     move_job_to_archive(job)
 
     try:
@@ -493,8 +640,8 @@ def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool
         photo_detail = "photo captured"
     except PrinterError as e:
         photo_detail = f"photo capture failed: {e}"
-    if detail:
-        photo_detail = f"{detail}; {photo_detail}"
+    if reason:
+        photo_detail = f"{reason}; {photo_detail}"
 
     session.add(job)
     actor = _admin_actor(admin) if admin is not None else "system"
@@ -544,10 +691,10 @@ def check_and_finish_active_print(session: Session) -> Job | None:
     cancelled = bool(current.get("cancelled"))
     complete = bool(current.get("complete"))
     if cancelled or error:
-        reason = "cancelled at the printer" if cancelled else f"printer reported an error: {error}"
-        return mark_finished(session, job, admin=None, success=False, detail=f"detected automatically - {reason}")
+        why = "cancelled at the printer" if cancelled else f"printer reported an error: {error}"
+        return mark_finished(session, job, admin=None, success=False, reason=f"detected automatically - {why}")
     if complete:
-        return mark_finished(session, job, admin=None, success=True, detail="detected automatically - print complete")
+        return mark_finished(session, job, admin=None, success=True, reason="detected automatically - print complete")
     return None
 
 

@@ -4,6 +4,7 @@
   <a href="/admin/dashboard">&laquo; Queue</a>
   <a href="/admin/users">Users</a>
   <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
   <a href="/admin/log">Activity log</a>
   <a href="/admin/settings">Settings</a>
   <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
@@ -24,7 +25,7 @@
       <tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th><th></th></tr>
       {% for event in events %}
         <tr>
-          <td class="muted">{{ event.at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+          <td class="muted">{{ event.at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
           <td>{{ event.actor }}</td>
           <td>{{ event.action }}</td>
           <td class="muted">

@@ -4,11 +4,22 @@ by whoever controls the server. Approving/releasing print jobs is a
 position of trust over many users' shared printer time; open
 admin signup would defeat the whole point of the review gate."""
 
+import zoneinfo
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session, select
 
-from auth import admin_by_username, require_admin, verify_secret
+from auth import (
+    admin_by_username,
+    check_lockout,
+    generate_pin,
+    hash_secret,
+    record_failed_login,
+    record_successful_login,
+    require_admin,
+    verify_secret,
+)
 from backup import get_last_successful_backup, is_stale
 from db import get_session
 from jobs import (
@@ -18,18 +29,24 @@ from jobs import (
     all_events,
     approve,
     corrected_duration_estimate_s,
+    delete_all_old_jobs,
+    delete_old_job,
     finished_jobs,
+    format_duration,
+    is_old_job,
     job_events,
     log_event,
     mark_finished,
     printing_eta,
+    queue_wait_seconds,
     reject,
     release,
+    requeue_job,
     user_has_active_jobs,
 )
 from models import Admin, Job, Settings, User
 from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
-from templates_env import templates
+from templates_env import is_valid_timezone, set_display_timezone, templates
 from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
 
 router = APIRouter(prefix="/admin")
@@ -47,14 +64,24 @@ def login(
     password: str = Form(...),
     session: Session = Depends(get_session),
 ):
-    admin = admin_by_username(session, username.strip())
+    username = username.strip()
+    admin = admin_by_username(session, username)
+    if admin is not None:
+        lockout_error = check_lockout(admin)
+        if lockout_error:
+            return templates.TemplateResponse(
+                request, "admin_login.html", {"error": lockout_error, "username": username}
+            )
     if admin is None or not verify_secret(password, admin.password_hash):
+        if admin is not None:
+            record_failed_login(session, admin)
         return templates.TemplateResponse(
             request,
             "admin_login.html",
             {"error": "Username and password didn't match.", "username": username},
         )
 
+    record_successful_login(session, admin)
     request.session["admin_id"] = admin.id
     return RedirectResponse("/admin/dashboard", status_code=303)
 
@@ -67,15 +94,27 @@ def logout(request: Request):
 
 def _dashboard_context(session: Session, admin: Admin, action_error: str | None = None):
     last_backup = get_last_successful_backup(session)
+    threshold_days = get_settings(session).old_job_threshold_days
     rows = []
+    old_job_count = 0
     for job in active_jobs(session):
+        # Split out, not just shown-alongside - an old, still-undecided
+        # job moves to /admin/jobs/old entirely (see that route below),
+        # per the user: "mutually exclusive, not shown in both."
+        if is_old_job(job, threshold_days):
+            old_job_count += 1
+            continue
         user = session.get(User, job.user_id)
+        estimate_s = corrected_duration_estimate_s(session, job)
+        wait_s = queue_wait_seconds(job)
         rows.append(
             {
                 "job": job,
                 "user_name": user.name if user else "?",
                 "eta": printing_eta(session, job),
-                "duration_estimate_s": corrected_duration_estimate_s(session, job),
+                "duration_estimate_s": estimate_s,
+                "duration_display": format_duration(estimate_s) if estimate_s else None,
+                "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
             }
         )
     return {
@@ -83,6 +122,8 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
         "last_backup": last_backup,
         "backup_stale": is_stale(last_backup),
         "rows": rows,
+        "old_job_count": old_job_count,
+        "old_job_threshold_days": threshold_days,
         "action_error": action_error,
         "printer_status": connection_status(),
         "pairing": pairing_status(),
@@ -158,29 +199,55 @@ def _get_job_or_404(session: Session, job_id: int) -> Job:
     return job
 
 
-def _perform_action(request: Request, session: Session, admin: Admin, job_id: int, action_fn, *args):
+# Where a queue action (approve/reject/release/mark_done/mark_failed)
+# redirects on success, and which template+context re-renders it inline
+# on failure - keyed by an optional return_to form field each action
+# route below now accepts. Exists because an "old" job (see
+# jobs.is_old_job) is excluded from the normal /admin/dashboard queue
+# entirely, not just flagged there too (per the user: "mutually
+# exclusive, not shown in both") - so approve/reject/release still have
+# to work *from* /admin/jobs/old for a job that literally cannot appear
+# on the main dashboard any more. Defaults to the main dashboard so
+# every pre-existing form (which never sends this field) keeps working
+# unchanged.
+_RETURN_TARGETS = {
+    "/admin/dashboard": ("admin_dashboard.html", lambda session, admin, error: _dashboard_context(session, admin, error)),
+    "/admin/jobs/old": ("admin_old_jobs.html", lambda session, admin, error: _old_jobs_context(session, admin, error)),
+}
+
+
+def _perform_action(
+    request: Request,
+    session: Session,
+    admin: Admin,
+    job_id: int,
+    action_fn,
+    *args,
+    return_to: str = "/admin/dashboard",
+):
     """Shared body for every queue action below: look up the job, run the
-    requested transition, and either redirect (success) or re-render the
-    dashboard with the error inline (failure) - e.g. releasing a job that
-    isn't approved, or rejecting without a note."""
+    requested transition, and either redirect (success) or re-render
+    wherever the action was actually submitted from with the error
+    inline (failure) - e.g. releasing a job that isn't approved, or
+    rejecting without a note."""
     job = _get_job_or_404(session, job_id)
+    template_name, context_fn = _RETURN_TARGETS.get(return_to, _RETURN_TARGETS["/admin/dashboard"])
     try:
         action_fn(session, job, *args)
     except JobActionError as e:
-        return templates.TemplateResponse(
-            request, "admin_dashboard.html", _dashboard_context(session, admin, str(e))
-        )
-    return RedirectResponse("/admin/dashboard", status_code=303)
+        return templates.TemplateResponse(request, template_name, context_fn(session, admin, str(e)))
+    return RedirectResponse(return_to, status_code=303)
 
 
 @router.post("/jobs/{job_id}/approve")
 def approve_job(
     request: Request,
     job_id: int,
+    return_to: str = Form("/admin/dashboard"),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return _perform_action(request, session, admin, job_id, approve, admin)
+    return _perform_action(request, session, admin, job_id, approve, admin, return_to=return_to)
 
 
 @router.post("/jobs/{job_id}/reject")
@@ -188,20 +255,22 @@ def reject_job(
     request: Request,
     job_id: int,
     note: str = Form(...),
+    return_to: str = Form("/admin/dashboard"),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return _perform_action(request, session, admin, job_id, reject, admin, note)
+    return _perform_action(request, session, admin, job_id, reject, admin, note, return_to=return_to)
 
 
 @router.post("/jobs/{job_id}/release")
 def release_job(
     request: Request,
     job_id: int,
+    return_to: str = Form("/admin/dashboard"),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return _perform_action(request, session, admin, job_id, release, admin)
+    return _perform_action(request, session, admin, job_id, release, admin, return_to=return_to)
 
 
 @router.post("/jobs/{job_id}/mark_done")
@@ -218,10 +287,110 @@ def mark_done_job(
 def mark_failed_job(
     request: Request,
     job_id: int,
+    reason: str = Form(...),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return _perform_action(request, session, admin, job_id, mark_finished, admin, False)
+    return _perform_action(request, session, admin, job_id, mark_finished, admin, False, reason)
+
+
+def _old_jobs_context(session: Session, admin: Admin, action_error: str | None = None):
+    threshold_days = get_settings(session).old_job_threshold_days
+    rows = []
+    for job in active_jobs(session):
+        if not is_old_job(job, threshold_days):
+            continue
+        user = session.get(User, job.user_id)
+        estimate_s = corrected_duration_estimate_s(session, job)
+        wait_s = queue_wait_seconds(job)
+        rows.append(
+            {
+                "job": job,
+                "user_name": user.name if user else "?",
+                "duration_display": format_duration(estimate_s) if estimate_s else None,
+                "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
+            }
+        )
+    return {
+        "admin": admin,
+        "rows": rows,
+        "threshold_days": threshold_days,
+        "action_error": action_error,
+    }
+
+
+@router.get("/jobs/old")
+def old_jobs_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Queued/approved jobs that have been waiting at least
+    Settings.old_job_threshold_days - split entirely out of the normal
+    /admin/dashboard queue (see jobs.is_old_job / _dashboard_context
+    above), not just flagged alongside everything else there."""
+    return templates.TemplateResponse(request, "admin_old_jobs.html", _old_jobs_context(session, admin))
+
+
+@router.post("/jobs/{job_id}/delete")
+def delete_job_route(
+    request: Request,
+    job_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Genuinely deletes a stale job - see jobs.delete_old_job for why
+    this is a real, unrecoverable delete rather than another terminal
+    status like reject(). Only reachable from the old-jobs page, and
+    only meaningful for a job still queued/approved there - not a
+    general "delete any job" action."""
+    job = _get_job_or_404(session, job_id)
+    try:
+        delete_old_job(session, job, admin)
+    except JobActionError as e:
+        return templates.TemplateResponse(
+            request, "admin_old_jobs.html", _old_jobs_context(session, admin, str(e))
+        )
+    return RedirectResponse("/admin/jobs/old", status_code=303)
+
+
+@router.post("/jobs/{job_id}/requeue")
+def requeue_job_route(
+    request: Request,
+    job_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Resets a stale job's queued_at to now instead of deleting or
+    rejecting it - see jobs.requeue_job. Only reachable from the
+    old-jobs page (always redirects back there, no return_to needed -
+    unlike approve/reject/release, there's nowhere else this button
+    exists), and by definition the job won't show up there any more
+    once its wait clock has been reset."""
+    job = _get_job_or_404(session, job_id)
+    try:
+        requeue_job(session, job, admin)
+    except JobActionError as e:
+        return templates.TemplateResponse(
+            request, "admin_old_jobs.html", _old_jobs_context(session, admin, str(e))
+        )
+    return RedirectResponse("/admin/jobs/old", status_code=303)
+
+
+@router.post("/jobs/old/delete_all")
+def delete_all_old_jobs_route(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Clears the entire old-jobs backlog in one click - see
+    jobs.delete_all_old_jobs. No JobActionError case to handle here
+    unlike the single-job route above: every job this touches was just
+    re-selected by is_old_job() itself, so there's nothing left that
+    could fail _require_status's check inside delete_old_job()."""
+    threshold_days = get_settings(session).old_job_threshold_days
+    delete_all_old_jobs(session, admin, threshold_days)
+    return RedirectResponse("/admin/jobs/old", status_code=303)
 
 
 # ---- user account management ----
@@ -232,9 +401,19 @@ def mark_failed_job(
 # design pass rather than reusing this code as-is.
 
 
-def _users_context(session: Session, admin: Admin, action_error: str | None = None):
+def _users_context(
+    session: Session,
+    admin: Admin,
+    action_error: str | None = None,
+    flash_notice: str | None = None,
+):
     users = session.exec(select(User).order_by(User.name)).all()
-    return {"admin": admin, "users": users, "action_error": action_error}
+    return {
+        "admin": admin,
+        "users": users,
+        "action_error": action_error,
+        "flash_notice": flash_notice,
+    }
 
 
 @router.get("/users")
@@ -243,7 +422,15 @@ def users_page(
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return templates.TemplateResponse(request, "admin_users.html", _users_context(session, admin))
+    # Popped, not just read - see reset_user_pin below: the new PIN is
+    # shown here exactly once, right after the redirect that follows
+    # resetting it, same flash-via-session pattern as user.py's
+    # flash_error. A page refresh must not keep re-showing a secret that
+    # was already relayed.
+    flash_notice = request.session.pop("flash_notice", None)
+    return templates.TemplateResponse(
+        request, "admin_users.html", _users_context(session, admin, flash_notice=flash_notice)
+    )
 
 
 def _get_user_or_404(session: Session, user_id: int) -> User:
@@ -280,6 +467,31 @@ def enable_user(
     session.add(user)
     log_event(session, None, _admin_actor(admin), "user_enabled", detail=user.name)
     session.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post("/users/{user_id}/reset_pin")
+def reset_user_pin(
+    request: Request,
+    user_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """The only recovery path for a forgotten PIN - there's no email to
+    send a reset link to, and no security question, so an admin sets a
+    new one directly and relays it in person. Generates it rather than
+    taking one from a form: nothing for the admin to type or get wrong,
+    and it's shown back exactly once (see users_page's flash_notice) for
+    them to pass along right away. Never logged in plaintext - the
+    activity log records that a reset happened and who did it, same as
+    disable/enable/delete, not the credential itself."""
+    user = _get_user_or_404(session, user_id)
+    new_pin = generate_pin()
+    user.pin_hash = hash_secret(new_pin)
+    session.add(user)
+    log_event(session, None, _admin_actor(admin), "pin_reset", detail=user.name)
+    session.commit()
+    request.session["flash_notice"] = f"New PIN for {user.name}: {new_pin} - give it to them now, it won't be shown again."
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -349,6 +561,11 @@ def _admin_settings_context(session: Session, admin: Admin, error: str | None = 
         "modes": MODES,
         "selected_theme": admin.theme or DEFAULT_THEME,
         "selected_mode": admin.theme_mode or DEFAULT_MODE,
+        # Sorted once per render, not cached - this list only matters
+        # while the settings page itself is open, nowhere near often
+        # enough to be worth a module-level cache the way
+        # templates_env's actual display timezone is.
+        "timezones": sorted(zoneinfo.available_timezones()),
         "error": error,
         "saved": saved,
     }
@@ -367,17 +584,30 @@ def settings_page(
 def update_settings(
     request: Request,
     draft_expiry_days: int = Form(...),
+    display_timezone: str = Form(...),
+    old_job_threshold_days: int = Form(...),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     error = None
     if draft_expiry_days < 1:
         error = "Draft expiry must be at least 1 day."
+    elif not is_valid_timezone(display_timezone):
+        error = "Not a real timezone choice."
+    elif old_job_threshold_days < 1:
+        error = "Old-job threshold must be at least 1 day."
     else:
         settings = get_settings(session)
         settings.draft_expiry_days = draft_expiry_days
+        settings.display_timezone = display_timezone
+        settings.old_job_threshold_days = old_job_threshold_days
         session.add(settings)
         session.commit()
+        # Takes effect immediately, for every viewer, not just after a
+        # restart - see templates_env.set_display_timezone for why this
+        # in-process cache exists at all rather than a DB read per
+        # timestamp shown.
+        set_display_timezone(display_timezone)
     return templates.TemplateResponse(
         request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
     )

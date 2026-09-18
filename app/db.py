@@ -125,6 +125,62 @@ def _migrate_to_3_2_0(conn):
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN theme_mode VARCHAR"))
 
 
+def _migrate_to_3_3_0(conn):
+    """New User.failed_login_attempts/locked_until and
+    Admin.failed_login_attempts/locked_until columns - login
+    rate-limiting (see auth.py). Purely additive; failed_login_attempts
+    defaults to 0 (not NULL) so existing rows read as "no failed
+    attempts on record" rather than needing a None-check everywhere this
+    gets incremented."""
+    for table in ("user", "admin"):
+        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if "failed_login_attempts" not in cols:
+            conn.execute(
+                text(f"ALTER TABLE {table} ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0")
+            )
+        if "locked_until" not in cols:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN locked_until DATETIME"))
+
+
+def _migrate_to_3_4_0(conn):
+    """New Job.failure_reason column - failure reasons shown to the
+    submitter, not just admins (see jobs.mark_finished). Purely
+    additive/nullable; every existing 'failed' job simply reads as "no
+    reason given" (see _jobs_table.html) rather than needing a backfill -
+    there's no real reason to reconstruct for those, only to record one
+    going forward."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "failure_reason" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN failure_reason VARCHAR"))
+
+
+def _migrate_to_4_4_0(conn):
+    """New Settings.display_timezone column - an admin-configurable IANA
+    zone name every timestamp in the app is shown in (see
+    templates_env.local_time), rather than the unlabeled UTC every
+    display was hardcoded to before. Defaults to 'UTC' - the exact
+    values every existing timestamp is already stored as and was already
+    (silently) displayed as, so this changes nothing for a deployment
+    that never visits the new settings field."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(settings)")).fetchall()}
+    if "display_timezone" not in cols:
+        conn.execute(
+            text("ALTER TABLE settings ADD COLUMN display_timezone VARCHAR NOT NULL DEFAULT 'UTC'")
+        )
+
+
+def _migrate_to_4_5_0(conn):
+    """New Settings.old_job_threshold_days column - the admin-configurable
+    age threshold splitting the normal queue view from /admin/jobs/old
+    (see jobs.is_old_job). Defaults to 30, matching the to-do list's own
+    example value; purely additive."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(settings)")).fetchall()}
+    if "old_job_threshold_days" not in cols:
+        conn.execute(
+            text("ALTER TABLE settings ADD COLUMN old_job_threshold_days INTEGER NOT NULL DEFAULT 30")
+        )
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -141,6 +197,10 @@ MIGRATIONS = {
     "2.5.0": _migrate_to_2_5_0,
     "3.1.0": _migrate_to_3_1_0,
     "3.2.0": _migrate_to_3_2_0,
+    "3.3.0": _migrate_to_3_3_0,
+    "3.4.0": _migrate_to_3_4_0,
+    "4.4.0": _migrate_to_4_4_0,
+    "4.5.0": _migrate_to_4_5_0,
 }
 
 

@@ -3,6 +3,7 @@
 {% block nav %}
   <a href="/admin/dashboard">&laquo; Queue</a>
   <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
   <a href="/admin/log">Activity log</a>
   <a href="/admin/settings">Settings</a>
   <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
@@ -10,6 +11,7 @@
 {% block content %}
   <h2>Users</h2>
   {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
+  {% if flash_notice %}<p class="notice">{{ flash_notice }}</p>{% endif %}
 
   {% if not users %}
     <p class="muted">No users yet.</p>
@@ -20,7 +22,7 @@
         <tr>
           <td>{{ user.name }}</td>
           <td>{{ "disabled" if user.disabled else "active" }}</td>
-          <td class="muted">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+          <td class="muted">{{ user.created_at | local_time('%Y-%m-%d') }}</td>
           <td>
             {% if user.disabled %}
               <form method="post" action="/admin/users/{{ user.id }}/enable" style="display:inline">
@@ -31,6 +33,10 @@
                 <button type="submit">Disable</button>
               </form>
             {% endif %}
+            <form method="post" action="/admin/users/{{ user.id }}/reset_pin" style="display:inline"
+                  onsubmit="return confirm('Reset {{ user.name }}\'s PIN? Their old PIN stops working immediately - the new one only shows once, right here.')">
+              <button type="submit">Reset PIN</button>
+            </form>
             <form method="post" action="/admin/users/{{ user.id }}/delete" style="display:inline"
                   onsubmit="return confirm('Permanently delete {{ user.name }}? This cannot be undone.')">
               <button type="submit">Delete</button>

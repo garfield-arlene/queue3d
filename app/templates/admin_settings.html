@@ -4,6 +4,7 @@
   <a href="/admin/dashboard">&laquo; Queue</a>
   <a href="/admin/users">Users</a>
   <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
   <a href="/admin/log">Activity log</a>
   <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
 {% endblock %}
@@ -22,6 +23,30 @@
       to admins. <code>cleanup_drafts.py</code> (wire it into cron - see
       app/README.md) removes any draft older than this, so abandoned
       drafts don't sit around forever.
+    </p>
+    <label>Display timezone<br>
+      <select name="display_timezone">
+        {% for tz in timezones %}
+          <option value="{{ tz }}" {% if settings.display_timezone == tz %}selected{% endif %}>{{ tz }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="muted">
+      Every timestamp everywhere in the app (activity log, job history,
+      "finished at", etc.) is shown in this timezone - takes effect
+      immediately for everyone, not just after a restart. Data is still
+      stored and compared internally as UTC regardless; this only
+      changes what a viewer actually reads on the page.
+    </p>
+    <label>Move a queued/approved job to "old jobs" after waiting this many days<br>
+      <input type="number" name="old_job_threshold_days" min="1" value="{{ settings.old_job_threshold_days }}" required>
+    </label>
+    <p class="muted">
+      A job still awaiting a decision (queued or approved, not yet
+      released) that's been waiting at least this long moves from the
+      normal queue to a separate <a href="/admin/jobs/old">Old jobs</a>
+      view - out of the way there, not shown in both places at once.
+      Doesn't apply to a job that's already printing.
     </p>
     <button type="submit">Save</button>
   </form>

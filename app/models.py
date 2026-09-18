@@ -39,6 +39,15 @@ class User(SQLModel, table=True):
     # themes.py) - independently persisted the same way and for the same
     # reason.
     theme_mode: str | None = Field(default=None)
+    # Login rate-limiting (see auth.py's check_lockout/record_failed_login/
+    # record_successful_login) - failed_login_attempts counts consecutive
+    # failures since the last success or lockout; locked_until, once set,
+    # blocks login regardless of correct credentials until that moment
+    # passes. Per the user: PINs are short by design, which also makes
+    # them easier to guess, and nothing previously slowed down repeated
+    # attempts at all.
+    failed_login_attempts: int = Field(default=0)
+    locked_until: datetime | None = Field(default=None)
 
 
 class Admin(SQLModel, table=True):
@@ -50,6 +59,11 @@ class Admin(SQLModel, table=True):
     # pick their own look independently of any user's.
     theme: str | None = Field(default=None)
     theme_mode: str | None = Field(default=None)
+    # Same login rate-limiting as User above - an admin's password is a
+    # higher-stakes target than any one user's PIN, so this applies here
+    # too, not just the short-PIN case that motivated it.
+    failed_login_attempts: int = Field(default=0)
+    locked_until: datetime | None = Field(default=None)
 
 
 class SchemaVersion(SQLModel, table=True):
@@ -143,10 +157,11 @@ TERMINAL_STATUSES = {JobStatus.rejected, JobStatus.done, JobStatus.failed, JobSt
 
 
 class Settings(SQLModel, table=True):
-    """A single-row table of admin-configurable settings - just one so far.
-    A real key/value settings table would be overkill for one integer;
-    add columns here as more settings show up rather than reaching for
-    that until there's actually more than one."""
+    """A single-row table of admin-configurable settings that apply to
+    the whole app at once, not per-account - see User/Admin.theme for
+    the per-account equivalent. Not a generic key/value store; add
+    columns here as more settings show up rather than reaching for that
+    until there's actually more than a couple."""
 
     id: int = Field(default=1, primary_key=True)
     # How long a sliced-but-never-submitted draft sits before
@@ -156,6 +171,26 @@ class Settings(SQLModel, table=True):
     # draft feature raises doesn't have one right answer for every
     # deployment's traffic/storage.
     draft_expiry_days: int = Field(default=7)
+    # An IANA zone name (e.g. "America/New_York") every timestamp in the
+    # app is displayed in - see templates_env.local_time. Every
+    # timestamp is still stored and compared internally as UTC
+    # (unchanged, and it must stay that way - see that module's
+    # docstring); this only affects what a viewer actually reads on the
+    # page. Site-wide, not per-account: per the user, "should apply
+    # everywhere at once, not per-page" - one admin-set value for the
+    # whole deployment, not a per-viewer preference like theme/mode are.
+    # Defaults to "UTC" so an untouched deployment shows exactly what it
+    # always has.
+    display_timezone: str = Field(default="UTC")
+    # How many days a queued/approved job can sit waiting before it counts
+    # as "old" - see jobs.is_old_job, /admin/jobs/old. Splits the normal
+    # queue view from a separate backlog view, per the user, rather than
+    # just showing everything together forever. Scoped to queued/approved
+    # only, not printing - a print actively running is being acted on,
+    # not sitting in backlog (same reasoning jobs.queue_wait_seconds
+    # already uses). Defaults to 30, matching the to-do list's own
+    # example value.
+    old_job_threshold_days: int = Field(default=30)
 
 
 class JobEvent(SQLModel, table=True):
@@ -224,6 +259,14 @@ class Job(SQLModel, table=True):
     admin_note: str | None = Field(default=None)
     released_at: datetime | None = Field(default=None)
     finished_at: datetime | None = Field(default=None)
+    # Why a 'failed' job failed - shown to the submitter, not just an
+    # admin (see jobs.mark_finished). Always set automatically when the
+    # background poller detects the failure itself ("cancelled at the
+    # printer", etc. - see check_and_finish_active_print); required from
+    # an admin marking one failed by hand, same as admin_note is required
+    # on a manual reject. None for a 'done' job - this is specifically
+    # about explaining a failure, not a general outcome note.
+    failure_reason: str | None = Field(default=None)
     # A photo of the build plate, taken via the printer's camera the
     # moment an admin marks this job done or failed (see jobs.mark_finished)
     # - regardless of outcome, so both the submitter and an admin have a
