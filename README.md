@@ -269,13 +269,21 @@ Managing user accounts:
   before slicing - `trimesh` (Python, fill holes/fix normals/fix winding)
   or `admesh` (a small purpose-built STL repair CLI) are the two realistic
   options to build it on.
-- Centering an uploaded model by its actual geometric centroid, not just
-  its bounding-box center (`slicing/stl_to_3mf.center_vertices` today) -
-  a real asymmetric model was seen to fail `mbotmake`'s own bed-centering
-  sanity check this way (see `app/README.md`'s "A real stuck-slicing
-  incident" section); centroid-based centering might avoid that class of
-  failure for future oddly-shaped models. Not attempted yet - would need
-  confirming it doesn't just move the mismatch somewhere else.
+- ~~Centering an uploaded model by its actual geometric centroid, not
+  just its bounding-box center - a real asymmetric model was seen to
+  fail `mbotmake`'s own bed-centering sanity check this way.~~ **Done,
+  but confirmed only a partial fix** - `slicing/stl_to_3mf.center_vertices`
+  now uses an area-weighted surface centroid (matched in
+  `static/preview.js`, which has to stay in lockstep - see either's own
+  comment), a real, measured improvement (moved the actual failing
+  model's `yrel` from -0.232 to -0.162 against the real pipeline), but
+  that specific model is asymmetric enough to still narrowly miss the
+  ±0.15 tolerance. A full volume-centroid (not just projected surface
+  area) might close the remaining gap, but needs a watertight,
+  consistently-wound mesh to compute correctly - a real precondition to
+  check first for a mesh converted from an arbitrary uploaded OBJ, not
+  yet attempted. See `app/README.md`'s "A real stuck-slicing incident"
+  section for the full numbers.
 
 **Job review & feedback**
 - ~~Show failure reasons to the user, not just rejection notes - rejection

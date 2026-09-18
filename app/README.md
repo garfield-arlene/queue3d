@@ -530,10 +530,56 @@ loosening that assertion - it's third-party vendored code whose exact
 tolerance reasoning isn't fully understood here, and weakening an
 unfamiliar safety check to make one model pass risks silently producing
 bad real-world prints for others instead of a clean, honest failure.
-Recentering based on the mesh's actual geometric centroid rather than
-its bounding-box center might address this class of failure for future
-asymmetric models - noted as a possible angle for the existing "model
-repair" to-do item, not attempted here.
+
+**Follow-up, same day: actually tried the centroid-based centering
+angle, rather than leaving it as a filed idea, once the user reported a
+second upload failing too** ("Now both obj files that were uploaded
+failed... I still don't have working support for uploading and slicing
+obj files"). Investigated properly before touching anything: confirmed
+`center_vertices()` itself was working exactly as designed (the raw
+mesh's bounding box really did land at X/Y = 0,0 after it ran) - the
+mismatch was that the model's bounding-box center and its actual
+*surface* aren't in the same place for this shape. Computed three
+candidate reference points for the real failing mesh directly: the
+bounding-box center (what shipped originally), a plain vertex average
+(tessellation-dependent - biased toward wherever the mesh happens to
+have more/smaller triangles, not a sound choice), and an area-weighted
+triangle centroid (tessellation-independent - a large triangle counts
+the same as many small ones covering the same real area). The
+area-weighted centroid came out meaningfully closer to zero than the
+bounding-box center in the direction that mattered.
+
+**`center_vertices()`/`surface_centroid_xy()` (`slicing/stl_to_3mf.py`)
+switched from bounding-box to area-weighted-centroid centering**, and
+`static/preview.js`'s `showModel()` updated with an identical
+`surfaceCentroidXY()` calculation to match - the two have to stay in
+lockstep (see either's own comment) or this reintroduces the exact
+"preview and slice disagree on where an off-center model actually
+sits" bug `center_vertices()` was originally built to prevent. Verified
+directly on the real failing model before believing any of this helped:
+re-slicing the identical mesh moved `yrel` from -0.232 (its original,
+clearly-failing value) to -0.162 - a real, measured improvement in the
+right direction, using the actual OrcaSlicer + `mbotmake` pipeline, not
+just reasoning about the vertex math. Also re-verified two previously-
+working models (a plain STL, and the overhang-supports test model with
+supports enabled) still slice successfully and still produce correct
+support-preview geometry with the new centering - a real regression
+check, not assumed safe just because the failing case improved.
+
+**Fully honest about the actual, incomplete result: this specific model
+is asymmetric enough that -0.162 still narrowly misses the ±0.15
+tolerance** - the fix is a genuine, verified improvement (it will
+likely resolve moderately-asymmetric models that would have failed
+under pure bounding-box centering), not a claim that this particular
+Christmas tree model now slices. A full volume-centroid calculation
+(where the material really *is* in 3D, not just projected surface area)
+might close the remaining gap, but needs a watertight, consistently-
+wound mesh to compute correctly - a real risk for a mesh converted from
+an arbitrary user-supplied OBJ that hasn't been validated as clean, and
+not attempted here without first checking that precondition. Recorded
+as the next concrete step on the "model repair"/centering to-do item,
+with the specific numbers this attempt got to, rather than restarting
+the investigation from scratch next time.
 
 ### What release does
 

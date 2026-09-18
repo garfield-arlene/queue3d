@@ -84,6 +84,40 @@ function animate() {
     renderer.render(scene, camera);
 }
 
+/**
+ * Area-weighted centroid of `geometry`'s triangles, projected to X/Y - the
+ * exact same calculation as slicing/stl_to_3mf.py's surface_centroid_xy(),
+ * which must stay in lockstep with this one (see showModel()'s own
+ * centering comment for why: this app slices already-centered geometry,
+ * and the preview has to show that same placement, not an independently
+ * -arrived-at one that happens to differ for an asymmetric model).
+ * Tessellation-independent, unlike a plain vertex average - a triangle's
+ * own area weights it, not how many vertices happen to be nearby.
+ */
+function surfaceCentroidXY(geometry) {
+    const pos = geometry.attributes.position;
+    const index = geometry.index;
+    const triCount = (index ? index.count : pos.count) / 3;
+    const vx = (i) => pos.getX(index ? index.getX(i) : i);
+    const vy = (i) => pos.getY(index ? index.getX(i) : i);
+
+    let totalArea = 0;
+    let weightedX = 0;
+    let weightedY = 0;
+    for (let t = 0; t < triCount; t++) {
+        const i0 = t * 3, i1 = t * 3 + 1, i2 = t * 3 + 2;
+        const ax = vx(i0), ay = vy(i0);
+        const bx = vx(i1), by = vy(i1);
+        const cx = vx(i2), cy = vy(i2);
+        const area = Math.abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) / 2;
+        weightedX += ((ax + bx + cx) / 3) * area;
+        weightedY += ((ay + by + cy) / 3) * area;
+        totalArea += area;
+    }
+    if (totalArea === 0) return { x: 0, y: 0 };
+    return { x: weightedX / totalArea, y: weightedY / totalArea };
+}
+
 function showModel(geometry) {
     if (currentMesh) {
         scene.remove(currentMesh);
@@ -114,9 +148,16 @@ function showModel(geometry) {
 
     // Center the model on the bed in X/Y and drop it so its lowest point
     // sits on the plate (Z=0) - the same "auto place on bed" a slicer does.
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-    geometry.translate(-center.x, -center.y, -box.min.z);
+    // Area-weighted surface centroid, not the bounding-box midpoint - see
+    // surfaceCentroidXY()'s own comment and slicing/stl_to_3mf.py's
+    // matching center_vertices(): an asymmetric model (most of its
+    // surface well off from its own box's middle) can pass bbox-centering
+    // fine here but then fail the slicer's own downstream bed-centering
+    // check, since that check looks at where the sliced material actually
+    // ends up, not the box. Confirmed against a real model that failed
+    // exactly that way before this changed.
+    const centroid = surfaceCentroidXY(geometry);
+    geometry.translate(-centroid.x, -centroid.y, -box.min.z);
 
     const overBuildVolume = size.x > BED_WIDTH_MM || size.y > BED_DEPTH_MM || size.z > BED_HEIGHT_MM;
 
