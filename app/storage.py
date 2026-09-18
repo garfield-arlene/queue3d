@@ -15,6 +15,7 @@ collisions and path-traversal footguns from user-supplied names entirely.
 The original filename is only ever used for display (see Job.original_filename).
 """
 
+import io
 import json
 import zipfile
 from pathlib import Path
@@ -29,6 +30,63 @@ for _d in (SCRATCH_DIR, QUEUE_DIR, ARCHIVE_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50MB - generous for a desktop-printer-scale STL
+
+# Model file extensions this app can actually turn into a job - see
+# app/mesh.py for the OBJ half (converted to a real .stl immediately on
+# upload, so nothing past that point needs to know OBJ ever existed).
+MODEL_EXTENSIONS = {".stl", ".obj"}
+
+# A Thingiverse-style download is often a zip of several separate STLs
+# (variants, accessories, a multi-part model) rather than one file - per
+# the user, each becomes its own job/draft, the same as uploading each
+# separately, rather than attempting a combined-plate arrangement (this
+# app's whole pipeline is built around one object per job - see
+# slicing/stl_to_3mf.py's --arrange 0). Capped, not unbounded: a
+# reasonable ceiling on how many simultaneous slicing background tasks
+# one upload can kick off at once (see app/README.md's "Uploading
+# zip/OBJ files" section for the concurrency consideration this raises).
+MAX_ZIP_MODEL_FILES = 10
+
+
+def extract_model_files(zip_bytes: bytes) -> list[tuple[str, bytes]]:
+    """Returns [(filename, data), ...] for every .stl/.obj entry in the
+    zip - everything else (a README, a photo, a license file, a nested
+    folder Thingiverse sometimes wraps everything in) is silently
+    ignored, not an error. Raises ValueError with a user-facing message
+    for anything that should stop the whole zip: not a real zip, more
+    than MAX_ZIP_MODEL_FILES model files, or one individually over
+    MAX_UPLOAD_BYTES (checked from the zip's own recorded uncompressed
+    size, before actually decompressing it - a real defense against a
+    small zip bomb expanding into gigabytes, not just a courtesy).
+
+    Deliberately never calls extractall() or builds any filesystem path
+    from an entry's own name (the classic "zip slip" path-traversal
+    footgun, e.g. an entry literally named "../../etc/cron.d/x") - only
+    `zf.read()` into memory, and only the basename of each entry's name
+    is ever kept (for display as Job.original_filename), never used to
+    construct a path anywhere."""
+    results = []
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile:
+        raise ValueError("Not a valid zip file.")
+    with zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            name = Path(info.filename).name
+            if Path(name).suffix.lower() not in MODEL_EXTENSIONS:
+                continue
+            if info.file_size == 0:
+                continue
+            if info.file_size > MAX_UPLOAD_BYTES:
+                raise ValueError(
+                    f"{name} is too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB)."
+                )
+            if len(results) >= MAX_ZIP_MODEL_FILES:
+                raise ValueError(f"Too many model files in this zip (max {MAX_ZIP_MODEL_FILES}).")
+            results.append((name, zf.read(info)))
+    return results
 
 
 def scratch_stl_path(job_id: int) -> Path:

@@ -8,7 +8,9 @@
   <h2>Hi, {{ user.name }}</h2>
 
   <form id="upload-form" method="post" action="/upload" enctype="multipart/form-data">
-    <label>Upload a model (.stl)<br><input type="file" id="stl-file" name="file" accept=".stl" required></label>
+    <label>Upload a model (.stl, .obj, or a .zip of them)<br>
+      <input type="file" id="stl-file" name="file" accept=".stl,.obj,.zip" required>
+    </label>
     <label><input type="checkbox" name="enable_supports"> Generate supports</label>
     <label>Support style<br>
       <select name="support_style">
@@ -39,6 +41,19 @@
     fileInput.addEventListener("change", () => {
       const file = fileInput.files[0];
       if (!file) return;
+      // Instant client-side preview only works for .stl right now (the
+      // vendored loader is STL-only - see static/preview.js) - an .obj
+      // or .zip selection still uploads and slices normally, it just
+      // doesn't get this immediate before-upload look. The real preview
+      // (post-slice, from the server's own always-STL copy - see
+      // mesh.py) works the same regardless of what was originally
+      // uploaded, once slicing finishes.
+      if (!file.name.toLowerCase().endsWith(".stl")) {
+        container.hidden = true;
+        info.textContent = "Preview available after upload.";
+        info.classList.remove("error");
+        return;
+      }
       container.hidden = false;
       previewFile(file, container, info);
     });

@@ -1,7 +1,11 @@
+import tempfile
+from pathlib import Path
+
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session
 
+import storage
 from auth import (
     check_lockout,
     hash_secret,
@@ -26,6 +30,7 @@ from jobs import (
     start_reslice,
     submit_draft,
 )
+from mesh import convert_obj_to_stl
 from models import DRAFT_STATUSES, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, scratch_stl_path
 from templates_env import templates
@@ -235,33 +240,48 @@ def dashboard_jobs_table(
     return templates.TemplateResponse(request, "_jobs_table.html", context)
 
 
-@router.post("/upload")
-def upload(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    enable_supports: bool = Form(False),
-    support_style: str = Form("default"),
-    user: User = Depends(require_user),
-    session: Session = Depends(get_session),
-):
-    filename = file.filename or "model.stl"
-    if support_style not in SUPPORT_STYLES:
-        support_style = "default"
-
-    def fail(message: str):
-        request.session["flash_error"] = message
-        return RedirectResponse("/dashboard", status_code=303)
-
-    if not filename.lower().endswith(".stl"):
-        return fail("Only .stl files are accepted.")
-
-    data = file.file.read()
+def _stl_bytes_from_upload(filename: str, data: bytes) -> bytes:
+    """Validates one uploaded model file and returns real STL bytes ready
+    to write to scratch/ - converting from OBJ first if that's what this
+    is (see mesh.py's own docstring for why that conversion happens here,
+    immediately, rather than teaching anything downstream a second
+    format). Raises ValueError with a user-facing message for anything
+    that shouldn't become a job at all: empty, oversized, or (for OBJ) not
+    actually parseable. Shared by a plain upload and each file pulled out
+    of an uploaded zip - both need the exact same validation+conversion,
+    just applied once vs. in a loop."""
     if not data:
-        return fail("That file is empty.")
+        raise ValueError("empty file")
     if len(data) > MAX_UPLOAD_BYTES:
-        return fail(f"File is too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB).")
+        raise ValueError(f"too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB)")
+    ext = Path(filename).suffix.lower()
+    if ext != ".obj":
+        return data
+    with tempfile.TemporaryDirectory(prefix="queue3d-objconvert-") as tmp:
+        obj_path = Path(tmp) / "in.obj"
+        stl_path = Path(tmp) / "out.stl"
+        obj_path.write_bytes(data)
+        try:
+            convert_obj_to_stl(obj_path, stl_path)
+        except Exception as e:
+            raise ValueError(f"couldn't read as an OBJ file ({e})")
+        return stl_path.read_bytes()
 
+
+def _create_job_from_model(
+    session: Session,
+    background_tasks: BackgroundTasks,
+    user: User,
+    filename: str,
+    stl_bytes: bytes,
+    enable_supports: bool,
+    support_style: str | None,
+) -> Job:
+    """The actual job-creation body shared by a plain upload and each file
+    extracted from a zip - `filename` is always what's shown as
+    Job.original_filename (the *true* original name, e.g. "vase.obj",
+    even though `stl_bytes` by this point is always real STL - see
+    _stl_bytes_from_upload above)."""
     job = Job(
         user_id=user.id,
         original_filename=filename,
@@ -274,7 +294,7 @@ def upload(
     session.refresh(job)
 
     stl_path = scratch_stl_path(job.id)
-    stl_path.write_bytes(data)
+    stl_path.write_bytes(stl_bytes)
     job.stl_path = str(stl_path)
     session.add(job)
     log_event(session, job.id, f"user:{user.name}", "submitted", detail=filename)
@@ -292,7 +312,73 @@ def upload(
         enable_supports,
         support_style if enable_supports else None,
     )
+    return job
 
+
+@router.post("/upload")
+def upload(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    enable_supports: bool = Form(False),
+    support_style: str = Form("default"),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    filename = file.filename or "model.stl"
+    ext = Path(filename).suffix.lower()
+    if support_style not in SUPPORT_STYLES:
+        support_style = "default"
+    style = support_style if enable_supports else None
+
+    def fail(message: str):
+        request.session["flash_error"] = message
+        return RedirectResponse("/dashboard", status_code=303)
+
+    data = file.file.read()
+
+    if ext == ".zip":
+        # A Thingiverse-style download of several separate STLs - each
+        # becomes its own job/draft, not a combined-plate print (see
+        # storage.extract_model_files's own docstring for why, and
+        # app/README.md's "Uploading zip/OBJ files" section). One bad
+        # entry doesn't sink the whole zip - it's just skipped and named
+        # in the flash message, same spirit as any partial success.
+        try:
+            entries = storage.extract_model_files(data)
+        except ValueError as e:
+            return fail(str(e))
+        if not entries:
+            return fail("No .stl or .obj files found in that zip.")
+        created = 0
+        skipped = []
+        for entry_name, entry_data in entries:
+            try:
+                stl_bytes = _stl_bytes_from_upload(entry_name, entry_data)
+            except ValueError as e:
+                skipped.append(f"{entry_name} ({e})")
+                continue
+            _create_job_from_model(
+                session, background_tasks, user, entry_name, stl_bytes, enable_supports, style
+            )
+            created += 1
+        if created == 0:
+            return fail("Couldn't use any files in that zip: " + "; ".join(skipped))
+        if skipped:
+            request.session["flash_error"] = (
+                f"Uploaded {created} model(s) from the zip. Skipped: " + "; ".join(skipped)
+            )
+        return RedirectResponse("/dashboard", status_code=303)
+
+    if ext not in (".stl", ".obj"):
+        return fail("Only .stl, .obj, and .zip files are accepted.")
+
+    try:
+        stl_bytes = _stl_bytes_from_upload(filename, data)
+    except ValueError as e:
+        return fail(f"Couldn't use that file: {e}.")
+
+    _create_job_from_model(session, background_tasks, user, filename, stl_bytes, enable_supports, style)
     return RedirectResponse("/dashboard", status_code=303)
 
 

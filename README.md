@@ -218,6 +218,19 @@ Managing user accounts:
   `queued`/`approved`; once released and printing, an admin is already
   acting on it and the option disappears. Logged in the activity log
   like any other change.
+- **Upload `.obj` files directly, and `.zip` files of one or more
+  `.stl`/`.obj` models** - a common shape for a Thingiverse-style
+  download (a zip of several separate parts, plus a README/photo that's
+  just ignored). Each model in a zip becomes its own separate job/draft
+  - not a combined build-plate print like PrusaSlicer's own multi-object
+  loading - confirmed with the user, since this app's whole slicing
+  pipeline is built around one object per job. An `.obj` upload is
+  converted to a real `.stl` immediately (losslessly - same geometry,
+  different container) so nothing downstream (slicing, the 3D preview,
+  re-slicing) needs to know it was ever anything but one; the original
+  filename still displays as uploaded. One bad file in a zip (unreadable,
+  too large) doesn't sink the rest - it's skipped and named in a
+  message, the other valid ones still upload normally.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -236,8 +249,20 @@ Managing user accounts:
 ## To do
 
 **Upload**
-- Accept file types beyond `.stl` - `.3mf`, `.obj`, and `.zip` (presumably
-  a zipped model file) were specifically asked for.
+- ~~Accept `.obj` files directly, and `.zip` files containing one or more
+  `.stl`/`.obj` models (a common shape for a Thingiverse-style
+  download).~~ **Done** - see Features above.
+- `.3mf` upload support - not yet built, and a meaningfully bigger lift
+  than `.obj`/`.zip` turned out to be: unlike OBJ (a flat, transform-free
+  mesh format converted to STL in a few dozen lines - see `app/mesh.py`),
+  a real-world `.3mf` can bundle multiple objects with their own
+  placement transforms in one file (the same "one object per job"
+  question `.zip` already answered - each object would become its own
+  job, matching that precedent) and the client-side instant preview
+  would need Three.js's heavier `3MFLoader` (plus its own `fflate`
+  dependency) vendored, not just a small loader file like OBJ's. Worth
+  doing, but as its own follow-up rather than folded into the
+  OBJ/zip work.
 - Model repair (like PrusaSlicer/OrcaSlicer's "Fix through Netfabb") -
   confirmed OrcaSlicer's CLI has no repair flag to lean on (that's a
   GUI-only feature there), so this would mean a dedicated repair pass
@@ -281,6 +306,8 @@ Managing user accounts:
   original was - it's a new submission, and the admin still decides when to
   release it like any other. Should copy the archived files rather than
   move them, so the original archived record/history isn't lost.
+  (Explicitly re-confirmed by the user for the `rejected` case
+  specifically: "allow rejected jobs to be edited and requeued.")
 - The "View 3D" page (`/jobs/{id}/preview`) is view-only today - no way to
   resize a model or change its support settings (enable/style) from there,
   only at initial upload. This is really the same gap as the resize

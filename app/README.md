@@ -331,6 +331,102 @@ submitting from the edit page ends on the dashboard with the job queued;
 and visiting a queued job's edit URL directly redirects to the dashboard
 instead of showing a stale form.
 
+### Uploading `.obj` and `.zip` files
+
+**Why this exists:** per the user - many real-world downloads (a
+Thingiverse-style "thing" in particular) come as a zip of several
+separate `.stl`/`.obj` files (variants, accessories, a multi-part
+model), not one bare `.stl`. Only `.stl` was ever accepted before this.
+
+**The one real design question, asked and confirmed before writing any
+code:** what happens when a zip has more than one model file? PrusaSlicer
+loads all of them together onto one build plate. This app's entire
+slicing pipeline is built around **one object per job** on purpose
+(`slicing/stl_to_3mf.py` explicitly disables auto-arrange - `--arrange
+0` - specifically because "every profile here is one plate/one object");
+matching PrusaSlicer's actual combined-plate behavior would mean building
+real bin-packing/arrangement logic from scratch, a multi-object 3D
+preview, and re-verifying supports still line up correctly across
+multiple objects at once. Confirmed with the user instead: **each model
+file in a zip becomes its own separate job/draft** - the exact same
+upload→slice→draft flow every plain `.stl` upload already goes through,
+just run once per file found. Zero changes needed to slicing, the 3D
+preview, or support generation - the entire feature is upload-time
+extraction plus a loop.
+
+**`.obj` is converted to a real `.stl` immediately on upload, not taught
+to the rest of the pipeline as a second format** - `app/mesh.py`'s
+`parse_obj()`/`write_stl_binary()` (no third-party mesh library, matching
+`slicing/stl_to_3mf.py`'s own from-scratch STL parser - OBJ is a
+comparably small, dependency-free format not worth a new pip dependency
+for). This keeps every downstream piece - `storage.py`'s job-id-based
+`.stl` paths, `stl_to_3mf.py`'s parser, the client-side STL preview,
+re-slicing - working completely unchanged: there is exactly one on-disk
+model format past the moment of upload, same as there always has been.
+`Job.original_filename` still shows the true "vase.obj" for display;
+what's actually stored and sliced (`Job.stl_path`, still named that) is
+a losslessly-converted `.stl` holding the identical geometry. Verified
+against the real pipeline, not just our own parser's round-trip: an
+OBJ-derived cube was sliced all the way through OrcaSlicer and
+`mbotmake` into a genuine `.makerbot`, and the resulting job's
+`/jobs/{id}/model.stl` serves real STL bytes with no route changes at
+all.
+
+**`storage.extract_model_files()`** pulls every `.stl`/`.obj` entry out
+of an uploaded zip (case-insensitive, at any folder depth - a zip is
+often wrapped in one containing folder) and ignores everything else
+(a README, a photo, a license file) rather than erroring on it. Capped
+at `MAX_ZIP_MODEL_FILES` (10) - a sane ceiling on how many simultaneous
+slicing background tasks one upload can kick off at once (see the
+concurrency note below) - and each entry checked against the existing
+`MAX_UPLOAD_BYTES` from its *recorded* uncompressed size, before ever
+decompressing it, a real defense against a small zip expanding into
+something much bigger, not just a courtesy. Deliberately never calls
+`extractall()` or builds a filesystem path from an entry's own name (the
+classic "zip slip" path-traversal footgun - an entry literally named
+`../../etc/cron.d/x`) - only `zf.read()` into memory, and only an
+entry's basename is ever kept, for display, never for path construction.
+Confirmed directly: a deliberately path-traversal-shaped entry name in a
+test zip came back with its directory components stripped, not honored.
+
+**One bad file in a zip doesn't sink the rest** - `routers/user.py`'s
+`upload()` processes every extracted entry independently (validating/
+converting each via the same `_stl_bytes_from_upload()` a plain upload
+uses), skipping one that fails (unreadable OBJ, individually too large)
+and naming it in the flash message rather than rejecting the whole zip
+over one bad part. A zip with zero usable model files, or an outright
+invalid zip, is rejected outright with a clear message.
+
+**Client-side instant preview (parsing the chosen file in-browser before
+upload, no round-trip - see "3D preview" below) still only understands
+`.stl`,** the one loader already vendored - an `.obj` or `.zip` selection
+skips it with a plain "Preview available after upload" note instead of
+adding a second vendored loader just for that instant, before-upload
+look. The real preview (post-slice, always from the server's genuine
+`.stl` copy) works identically regardless of what was originally
+uploaded, once slicing finishes - this only affects the very first,
+optional glance.
+
+**Known limitation, not addressed here:** a zip of several files kicks
+off that many concurrent background slicing tasks at once - up to
+`MAX_ZIP_MODEL_FILES` of them. Nothing before this already serialized
+concurrent slices either (multiple browser tabs, or multiple users,
+could always overlap), so this doesn't introduce a new failure mode -
+it just makes hitting real concurrency far more likely from a single
+click. A slicing queue/concurrency limit would be the real fix if this
+turns out to matter in practice; not built yet.
+
+Verified end-to-end: a plain `.stl` upload (regression check), a
+standalone `.obj` upload converting and slicing correctly, a zip with
+two real `.stl` files producing two independent jobs (both sliced
+successfully), a zip mixing `.stl`/`.obj`/an ignored `.txt` file
+extracting only the two real models, a wrong extension rejected, a
+malformed standalone `.obj` rejected with a clear message, an all-bad
+zip rejected, and a zip with one good file and one malformed `.obj`
+uploading the good one while clearly naming the skipped one - all
+through the real HTTP routes and the real OrcaSlicer/`mbotmake`
+pipeline, not just the parsing functions in isolation.
+
 ### Upload and slicing progress
 
 Slicing (OrcaSlicer + `mbotmake`, both real subprocesses) can take minutes
