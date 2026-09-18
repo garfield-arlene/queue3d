@@ -311,6 +311,25 @@ Managing user accounts:
   but every attempt in the actual production app has failed so far
   (always the connection, not the capture logic) - stays open until an
   actual real job's photo has been captured and viewed successfully.
+- A dedicated camera, independent of the printer's own flaky single-
+  session connection - per the user, after every real photo-capture
+  attempt above failed on the connection rather than the capture logic
+  itself. Plan settled on, hardware not yet in hand: an ESP32-CAM
+  (WiFi, not PoE - doesn't touch the router's limited LAN port budget,
+  which the printer and the Pi already mostly use up), flashed with
+  open-source firmware serving a plain local HTTP snapshot - no cloud
+  possible at all, since there's no vendor service to even opt into.
+  Free 3D-printable cases with a standard 1/4"-20 tripod thread exist
+  already (e.g. Printables' "ESP32 CAM Case with Tripod Mount"), paired
+  with a small clamp mount (a compact super-clamp + mini ball head, not
+  a full articulating arm - the ESP32-CAM is featherweight) gripping an
+  edge of the printer itself, Velcro not required. Deliberately not
+  built yet - per the user, waiting until the actual hardware is in hand
+  to test against rather than writing capture code blind. Once built:
+  a generic "fetch a configured snapshot URL" capture path, swappable
+  per printer (setting up cleanly for the already-planned second
+  printer), with RTSP as a fallback for any future camera that only
+  streams rather than serving a plain snapshot.
 - **The persistent-connection fix is built** (see Features below) - the
   investigation that found the underlying problem, and why the fix is
   architectural rather than a retry/backoff tweak, is in `app/README.md`'s
