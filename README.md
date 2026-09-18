@@ -209,6 +209,15 @@ Managing user accounts:
   with the user - a print actively running is being acted on, not
   sitting in an undecided backlog. The main dashboard flags how many
   are waiting, with a link straight to the backlog view.
+- **Delete your own queued job** - changed your mind about a submission
+  still awaiting a decision? Delete it directly from the dashboard,
+  with a clear "this cannot be undone" confirmation first. Genuinely
+  removes the job and its model file - the same real, unrecoverable
+  delete an admin can do to a stale one (see "Old jobs" above), just
+  reachable by the submitter instead. Only available while still
+  `queued`/`approved`; once released and printing, an admin is already
+  acting on it and the option disappears. Logged in the activity log
+  like any other change.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -284,7 +293,7 @@ Managing user accounts:
   end like a restored one does - those are different user expectations and
   worth deciding deliberately rather than defaulting to whichever is
   easier to build.
-- Let a user delete their own model from the queue (they may no longer
+- ~~Let a user delete their own model from the queue (they may no longer
   want it) - with a clear warning first that this is permanent: it removes
   the job from the queue/list and deletes the model files, with no undo.
   Only allowed while a job is still `queued`/`approved` (before release) -
@@ -293,7 +302,7 @@ Managing user accounts:
   (`done`/`failed`) like any other. Deleting does not need to also remove
   the job from any backup already taken before the delete. Like any other
   change to a job, this needs to be recorded in the job log - see "Audit
-  log" below.
+  log" below.~~ **Done** - see Features above.
 
 **Audit log**
 - The core log is built (`models.JobEvent`; `/admin/log` - one global,
@@ -308,10 +317,10 @@ Managing user accounts:
   model, an admin deleting an old one) actually exist, each needs its own
   log entry too, and an admin deletion specifically must say who did it -
   the log doesn't have anything to log yet for actions that don't exist.~~
-  Half done: an admin deleting an old job is logged (`job_deleted`, actor
-  + filename + submitter) - see "Old jobs" in Features. Still waiting on
-  the other half (a user deleting their own queued job) actually being
-  built.
+  **Done** - both delete a user's own queued/approved job and an admin
+  deleting an old one log a `job_deleted` event (actor + filename, plus
+  the submitter's name for the admin-side one) - see "Old jobs" and
+  "Delete your own queued job" in Features.
 
 **Backups & recovery**
 - Let admins see a list of backups taken and a manifest of what's actually

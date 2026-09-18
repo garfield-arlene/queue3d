@@ -381,41 +381,60 @@ def reject(session: Session, job: Job, admin: Admin, note: str) -> Job:
     return job
 
 
-def delete_old_job(session: Session, job: Job, admin: Admin) -> None:
-    """Genuinely deletes a stale, still-undecided job - reachable only
-    from /admin/jobs/old (routers/admin.py), never a general "delete any
-    queued job" action. Not another terminal status like reject() above
-    (which deliberately keeps the job and archives its files as a
-    permanent record) - per the user, this specific action "removes the
-    job... and deletes the model files, with no undo," the same delete
-    semantics as the separate to-do item for a user deleting their own
-    queued job (this is the admin-side equivalent for one that's gone
-    stale instead, not a different kind of delete).
+def _delete_job_genuinely(session: Session, job: Job, actor: str, detail: str) -> None:
+    """The actual delete both delete_old_job() and delete_own_job() below
+    share - a genuine, unrecoverable delete, not another terminal status
+    like reject() (which deliberately keeps the job and archives its
+    files as a permanent record). Only the actor label and detail
+    wording differ between "an admin clearing a stale job" and "a user
+    removing their own" - the mechanics are identical.
 
     The job's own prior event history (submit, slice, queue-submission,
     etc.) is deleted along with it rather than left behind as orphaned
     rows a global log join can no longer resolve to a filename - once
     the job itself is gone, that per-job history has nothing left to
     attach meaningfully to. What actually persists is one new,
-    job_id=None event recording the deletion itself (who did it, and
-    what/whose it was) - the exact same pattern user_deleted already
-    uses for a User that's gone by the time anyone reads that log entry
-    back."""
+    job_id=None event recording the deletion itself - the exact same
+    pattern user_deleted already uses for a User that's gone by the
+    time anyone reads that log entry back."""
     _require_status(job, JobStatus.queued, JobStatus.approved)
-    user = session.get(User, job.user_id)
-    submitter = user.name if user else "?"
     for event in session.exec(select(JobEvent).where(JobEvent.job_id == job.id)).all():
         session.delete(event)
     delete_job_files(job)
-    log_event(
-        session,
-        None,
-        _admin_actor(admin),
-        "job_deleted",
-        detail=f"{job.original_filename} (submitted by {submitter})",
-    )
+    log_event(session, None, actor, "job_deleted", detail=detail)
     session.delete(job)
     session.commit()
+
+
+def delete_old_job(session: Session, job: Job, admin: Admin) -> None:
+    """Genuinely deletes a stale, still-undecided job - reachable only
+    from /admin/jobs/old (routers/admin.py), never a general "delete any
+    queued job" action. Per the user, this specific action "removes the
+    job... and deletes the model files, with no undo" - see
+    _delete_job_genuinely() above for the shared mechanics with
+    delete_own_job() below, this branch's admin-side equivalent for a
+    job that's gone stale rather than one its own submitter no longer
+    wants."""
+    user = session.get(User, job.user_id)
+    submitter = user.name if user else "?"
+    _delete_job_genuinely(
+        session, job, _admin_actor(admin), f"{job.original_filename} (submitted by {submitter})"
+    )
+
+
+def delete_own_job(session: Session, job: Job, user: User) -> None:
+    """A user deleting their own still-undecided job - per README.md's
+    to-do list, "they may no longer want it," with the same genuine,
+    no-undo delete semantics as delete_old_job() above (see
+    _delete_job_genuinely() for the shared mechanics). Deliberately the
+    same queued/approved-only restriction, not just "any job the user
+    owns" - once released and printing, the job is being acted on by an
+    admin already; deleting out from under that would be a different,
+    much riskier action this to-do item never asked for. No "submitted
+    by" clause in the log detail unlike delete_old_job()'s - the actor
+    label (user:<name>) already says who, since here the actor and the
+    submitter are always the same person."""
+    _delete_job_genuinely(session, job, f"user:{user.name}", job.original_filename)
 
 
 def requeue_job(session: Session, job: Job, admin: Admin) -> Job:

@@ -15,6 +15,7 @@ from db import get_session
 from jobs import (
     JobActionError,
     corrected_duration_estimate_s,
+    delete_own_job,
     format_duration,
     jobs_for_user,
     log_event,
@@ -295,7 +296,7 @@ def upload(
     return RedirectResponse("/dashboard", status_code=303)
 
 
-def _owned_draft(session: Session, user: User, job_id: int) -> Job:
+def _owned_job(session: Session, user: User, job_id: int) -> Job:
     job = session.get(Job, job_id)
     if job is None or job.user_id != user.id:
         raise HTTPException(status_code=404, detail="No such job")
@@ -317,7 +318,7 @@ def edit_draft(
     anyone who lands here anyway (a stale link, or the row that put them
     here has since moved on) back to the dashboard rather than showing an
     edit form for a job it can no longer apply to."""
-    job = _owned_draft(session, user, job_id)
+    job = _owned_job(session, user, job_id)
     if job.status not in DRAFT_STATUSES:
         return RedirectResponse("/dashboard", status_code=303)
     flash_error = request.session.pop("flash_error", None)
@@ -344,7 +345,7 @@ def reslice(
     that same edit page (not the dashboard) either way, so re-slicing
     repeatedly to try different settings stays a loop on one page, the
     same as it would with a real slicer's own settings panel."""
-    job = _owned_draft(session, user, job_id)
+    job = _owned_job(session, user, job_id)
     if support_style not in SUPPORT_STYLES:
         support_style = "default"
     try:
@@ -377,9 +378,31 @@ def submit(
     to edit, and a failure here means the job wasn't in a submittable
     state any more (e.g. a duplicate click), which the dashboard's own
     status column already explains."""
-    job = _owned_draft(session, user, job_id)
+    job = _owned_job(session, user, job_id)
     try:
         submit_draft(session, job)
+    except JobActionError as e:
+        request.session["flash_error"] = str(e)
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@router.post("/jobs/{job_id}/delete")
+def delete_job(
+    job_id: int,
+    request: Request,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """A user removing their own still-undecided model - see
+    jobs.delete_own_job. Genuinely deletes the job and its files, no
+    undo - only reachable while still queued/approved; once released
+    and printing, an admin is already acting on it, so this button
+    doesn't show any more (see _jobs_table.html) and a request that
+    somehow arrives anyway is rejected the same way any other
+    already-moved-on action is."""
+    job = _owned_job(session, user, job_id)
+    try:
+        delete_own_job(session, job, user)
     except JobActionError as e:
         request.session["flash_error"] = str(e)
     return RedirectResponse("/dashboard", status_code=303)

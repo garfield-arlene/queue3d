@@ -1504,6 +1504,53 @@ timestamp, move the job back onto the main dashboard, and log a
 old job in one request while correctly sparing a job that was never old
 to begin with.
 
+### Delete your own queued job
+
+**Why this exists:** per README.md's to-do list - a user submitting a
+model they've since changed their mind about had no way to remove it
+short of asking an admin. Directly completes the "Audit log" to-do item
+about logging a delete, alongside the admin-side equivalent above.
+
+**Genuinely shares its delete mechanics with `delete_old_job()`** (see
+"Old jobs" just above) via a new private `_delete_job_genuinely()`
+helper both now call - a real, unrecoverable delete (own event history
+purged, files unlinked via `storage.delete_job_files()`, one new
+`job_id=None` "job_deleted" event persisting), not another terminal
+status like `reject()`. Only the actor and the log detail's wording
+differ: `jobs.delete_own_job(session, job, user)` logs actor
+`user:<name>` with just the filename in the detail (no "submitted by"
+clause - the actor already says who, since here the actor and the
+submitter are always the same person), while `delete_old_job()` logs
+the admin's own actor plus who originally submitted it.
+
+**Scoped identically to the admin version - `queued`/`approved` only,
+not "any job the user owns."** Once released and `printing`, an admin
+is already acting on that job; deleting it out from under that would be
+a materially different, riskier action the to-do item never asked for -
+`_delete_job_genuinely()`'s shared `_require_status()` check enforces
+this the same way for both callers.
+
+**`routers/user.py`'s `_owned_draft()` helper got renamed to
+`_owned_job()`** - it was always a plain ownership check with no actual
+draft-specific logic in its body (the draft-status check itself always
+lived in each *caller*, e.g. `edit_draft()`), and this route needed the
+identical ownership check for a job that's very much not a draft
+(`queued`/`approved`). Renaming the one shared helper to match what it
+actually does, rather than adding a near-duplicate under a
+draft-specific name, keeps `edit`/`reslice`/`submit`/`delete` sharing
+one ownership check.
+
+Verified end-to-end against an isolated instance through the real HTTP
+routes: the delete button renders only for a `queued`/`approved` row and
+not for a `printing` one; attempting to delete another user's job
+returns a 404 (ownership enforced); attempting to delete one's own
+`printing` job is rejected with the same inline flash-error pattern
+every other job action already uses, leaving the job untouched;
+deleting an owned `queued` job removes the DB row, its files, and its
+own event history while leaving exactly one `job_deleted` entry (actor
+`user:<name>`, just the filename) in the global log; and an unrelated
+job belonging to a different user is confirmed untouched throughout.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on
