@@ -142,6 +142,18 @@ def _migrate_to_3_3_0(conn):
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN locked_until DATETIME"))
 
 
+def _migrate_to_3_4_0(conn):
+    """New Job.failure_reason column - failure reasons shown to the
+    submitter, not just admins (see jobs.mark_finished). Purely
+    additive/nullable; every existing 'failed' job simply reads as "no
+    reason given" (see _jobs_table.html) rather than needing a backfill -
+    there's no real reason to reconstruct for those, only to record one
+    going forward."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "failure_reason" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN failure_reason VARCHAR"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -159,6 +171,7 @@ MIGRATIONS = {
     "3.1.0": _migrate_to_3_1_0,
     "3.2.0": _migrate_to_3_2_0,
     "3.3.0": _migrate_to_3_3_0,
+    "3.4.0": _migrate_to_3_4_0,
 }
 
 

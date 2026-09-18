@@ -238,6 +238,14 @@ class Job(SQLModel, table=True):
     admin_note: str | None = Field(default=None)
     released_at: datetime | None = Field(default=None)
     finished_at: datetime | None = Field(default=None)
+    # Why a 'failed' job failed - shown to the submitter, not just an
+    # admin (see jobs.mark_finished). Always set automatically when the
+    # background poller detects the failure itself ("cancelled at the
+    # printer", etc. - see check_and_finish_active_print); required from
+    # an admin marking one failed by hand, same as admin_note is required
+    # on a manual reject. None for a 'done' job - this is specifically
+    # about explaining a failure, not a general outcome note.
+    failure_reason: str | None = Field(default=None)
     # A photo of the build plate, taken via the printer's camera the
     # moment an admin marks this job done or failed (see jobs.mark_finished)
     # - regardless of outcome, so both the submitter and an admin have a

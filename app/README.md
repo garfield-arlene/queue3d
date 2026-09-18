@@ -130,6 +130,34 @@ and add it to `MIGRATIONS` keyed by that same version string. Test it the
 same way - fresh, an old real database, and re-running against an
 already-migrated one.
 
+**A second real incident, worse than the first: `VERSION` got bumped
+before the matching migration existed, not just alongside a code
+change.** While adding `Job.failure_reason` (schema `3.4.0`): `models.py`
+was edited first, then `VERSION` was bumped to `3.4.0`, then - before
+`_migrate_to_3_4_0` and its `MIGRATIONS` entry were even written - a
+*different*, unrelated `.py` file was edited for the same feature. That
+save triggered `--reload`, which ran `init_db()` against the real
+database with `APP_VERSION` already reading `"3.4.0"` but `MIGRATIONS`
+still topping out at `"3.3.0"` - so nothing was pending to run, yet
+`init_db()`'s final step unconditionally records
+`schemaversion.version = APP_VERSION` regardless. The real database was
+left claiming `3.4.0` while still missing the actual column, crashing
+every query touching `Job` - and unable to self-heal even once the
+migration function was later written, since a stored version of `3.4.0`
+means nothing is ever "pending" for it again. Caught while testing the
+new migration against a copy of the real database (as always) - the
+copy was already in this broken state, meaning it was already live.
+Fixed by hand (the same `ALTER TABLE` the migration function itself
+would have run) rather than by any change to the mechanism, since the
+mechanism did exactly what it's specified to do - the ordering of the
+*edits*, not the code, was the bug. **Revised rule:** the migration
+function must be written and saved *before* `VERSION` is bumped, not
+just in the same commit - on this project, where any `.py` save can
+trigger a reload against the real live database at any moment, `VERSION`
+is the one edit in a schema change that should always happen last,
+right before committing, with no further `.py` edits still to come
+after it.
+
 ## Deployment: zero internet access, by design
 
 This runs on an isolated "island" LAN (Pi + printer wired to a router,
@@ -1068,6 +1096,74 @@ behavior confirmed for admin login; and the `3.3.0` migration applies
 cleanly against both a fresh database and a real copy of the actual
 production database, correctly defaulting every existing account (4
 users, 1 admin) to `failed_login_attempts=0, locked_until=None`.
+
+### Failure reasons shown to the user
+
+**Why this exists:** per README.md's own to-do list - rejection already
+shows a required note on the submitter's dashboard, but a `failed` print
+showed nothing at all beyond the bare status word, and slicing errors
+were believed to be admin-only. Checking the code first (rather than
+guessing from the to-do item's own wording, which turned out to be
+stale) found the slicing-error half already done: `job_edit.html` (a
+user's own draft-editing page) has shown `Job.slice_error` in a
+collapsed `<details>` disclosure since that page was built, identically
+to the admin dashboard's own tooltip. The real, only gap was
+`mark_finished`'s manual failure path having no reason field at all.
+
+**`Job.failure_reason`** (schema `3.4.0`, nullable/additive) is set
+whenever a job is actually marked failed - required from an admin's
+manual "Mark failed" click (`reason: str = Form(...)` in
+`routers/admin.py`, the same required-field pattern `reject()`'s
+`admin_note` already uses), and always supplied by the automatic
+poller (`check_and_finish_active_print`, e.g. `"detected automatically
+- cancelled at the printer"`) - so there is never a `failed` job with
+a reason silently omitted going forward, only ones that predate this
+change. `jobs.mark_finished()`'s existing `detail` parameter (already
+used to prefix the photo-capture log note - see "A build-plate photo on
+every finished job") was renamed to `reason` and reused for both jobs:
+the exact same string that already explained *why* in the activity log
+is now also the one shown directly to the submitter, rather than
+inventing a second, separately-worded field for the same fact. Ignored
+on success - a `done` job has nothing to explain. Shown in
+`_jobs_table.html` ("print failed - nozzle clogged", falling back to
+"no reason given" for a `failed` job that predates this field) and in
+`admin_finished_jobs.html`'s existing "Note" column, alongside
+`admin_note` (a job is only ever one or the other, never both, since
+`rejected` and `failed` are different terminal statuses).
+
+**A second, worse real incident from the same migration-ordering class
+this project has already hit once - see [[queue3d-version-policy]]'s
+2026-09-18 addendum for the full story.** `VERSION` got bumped to
+`3.4.0` before `_migrate_to_3_4_0` itself was written, and a later,
+unrelated `.py` save in the same work session triggered `--reload`
+in between - `init_db()` ran against the real database with the new
+version number already in `VERSION` but no matching entry in
+`MIGRATIONS` yet, so nothing was pending, nothing migrated, and its
+final step still unconditionally recorded `schemaversion.version =
+"3.4.0"` regardless. The real database was left *claiming* `3.4.0`
+while still missing the `failure_reason` column outright - confirmed
+directly (`PRAGMA table_info(job)`, no such column;
+`SELECT * FROM job` raised `OperationalError: no such column:
+job.failure_reason`) - and, worse than the first incident, this
+couldn't self-heal on any later restart either, since a stored version
+of `3.4.0` means `init_db()` never sees anything pending for it again,
+even once the migration function exists. Caught while testing the new
+migration against a copy of the real database, as always - the copy
+was already in this broken state, meaning it had already gone live
+that way. Fixed by hand: the exact same `ALTER TABLE job ADD COLUMN
+failure_reason VARCHAR` the migration function itself performs, applied
+directly - not a mechanism change, since `init_db()` did exactly what
+it's specified to do; the bug was purely in the *order* the edits were
+saved in. The background auto-finish poller never crashed outright
+during the broken window (it wraps every tick in a bare
+`except Exception: pass`, by design - see "Automatic completion
+detection" below) but would have silently missed detecting any print
+finishing during it, and any real dashboard load touching `Job` in that
+window would have hit a raw 500. Revised rule going forward, recorded in
+[[queue3d-version-policy]]: the migration function must be written and
+saved *before* `VERSION` is bumped, not just in the same commit -
+`VERSION` should always be the last edit in a schema change, with no
+further `.py` edits still to come after it.
 
 ### Browsing finished jobs, and the audit log
 

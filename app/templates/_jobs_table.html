@@ -50,7 +50,7 @@
             {% elif job.status.value == 'done' %}
               finished
             {% elif job.status.value == 'failed' %}
-              print failed
+              print failed - {{ job.failure_reason or "no reason given" }}
             {% endif %}
           </td>
           <td>

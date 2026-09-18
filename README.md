@@ -163,6 +163,14 @@ Managing user accounts:
   lockout message, not "didn't match" - so a lockout can't be probed
   around by anyone who happens to already know the real credentials.
   See `app/README.md`'s "Login rate-limiting" section.
+- **Failure reasons shown to the user, not just admins** - a manual
+  "Mark failed" now requires an admin to say why, same as rejecting
+  already required a note, and that reason shows right on the
+  submitter's own dashboard row instead of just "print failed" with no
+  explanation. Automatic completion detection (above) always supplies
+  its own reason on the same field. Slicing-error detail was already
+  visible to the user (on the draft's own edit page) once checked - only
+  the manual failure case was really missing an explanation.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -191,11 +199,14 @@ Managing user accounts:
   options to build it on.
 
 **Job review & feedback**
-- Show failure reasons to the user, not just rejection notes - rejection
+- ~~Show failure reasons to the user, not just rejection notes - rejection
   notes already display (required, and shown on the user's dashboard); a
   failed print currently has no reason at all (`mark_failed` only flips
   status, no note field), and slicing-error detail is currently only
-  visible to an admin (as a hover tooltip), never shown to the user.
+  visible to an admin (as a hover tooltip), never shown to the user.~~
+  **Done** - see Features above. (Slicing-error detail turned out to
+  already be visible to the user, via the draft edit page - only the
+  manual "Mark failed" gap was real.)
 - Break the estimated print duration into days/hours/minutes - it's
   currently total minutes only.
 - Show the date/time a job was submitted, and how long it's been sitting

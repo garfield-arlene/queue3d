@@ -72,6 +72,7 @@
                 <button type="submit">Mark done</button>
               </form>
               <form method="post" action="/admin/jobs/{{ job.id }}/mark_failed" style="display:inline">
+                <input type="text" name="reason" placeholder="reason" required size="16">
                 <button type="submit">Mark failed</button>
               </form>
             {% elif job.status.value == 'slice_failed' %}

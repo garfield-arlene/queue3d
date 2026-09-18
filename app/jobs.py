@@ -460,7 +460,7 @@ def submit_draft(session: Session, job: Job) -> Job:
     return job
 
 
-def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool, detail: str = "") -> Job:
+def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool, reason: str = "") -> Job:
     """Records a print's outcome - a manual admin action (`admin` set), or
     an automatic one (`admin=None`, actor logged as `"system"` - same
     convention `cleanup_drafts.py` already uses for automated draft
@@ -478,11 +478,19 @@ def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool
     already powered back off, etc.) never blocks recording the print's
     own outcome - it's a best-effort extra, not a precondition, and the
     reason for a missing photo is still recorded in the log entry either
-    way. `detail` is prepended to that photo-outcome note - e.g. why an
-    automatic detection decided this was a failure."""
+    way. `reason` is prepended to that photo-outcome log note either way
+    (e.g. why an automatic detection decided this was a failure, or that
+    it detected completion), and - on a failure specifically - is also
+    stored on Job.failure_reason so the submitter sees *why*, not just
+    that it failed (see routers/admin.py's mark_failed_job, which
+    requires one from a manual "Mark failed" the same way reject()
+    requires admin_note). Ignored on success: a 'done' job has nothing to
+    explain."""
     _require_status(job, JobStatus.printing)
     job.status = JobStatus.done if success else JobStatus.failed
     job.finished_at = datetime.now(timezone.utc)
+    if not success and reason:
+        job.failure_reason = reason
     move_job_to_archive(job)
 
     try:
@@ -493,8 +501,8 @@ def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool
         photo_detail = "photo captured"
     except PrinterError as e:
         photo_detail = f"photo capture failed: {e}"
-    if detail:
-        photo_detail = f"{detail}; {photo_detail}"
+    if reason:
+        photo_detail = f"{reason}; {photo_detail}"
 
     session.add(job)
     actor = _admin_actor(admin) if admin is not None else "system"
@@ -544,10 +552,10 @@ def check_and_finish_active_print(session: Session) -> Job | None:
     cancelled = bool(current.get("cancelled"))
     complete = bool(current.get("complete"))
     if cancelled or error:
-        reason = "cancelled at the printer" if cancelled else f"printer reported an error: {error}"
-        return mark_finished(session, job, admin=None, success=False, detail=f"detected automatically - {reason}")
+        why = "cancelled at the printer" if cancelled else f"printer reported an error: {error}"
+        return mark_finished(session, job, admin=None, success=False, reason=f"detected automatically - {why}")
     if complete:
-        return mark_finished(session, job, admin=None, success=True, detail="detected automatically - print complete")
+        return mark_finished(session, job, admin=None, success=True, reason="detected automatically - print complete")
     return None
 
 

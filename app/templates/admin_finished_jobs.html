@@ -29,7 +29,7 @@
           <td>{% if job.photo_path %}<a href="/jobs/{{ job.id }}/photo.jpg">Photo</a>{% endif %}</td>
           <td>{{ job.status.value }}</td>
           <td class="muted">{% if job.finished_at %}{{ job.finished_at.strftime('%Y-%m-%d %H:%M UTC') }}{% endif %}</td>
-          <td class="muted">{{ job.admin_note or "" }}</td>
+          <td class="muted">{{ job.admin_note or job.failure_reason or "" }}</td>
           <td><a href="/admin/jobs/{{ job.id }}/log">Log</a></td>
         </tr>
       {% endfor %}

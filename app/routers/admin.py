@@ -228,10 +228,11 @@ def mark_done_job(
 def mark_failed_job(
     request: Request,
     job_id: int,
+    reason: str = Form(...),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return _perform_action(request, session, admin, job_id, mark_finished, admin, False)
+    return _perform_action(request, session, admin, job_id, mark_finished, admin, False, reason)
 
 
 # ---- user account management ----
