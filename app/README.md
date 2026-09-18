@@ -533,6 +533,58 @@ jobs' "est. N min," not just `printing_eta()`), computed once per row in
 `row.duration_estimate_s` rather than templates reaching for
 `job.duration_estimate_s` directly.
 
+### Automatic completion detection
+
+**Why this exists:** per the user, after this exact investigation:
+every real photo-capture failure that day traced back to the same root
+cause - the connection dying in the gap between a print *actually*
+finishing and an admin *noticing* and clicking "Mark done." Closing that
+gap is the whole point, not just saving a click - `jobs.mark_finished()`
+now runs the moment the printer itself reports the print is over, using
+whichever connection was already live from the most recent progress
+poll, not one that's had time to go idle or get killed by a cancel while
+nobody was looking.
+
+**A background thread, not tied to any request or open browser tab.**
+Relying on the live-progress UI polling (`GET /jobs/{id}/progress`)
+alone would only catch completion while someone happened to have the
+dashboard open - `jobs.start_auto_finish_poller()` (started once, from
+`main.py`'s startup handler) runs independently on a daemon thread,
+checking every 15 seconds via `jobs.check_and_finish_active_print()`:
+is anything `printing`? If not, skip the printer entirely - no network
+call, no cost, most of the time. If so, read `system_information()`
+(the same call `print_progress()` already uses) and act only on an
+*explicit* positive signal from `current_process` - `complete`,
+`cancelled`, or a truthy `error` - never on absence or ambiguity. If
+`current_process` has already gone missing or stopped matching the
+job's file by the time this polls (the printer cleared it before an
+in-between check caught the transition, or the connection simply isn't
+reachable that round), this does nothing and leaves the job `printing`,
+same as if the feature didn't exist - it never guesses at an outcome it
+can't actually confirm.
+
+**The manual Mark done/Mark failed buttons are completely unchanged** -
+this is a safety net layered on top of them, not a replacement. A
+detected outcome is logged with actor `"system"` (same convention
+`cleanup_drafts.py` already uses for automated draft expiry), with a
+`detail` prefix distinguishing *why* ("detected automatically - print
+complete" / "... cancelled at the printer" / "... printer reported an
+error: ..."), so the activity log always shows whether a given
+done/failed was a human's click or the poller's own.
+`mark_finished()`'s `admin` parameter is `Admin | None` accordingly -
+`None` for this automatic path, a real `Admin` for the existing manual
+one - both go through the exact same status transition, photo capture,
+and archiving logic either way.
+
+**Verified in isolated testing before deploying, not assumed correct:**
+a mocked `system_information()` reply confirmed all three outcomes
+separately - a job left `printing` untouched while genuinely still
+printing, correctly marked `done` on `complete: true`, and correctly
+marked `failed` (with the right reason in its detail) on `cancelled:
+true` - including a filename-matched job's photo-capture attempt still
+running (and failing gracefully, exactly as the manual path already
+does) rather than being skipped for the automatic path.
+
 ### Persistent printer connection
 
 **Why this exists - a real, live-confirmed hardware limitation, not

@@ -5,6 +5,8 @@ and routers stay thin HTTP glue.
 
 import shutil
 import statistics
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -458,9 +460,13 @@ def submit_draft(session: Session, job: Job) -> Job:
     return job
 
 
-def mark_finished(session: Session, job: Job, admin: Admin, success: bool) -> Job:
-    """Manual admin override to record a print's outcome, until live
-    printer status reporting exists (see release() above).
+def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool, detail: str = "") -> Job:
+    """Records a print's outcome - a manual admin action (`admin` set), or
+    an automatic one (`admin=None`, actor logged as `"system"` - same
+    convention `cleanup_drafts.py` already uses for automated draft
+    expiry) from check_and_finish_active_print() below, now that live
+    printer status reporting exists (see release() above and
+    print_progress()) to actually notice a print ending on its own.
 
     Also captures a photo of the build plate via the printer's camera,
     regardless of outcome - success, failure, or (today, since there's no
@@ -472,7 +478,8 @@ def mark_finished(session: Session, job: Job, admin: Admin, success: bool) -> Jo
     already powered back off, etc.) never blocks recording the print's
     own outcome - it's a best-effort extra, not a precondition, and the
     reason for a missing photo is still recorded in the log entry either
-    way."""
+    way. `detail` is prepended to that photo-outcome note - e.g. why an
+    automatic detection decided this was a failure."""
     _require_status(job, JobStatus.printing)
     job.status = JobStatus.done if success else JobStatus.failed
     job.finished_at = datetime.now(timezone.utc)
@@ -486,9 +493,84 @@ def mark_finished(session: Session, job: Job, admin: Admin, success: bool) -> Jo
         photo_detail = "photo captured"
     except PrinterError as e:
         photo_detail = f"photo capture failed: {e}"
+    if detail:
+        photo_detail = f"{detail}; {photo_detail}"
 
     session.add(job)
-    log_event(session, job.id, _admin_actor(admin), job.status.value, detail=photo_detail)
+    actor = _admin_actor(admin) if admin is not None else "system"
+    log_event(session, job.id, actor, job.status.value, detail=photo_detail)
     session.commit()
     session.refresh(job)
     return job
+
+
+def check_and_finish_active_print(session: Session) -> Job | None:
+    """Polled from a background thread (see main.py's startup handler),
+    not from any request - the actual point of "automatic," per the user
+    after noticing every real photo-capture failure so far traced back to
+    the same root cause: the connection dying in the gap between a print
+    actually finishing and an admin *noticing* and clicking "Mark done."
+    Closing that gap is the whole reason this exists, not just saving a
+    click - the connection this uses is whichever one was already live
+    from the most recent progress poll, not one that's had time to go
+    idle or get killed by a cancel in the meantime.
+
+    Deliberately conservative: only acts on an *explicit* positive signal
+    from the printer (`current_process.complete`/`cancelled`/`error`),
+    never on absence or ambiguity. If current_process has already gone
+    missing or stopped matching this job's file by the time this polls -
+    which can genuinely happen if the printer clears it before an
+    in-between poll catches the transition, or the connection simply
+    isn't reachable this round - this does nothing and leaves the job
+    `printing`, same as if this feature didn't exist, rather than guess
+    at an outcome it can't actually confirm. The manual Mark done/Mark
+    failed buttons stay exactly as they were - a safety net for whatever
+    this misses, not something this replaces.
+
+    Returns the job if it just took action, else None (nothing printing,
+    printer unreachable, or nothing conclusive to act on yet)."""
+    job = session.exec(select(Job).where(Job.status == JobStatus.printing)).first()
+    if job is None or not job.makerbot_path:
+        return None
+    try:
+        info = system_information()
+    except PrinterError:
+        return None
+    current = info.get("current_process")
+    if not current or Path(current.get("filename") or "").name != Path(job.makerbot_path).name:
+        return None
+
+    error = current.get("error")
+    cancelled = bool(current.get("cancelled"))
+    complete = bool(current.get("complete"))
+    if cancelled or error:
+        reason = "cancelled at the printer" if cancelled else f"printer reported an error: {error}"
+        return mark_finished(session, job, admin=None, success=False, detail=f"detected automatically - {reason}")
+    if complete:
+        return mark_finished(session, job, admin=None, success=True, detail="detected automatically - print complete")
+    return None
+
+
+_AUTO_FINISH_POLL_INTERVAL_S = 15
+
+
+def _auto_finish_poll_loop():
+    while True:
+        try:
+            with Session(engine) as session:
+                check_and_finish_active_print(session)
+        except Exception:
+            # Best-effort background loop - never let one bad tick (a
+            # transient DB hiccup, an unexpected reply shape) kill the
+            # whole poller. The manual Mark done/Mark failed buttons are
+            # always there regardless of whether this is working.
+            pass
+        time.sleep(_AUTO_FINISH_POLL_INTERVAL_S)
+
+
+def start_auto_finish_poller() -> None:
+    """Starts the loop above on a daemon thread - called once, from
+    main.py's startup handler. See check_and_finish_active_print() for
+    what it actually checks each tick, and why it's deliberately
+    conservative about when it acts."""
+    threading.Thread(target=_auto_finish_poll_loop, daemon=True).start()

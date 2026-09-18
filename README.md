@@ -141,6 +141,17 @@ Managing user accounts:
   overrides selectively, with zero visible change to how the app looks
   today. Only "Default" exists as an actual choice so far; see the To do
   list for adding more. See `app/README.md`'s "Themes" section.
+- **Automatic completion detection** - a background poller notices a
+  print finishing, failing, or being cancelled on its own (via the same
+  printer status read as the live progress bar above) and records the
+  outcome immediately, without waiting for an admin to click "Mark
+  done"/"Mark failed" - closing the exact gap that caused every real
+  photo-capture failure so far (the connection dying between a print
+  actually finishing and someone noticing). The manual buttons are
+  unchanged - this is a safety net on top of them, not a replacement.
+  Logged with actor `"system"` so the activity log always shows whether
+  a given outcome was a human's click or the poller's own. See
+  `app/README.md`'s "Automatic completion detection" section.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -289,11 +300,10 @@ Managing user accounts:
 - ~~Live print progress while a job is printing~~ **Done** - see Features
   below ("Live print progress, read from the printer") and
   `app/README.md`'s "Live print progress" section.
-- Detect a print finishing or failing automatically, rather than relying
-  on an admin to click `mark_done`/`mark_failed` by hand -
-  `current_process`'s `complete`/`cancelled`/`error` fields (found
-  alongside `progress`, see the print-progress feature above) look like
-  a real path to this, just not built yet.
+- ~~Detect a print finishing or failing automatically, rather than
+  relying on an admin to click `mark_done`/`mark_failed` by hand~~
+  **Done** - see Features below ("Automatic completion detection") and
+  `app/README.md`'s section of the same name.
 - ~~Correct the fallback time estimate using real completion history~~
   **Done** - see Features below ("A history-corrected time estimate")
   and `app/README.md`'s "Live print progress" section. What's still
@@ -311,6 +321,12 @@ Managing user accounts:
   but every attempt in the actual production app has failed so far
   (always the connection, not the capture logic) - stays open until an
   actual real job's photo has been captured and viewed successfully.
+  Automatic completion detection (below) should meaningfully help here -
+  it captures the moment the printer itself reports done, closing most
+  of the gap where the connection kept dying before an admin got to
+  click - but isn't a guarantee on its own, and the dedicated-camera plan
+  right below stays the actual fix for the printer connection's
+  remaining flakiness.
 - A dedicated camera, independent of the printer's own flaky single-
   session connection - per the user, after every real photo-capture
   attempt above failed on the connection rather than the capture logic
