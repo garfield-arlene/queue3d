@@ -21,6 +21,14 @@
       </p>
     {% elif printer_status == "needs_pairing" %}
       <p class="error">Printer needs to be paired before jobs can be released to it.</p>
+    {% elif pairing.just_succeeded %}
+      {# Distinct from the generic "not yet verified" below - that
+         wording, right after someone just paired (dial press and all),
+         reads as if the pairing hadn't worked, when nothing has
+         actually been tried against the printer to disprove it yet (see
+         printer.start_pairing()'s docstring for why a fresh token is
+         never speculatively verified). #}
+      <p class="muted">Pairing succeeded - ready for the next release or capture.</p>
     {% else %}
       <p class="muted">Printer connection not yet verified this session.</p>
     {% endif %}

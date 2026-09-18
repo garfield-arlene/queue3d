@@ -770,6 +770,21 @@ separate "stop polling" signal to manage. A failed attempt's error stays
 visible on the dashboard (via `pairing_status()`) until either a retry
 succeeds or someone tries again - it doesn't just silently disappear.
 
+**A real, live report caught a confusing message right after a genuine
+success:** pairing via the button, then pressing the dial, then seeing
+the dashboard say "connection not yet verified this session" reads as
+"that didn't work" - even though it did (confirmed: the saved token's
+file had just been rewritten, and a real request right afterward
+succeeded). The wording was accurate but not distinguishing "never tried
+anything" from "just succeeded, deliberately not verified yet" (see
+above for why a fresh token is never speculatively checked) - both
+looked identical. `pairing_status()`'s `just_succeeded` flag (set the
+moment `start_pairing()`'s background thread actually saves a new token,
+cleared the moment a new attempt starts) lets the dashboard say "Pairing
+succeeded - ready for the next release or capture" specifically for that
+window, instead of the generic "not yet verified" message that reads as
+a possible failure.
+
 ### Account actions in the activity log
 
 **Why this exists:** per the user, "all actions should be captured in

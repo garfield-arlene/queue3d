@@ -658,7 +658,7 @@ def connection_status() -> str:
 # self-terminating pattern as _jobs_table.html's slicing-progress
 # polling) until it's done.
 _pairing_lock = threading.Lock()
-_pairing_state: dict = {"in_progress": False, "error": None}
+_pairing_state: dict = {"in_progress": False, "error": None, "just_succeeded": False}
 
 
 def start_pairing() -> bool:
@@ -671,6 +671,7 @@ def start_pairing() -> bool:
             return False
         _pairing_state["in_progress"] = True
         _pairing_state["error"] = None
+        _pairing_state["just_succeeded"] = False
 
     def run():
         try:
@@ -678,6 +679,15 @@ def start_pairing() -> bool:
             save_access_token(token)
             with _connection._lock:
                 _connection._last_error = "unknown"  # untested-but-fresh, not a known failure
+            with _pairing_lock:
+                # A genuine, real success - distinct from connection_status()
+                # still reporting "unknown" right afterward (see this
+                # module's docstring for why a fresh token is never
+                # speculatively verified): without this, a successful
+                # pairing and "nothing's been tried yet" render as the
+                # exact same generic message, reading as if the pairing
+                # someone just did - dial press and all - hadn't worked.
+                _pairing_state["just_succeeded"] = True
         except Exception as e:
             with _pairing_lock:
                 _pairing_state["error"] = str(e)
@@ -690,10 +700,11 @@ def start_pairing() -> bool:
 
 
 def pairing_status() -> dict:
-    """{"in_progress": bool, "error": str | None} - error is only ever
-    set from the *previous* completed attempt (cleared the moment a new
-    one starts), so a failed attempt's message stays visible on the
-    dashboard until either it succeeds or someone tries again."""
+    """{"in_progress": bool, "error": str | None, "just_succeeded": bool} -
+    error and just_succeeded are only ever set from the *previous*
+    completed attempt (both cleared the moment a new one starts), so a
+    failed attempt's message - or a successful one's - stays visible on
+    the dashboard until either it changes or someone tries again."""
     with _pairing_lock:
         return dict(_pairing_state)
 
