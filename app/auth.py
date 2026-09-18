@@ -65,6 +65,15 @@ def verify_secret(secret: str, secret_hash: str) -> bool:
     return bcrypt.checkpw(secret.encode(), secret_hash.encode())
 
 
+def generate_pin(length: int = 4) -> str:
+    """A random numeric PIN - for an admin resetting a user's forgotten
+    one (routers/admin.py's reset_user_pin), shown to the admin exactly
+    once to relay in person. Matches signup's own minimum length (see
+    routers/user.py's signup()); secrets.choice, not random, since this
+    is still a credential even though it's short-lived and low-stakes."""
+    return "".join(secrets.choice("0123456789") for _ in range(length))
+
+
 def get_current_user(
     request: Request, session: Session = Depends(get_session)
 ) -> User | None:

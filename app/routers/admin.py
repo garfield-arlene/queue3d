@@ -8,7 +8,16 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session, select
 
-from auth import admin_by_username, check_lockout, record_failed_login, record_successful_login, require_admin, verify_secret
+from auth import (
+    admin_by_username,
+    check_lockout,
+    generate_pin,
+    hash_secret,
+    record_failed_login,
+    record_successful_login,
+    require_admin,
+    verify_secret,
+)
 from backup import get_last_successful_backup, is_stale
 from db import get_session
 from jobs import (
@@ -243,9 +252,19 @@ def mark_failed_job(
 # design pass rather than reusing this code as-is.
 
 
-def _users_context(session: Session, admin: Admin, action_error: str | None = None):
+def _users_context(
+    session: Session,
+    admin: Admin,
+    action_error: str | None = None,
+    flash_notice: str | None = None,
+):
     users = session.exec(select(User).order_by(User.name)).all()
-    return {"admin": admin, "users": users, "action_error": action_error}
+    return {
+        "admin": admin,
+        "users": users,
+        "action_error": action_error,
+        "flash_notice": flash_notice,
+    }
 
 
 @router.get("/users")
@@ -254,7 +273,15 @@ def users_page(
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return templates.TemplateResponse(request, "admin_users.html", _users_context(session, admin))
+    # Popped, not just read - see reset_user_pin below: the new PIN is
+    # shown here exactly once, right after the redirect that follows
+    # resetting it, same flash-via-session pattern as user.py's
+    # flash_error. A page refresh must not keep re-showing a secret that
+    # was already relayed.
+    flash_notice = request.session.pop("flash_notice", None)
+    return templates.TemplateResponse(
+        request, "admin_users.html", _users_context(session, admin, flash_notice=flash_notice)
+    )
 
 
 def _get_user_or_404(session: Session, user_id: int) -> User:
@@ -291,6 +318,31 @@ def enable_user(
     session.add(user)
     log_event(session, None, _admin_actor(admin), "user_enabled", detail=user.name)
     session.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post("/users/{user_id}/reset_pin")
+def reset_user_pin(
+    request: Request,
+    user_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """The only recovery path for a forgotten PIN - there's no email to
+    send a reset link to, and no security question, so an admin sets a
+    new one directly and relays it in person. Generates it rather than
+    taking one from a form: nothing for the admin to type or get wrong,
+    and it's shown back exactly once (see users_page's flash_notice) for
+    them to pass along right away. Never logged in plaintext - the
+    activity log records that a reset happened and who did it, same as
+    disable/enable/delete, not the credential itself."""
+    user = _get_user_or_404(session, user_id)
+    new_pin = generate_pin()
+    user.pin_hash = hash_secret(new_pin)
+    session.add(user)
+    log_event(session, None, _admin_actor(admin), "pin_reset", detail=user.name)
+    session.commit()
+    request.session["flash_notice"] = f"New PIN for {user.name}: {new_pin} - give it to them now, it won't be shown again."
     return RedirectResponse("/admin/users", status_code=303)
 
 

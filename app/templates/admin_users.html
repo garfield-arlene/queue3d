@@ -10,6 +10,7 @@
 {% block content %}
   <h2>Users</h2>
   {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
+  {% if flash_notice %}<p class="notice">{{ flash_notice }}</p>{% endif %}
 
   {% if not users %}
     <p class="muted">No users yet.</p>
@@ -31,6 +32,10 @@
                 <button type="submit">Disable</button>
               </form>
             {% endif %}
+            <form method="post" action="/admin/users/{{ user.id }}/reset_pin" style="display:inline"
+                  onsubmit="return confirm('Reset {{ user.name }}\'s PIN? Their old PIN stops working immediately - the new one only shows once, right here.')">
+              <button type="submit">Reset PIN</button>
+            </form>
             <form method="post" action="/admin/users/{{ user.id }}/delete" style="display:inline"
                   onsubmit="return confirm('Permanently delete {{ user.name }}? This cannot be undone.')">
               <button type="submit">Delete</button>

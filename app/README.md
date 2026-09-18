@@ -1165,6 +1165,58 @@ saved *before* `VERSION` is bumped, not just in the same commit -
 `VERSION` should always be the last edit in a schema change, with no
 further `.py` edits still to come after it.
 
+### Admin PIN reset for users
+
+**Why this exists:** the last open item in README.md's Accounts to-do
+list - today there's no recovery path at all for a forgotten PIN short
+of signing up under a new name (losing submission history) or an admin
+deleting and recreating the account outright.
+
+**No self-service reset flow, by design** - there's no email in this
+deployment (see "Deployment: zero internet access, by design") to send
+a reset link to, and no security question would mean anything for a
+name+PIN account anyway. The only real recovery path in a LAN-only,
+in-person deployment is an admin doing it directly: `/admin/users`
+grows a "Reset PIN" button per row (`POST
+/admin/users/{id}/reset_pin`), same place disable/enable/delete already
+live.
+
+**`auth.generate_pin()`** produces a random 4-digit numeric PIN
+(`secrets.choice`, not `random` - still a credential, even a
+short-lived low-stakes one) rather than taking one typed into a form:
+nothing for the admin to type or get wrong, and no chance of a genuinely
+guessable choice. No schema change needed - this just re-hashes
+`User.pin_hash`, the same field signup already sets.
+
+**Shown back to the admin exactly once**, via the same session-flash
+pattern `routers/user.py` already uses for `flash_error`
+(`request.session["flash_notice"]`, popped - not just read - by
+`users_page`) - a page refresh must not keep re-displaying a credential
+that's already been relayed. Styled with a new `.notice` class in
+`base.html`, built from the same neutral `--detail-bg`/`--border-strong`
+tokens `details.tech-detail` already uses rather than inventing a new
+semantic color, since this is the only other place that needs any
+highlight beyond plain text or `.error`.
+
+**Logged like any other account action, deliberately without the PIN
+itself in the log:** `log_event(session, None, _admin_actor(admin),
+"pin_reset", detail=user.name)` - matching `user_disabled`/
+`user_enabled`/`user_deleted`'s exact shape (see "Account actions in the
+activity log"). The activity log is visible to every admin indefinitely;
+a plaintext credential belongs in the one-time flash message an admin
+sees and relays immediately, never in a permanent, broadly-visible
+record.
+
+Verified end-to-end against an isolated instance, through the real HTTP
+routes: the old PIN logs in successfully before a reset, an admin reset
+generates and displays a new one, the flash is gone on a second page
+load, the old PIN is then rejected ("Name and PIN didn't match" - the
+generic mismatch message, not a special "your PIN was reset" one, since
+from the login form's own perspective this is indistinguishable from
+any other wrong PIN), the new one logs in successfully, and the activity
+log shows `admin:<username>` / `pin_reset` / the user's name - never the
+PIN value.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on

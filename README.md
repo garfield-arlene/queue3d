@@ -171,6 +171,12 @@ Managing user accounts:
   its own reason on the same field. Slicing-error detail was already
   visible to the user (on the draft's own edit page) once checked - only
   the manual failure case was really missing an explanation.
+- **Admin PIN reset for users** - the only recovery path for a forgotten
+  PIN, since there's no email to send a reset link to: an admin resets
+  it from the Users page, a random new PIN is generated and shown once,
+  right there, to relay to the user in person. The old PIN stops working
+  immediately. Logged in the activity log like any other account action
+  - who did it and for whom, never the PIN value itself.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -413,10 +419,11 @@ Managing user accounts:
 - ~~Rate-limiting or lockout on login attempts - PINs are short by design
   for low signup friction, which also makes them easier to guess; nothing
   currently slows down repeated attempts.~~ **Done** - see Features above.
-- Let an admin reset a user's PIN, in case they forget it - today there's
-  no recovery path at all short of the user just signing up under a new
-  name (losing their submission history) or an admin deleting/recreating
-  the account outright.
+- ~~Let an admin reset a user's PIN, in case they forget it - today
+  there's no recovery path at all short of the user just signing up
+  under a new name (losing their submission history) or an admin
+  deleting/recreating the account outright.~~ **Done** - see Features
+  above.
 - ~~Capture account lifecycle actions (registration, disable, re-enable,
   delete) in the activity log, not just job actions~~ **Done** - see
   `app/README.md`'s "Account actions in the activity log" section.
