@@ -29,8 +29,11 @@ from jobs import (
     all_events,
     approve,
     corrected_duration_estimate_s,
+    delete_all_old_jobs,
+    delete_old_job,
     finished_jobs,
     format_duration,
+    is_old_job,
     job_events,
     log_event,
     mark_finished,
@@ -38,6 +41,7 @@ from jobs import (
     queue_wait_seconds,
     reject,
     release,
+    requeue_job,
     user_has_active_jobs,
 )
 from models import Admin, Job, Settings, User
@@ -90,8 +94,16 @@ def logout(request: Request):
 
 def _dashboard_context(session: Session, admin: Admin, action_error: str | None = None):
     last_backup = get_last_successful_backup(session)
+    threshold_days = get_settings(session).old_job_threshold_days
     rows = []
+    old_job_count = 0
     for job in active_jobs(session):
+        # Split out, not just shown-alongside - an old, still-undecided
+        # job moves to /admin/jobs/old entirely (see that route below),
+        # per the user: "mutually exclusive, not shown in both."
+        if is_old_job(job, threshold_days):
+            old_job_count += 1
+            continue
         user = session.get(User, job.user_id)
         estimate_s = corrected_duration_estimate_s(session, job)
         wait_s = queue_wait_seconds(job)
@@ -110,6 +122,8 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
         "last_backup": last_backup,
         "backup_stale": is_stale(last_backup),
         "rows": rows,
+        "old_job_count": old_job_count,
+        "old_job_threshold_days": threshold_days,
         "action_error": action_error,
         "printer_status": connection_status(),
         "pairing": pairing_status(),
@@ -185,29 +199,55 @@ def _get_job_or_404(session: Session, job_id: int) -> Job:
     return job
 
 
-def _perform_action(request: Request, session: Session, admin: Admin, job_id: int, action_fn, *args):
+# Where a queue action (approve/reject/release/mark_done/mark_failed)
+# redirects on success, and which template+context re-renders it inline
+# on failure - keyed by an optional return_to form field each action
+# route below now accepts. Exists because an "old" job (see
+# jobs.is_old_job) is excluded from the normal /admin/dashboard queue
+# entirely, not just flagged there too (per the user: "mutually
+# exclusive, not shown in both") - so approve/reject/release still have
+# to work *from* /admin/jobs/old for a job that literally cannot appear
+# on the main dashboard any more. Defaults to the main dashboard so
+# every pre-existing form (which never sends this field) keeps working
+# unchanged.
+_RETURN_TARGETS = {
+    "/admin/dashboard": ("admin_dashboard.html", lambda session, admin, error: _dashboard_context(session, admin, error)),
+    "/admin/jobs/old": ("admin_old_jobs.html", lambda session, admin, error: _old_jobs_context(session, admin, error)),
+}
+
+
+def _perform_action(
+    request: Request,
+    session: Session,
+    admin: Admin,
+    job_id: int,
+    action_fn,
+    *args,
+    return_to: str = "/admin/dashboard",
+):
     """Shared body for every queue action below: look up the job, run the
-    requested transition, and either redirect (success) or re-render the
-    dashboard with the error inline (failure) - e.g. releasing a job that
-    isn't approved, or rejecting without a note."""
+    requested transition, and either redirect (success) or re-render
+    wherever the action was actually submitted from with the error
+    inline (failure) - e.g. releasing a job that isn't approved, or
+    rejecting without a note."""
     job = _get_job_or_404(session, job_id)
+    template_name, context_fn = _RETURN_TARGETS.get(return_to, _RETURN_TARGETS["/admin/dashboard"])
     try:
         action_fn(session, job, *args)
     except JobActionError as e:
-        return templates.TemplateResponse(
-            request, "admin_dashboard.html", _dashboard_context(session, admin, str(e))
-        )
-    return RedirectResponse("/admin/dashboard", status_code=303)
+        return templates.TemplateResponse(request, template_name, context_fn(session, admin, str(e)))
+    return RedirectResponse(return_to, status_code=303)
 
 
 @router.post("/jobs/{job_id}/approve")
 def approve_job(
     request: Request,
     job_id: int,
+    return_to: str = Form("/admin/dashboard"),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return _perform_action(request, session, admin, job_id, approve, admin)
+    return _perform_action(request, session, admin, job_id, approve, admin, return_to=return_to)
 
 
 @router.post("/jobs/{job_id}/reject")
@@ -215,20 +255,22 @@ def reject_job(
     request: Request,
     job_id: int,
     note: str = Form(...),
+    return_to: str = Form("/admin/dashboard"),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return _perform_action(request, session, admin, job_id, reject, admin, note)
+    return _perform_action(request, session, admin, job_id, reject, admin, note, return_to=return_to)
 
 
 @router.post("/jobs/{job_id}/release")
 def release_job(
     request: Request,
     job_id: int,
+    return_to: str = Form("/admin/dashboard"),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return _perform_action(request, session, admin, job_id, release, admin)
+    return _perform_action(request, session, admin, job_id, release, admin, return_to=return_to)
 
 
 @router.post("/jobs/{job_id}/mark_done")
@@ -250,6 +292,105 @@ def mark_failed_job(
     session: Session = Depends(get_session),
 ):
     return _perform_action(request, session, admin, job_id, mark_finished, admin, False, reason)
+
+
+def _old_jobs_context(session: Session, admin: Admin, action_error: str | None = None):
+    threshold_days = get_settings(session).old_job_threshold_days
+    rows = []
+    for job in active_jobs(session):
+        if not is_old_job(job, threshold_days):
+            continue
+        user = session.get(User, job.user_id)
+        estimate_s = corrected_duration_estimate_s(session, job)
+        wait_s = queue_wait_seconds(job)
+        rows.append(
+            {
+                "job": job,
+                "user_name": user.name if user else "?",
+                "duration_display": format_duration(estimate_s) if estimate_s else None,
+                "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
+            }
+        )
+    return {
+        "admin": admin,
+        "rows": rows,
+        "threshold_days": threshold_days,
+        "action_error": action_error,
+    }
+
+
+@router.get("/jobs/old")
+def old_jobs_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Queued/approved jobs that have been waiting at least
+    Settings.old_job_threshold_days - split entirely out of the normal
+    /admin/dashboard queue (see jobs.is_old_job / _dashboard_context
+    above), not just flagged alongside everything else there."""
+    return templates.TemplateResponse(request, "admin_old_jobs.html", _old_jobs_context(session, admin))
+
+
+@router.post("/jobs/{job_id}/delete")
+def delete_job_route(
+    request: Request,
+    job_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Genuinely deletes a stale job - see jobs.delete_old_job for why
+    this is a real, unrecoverable delete rather than another terminal
+    status like reject(). Only reachable from the old-jobs page, and
+    only meaningful for a job still queued/approved there - not a
+    general "delete any job" action."""
+    job = _get_job_or_404(session, job_id)
+    try:
+        delete_old_job(session, job, admin)
+    except JobActionError as e:
+        return templates.TemplateResponse(
+            request, "admin_old_jobs.html", _old_jobs_context(session, admin, str(e))
+        )
+    return RedirectResponse("/admin/jobs/old", status_code=303)
+
+
+@router.post("/jobs/{job_id}/requeue")
+def requeue_job_route(
+    request: Request,
+    job_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Resets a stale job's queued_at to now instead of deleting or
+    rejecting it - see jobs.requeue_job. Only reachable from the
+    old-jobs page (always redirects back there, no return_to needed -
+    unlike approve/reject/release, there's nowhere else this button
+    exists), and by definition the job won't show up there any more
+    once its wait clock has been reset."""
+    job = _get_job_or_404(session, job_id)
+    try:
+        requeue_job(session, job, admin)
+    except JobActionError as e:
+        return templates.TemplateResponse(
+            request, "admin_old_jobs.html", _old_jobs_context(session, admin, str(e))
+        )
+    return RedirectResponse("/admin/jobs/old", status_code=303)
+
+
+@router.post("/jobs/old/delete_all")
+def delete_all_old_jobs_route(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Clears the entire old-jobs backlog in one click - see
+    jobs.delete_all_old_jobs. No JobActionError case to handle here
+    unlike the single-job route above: every job this touches was just
+    re-selected by is_old_job() itself, so there's nothing left that
+    could fail _require_status's check inside delete_old_job()."""
+    threshold_days = get_settings(session).old_job_threshold_days
+    delete_all_old_jobs(session, admin, threshold_days)
+    return RedirectResponse("/admin/jobs/old", status_code=303)
 
 
 # ---- user account management ----
@@ -444,6 +585,7 @@ def update_settings(
     request: Request,
     draft_expiry_days: int = Form(...),
     display_timezone: str = Form(...),
+    old_job_threshold_days: int = Form(...),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
@@ -452,10 +594,13 @@ def update_settings(
         error = "Draft expiry must be at least 1 day."
     elif not is_valid_timezone(display_timezone):
         error = "Not a real timezone choice."
+    elif old_job_threshold_days < 1:
+        error = "Old-job threshold must be at least 1 day."
     else:
         settings = get_settings(session)
         settings.draft_expiry_days = draft_expiry_days
         settings.display_timezone = display_timezone
+        settings.old_job_threshold_days = old_job_threshold_days
         session.add(settings)
         session.commit()
         # Takes effect immediately, for every viewer, not just after a

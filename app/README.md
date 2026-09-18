@@ -1413,6 +1413,97 @@ once `VERSION` was actually bumped to `4.4.0`, the next reload re-ran
 exists" check every migration here uses) and `schemaversion.version`
 caught up to the true state.
 
+### Old jobs (age-threshold backlog view)
+
+**Why this exists:** per README.md's to-do list - a still-undecided
+queued/approved job could sit indefinitely with nothing surfacing that
+it's been forgotten. Builds directly on the queue-wait timestamp/display
+work above (same "Queued" section) - this is the exact data that feature
+made visible, now actually split on.
+
+**The one design question the to-do list itself left open - confirmed
+directly with the user rather than guessed:** does the threshold apply
+to `printing` jobs too, or only `queued`/`approved`? Answer: queued/
+approved only. A printing job is being actively acted on, not sitting in
+an undecided backlog, and already has its own live progress/ETA display
+(see "Live print progress") - a second, different kind of staleness
+signal mixed into the same view would just be confusing. `jobs.is_old_job()`
+encodes this scoping in one place, matching the same reasoning
+`queue_wait_seconds()` already uses.
+
+**`Settings.old_job_threshold_days`** (schema `4.5.0`, defaults to 30 -
+the to-do list's own example value) - the shared, site-wide `Settings`
+singleton gets its third field, same pattern as `draft_expiry_days`/
+`display_timezone`.
+
+**Mutually exclusive, not just flagged - a real split, per the user:**
+`_dashboard_context()` (the normal `/admin/dashboard` queue) now excludes
+anything `is_old_job()` returns true for, and `/admin/jobs/old`
+(`admin_old_jobs.html`) shows exactly that excluded set, computed by
+`_old_jobs_context()` from the same `active_jobs(session)` query filtered
+the other way - one shared source of truth, not two independently-built
+lists that could drift apart. The main dashboard still flags the count
+(`old_job_count`) with a link straight to the backlog view, so a growing
+backlog doesn't go unnoticed just because it's out of the way.
+
+**Fully actionable from the old-jobs page, not just a read-only list -
+a real design wrinkle this raised:** since an old job is excluded from
+the main dashboard entirely, approve/reject/release have to actually
+*work* from `/admin/jobs/old` too - there's nowhere else left to reach
+them from. `_perform_action()` (shared by every queue-action route)
+gained a `return_to` form field and a small `_RETURN_TARGETS` lookup
+(return path -> which template/context re-renders an error) - every
+pre-existing form on the main dashboard keeps working unchanged (it
+never sends the field, so it defaults to `/admin/dashboard`), while the
+old-jobs page's own copies of those same forms send
+`return_to=/admin/jobs/old` so a successful action - or an inline error,
+same as always - lands back on the page the admin was actually looking
+at, not silently back on the main dashboard.
+
+**Two new actions specific to this page, added after the user tried it
+and asked for both as immediate follow-ups:**
+- **`jobs.requeue_job()`** - "move to back of queue" - resets
+  `queued_at` to now without touching status, so the job goes back to
+  being a normal, fully live queue entry (and, since `queue_position()`
+  orders by `queued_at`, genuinely back of the line, not just redisplayed
+  differently). The "still relevant, just needs another chance" option
+  next to outright deleting one.
+- **`jobs.delete_old_job()`/`delete_all_old_jobs()`** - a *genuine*
+  delete, not another terminal status like `reject()` (which deliberately
+  keeps the job and archives its files as a permanent record) - per the
+  user, "removes the job... and deletes the model files, with no undo,"
+  the same delete semantics as the separate (not yet built) to-do item
+  for a user deleting their own queued job. `storage.delete_job_files()`
+  is the one place this app actually unlinks files outright rather than
+  archiving them. The job's own prior event history (submit, slice,
+  queue-submission, etc.) is deleted right along with it - once the job
+  itself is gone, an orphaned row a global log join can no longer resolve
+  to a filename is clutter, not history worth keeping - and what actually
+  persists is one new, `job_id=None` event recording the deletion itself
+  (who did it, the filename, and who originally submitted it), the exact
+  same pattern `user_deleted` already uses for a `User` that's gone by
+  the time anyone reads that log entry back. `delete_all_old_jobs()` is
+  the same logic looped over every currently-old job (re-checked fresh,
+  not trusting whatever the page happened to render a moment earlier),
+  one commit per job rather than a single batched one - simple over
+  optimal for what's expected to be a handful of jobs at once, not
+  thousands.
+
+Verified end-to-end against an isolated instance, through the real HTTP
+routes: a queued job past the threshold and an approved one past a
+different threshold both excluded from the main dashboard and shown on
+`/admin/jobs/old`; a job seeded as `printing` with an old `queued_at`
+confirmed to stay off the old-jobs list entirely; approving and
+rejecting from the old-jobs page confirmed to redirect back to it, not
+the main dashboard; deleting one job confirmed to remove its DB row,
+its queued files, and its own prior event history, while leaving exactly
+one `job_deleted` entry (with the right actor/filename/submitter) in the
+global log; requeuing confirmed to reset `queued_at` to a fresh
+timestamp, move the job back onto the main dashboard, and log a
+`requeued` event; and "delete all" confirmed to remove every currently-
+old job in one request while correctly sparing a job that was never old
+to begin with.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on

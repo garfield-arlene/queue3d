@@ -18,6 +18,7 @@ from pipeline import run_slice
 from printer import PrinterError, capture_photo, send_print_job, system_information
 from storage import (
     archive_photo_path,
+    delete_job_files,
     move_job_to_archive,
     queue_paths,
     read_makerbot_duration_s,
@@ -173,6 +174,26 @@ def queue_wait_seconds(job: Job) -> float | None:
     queued_at = job.queued_at.replace(tzinfo=None)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     return max(0.0, (now - queued_at).total_seconds())
+
+
+def is_old_job(job: Job, threshold_days: int) -> bool:
+    """True once a still-undecided job has been waiting at least
+    threshold_days (models.Settings.old_job_threshold_days) - the split
+    point between the normal admin queue view and /admin/jobs/old.
+
+    Deliberately queued/approved only, never printing - per the user,
+    confirmed directly rather than guessed (README.md's to-do list
+    explicitly flagged this as an open question): a print that's
+    actively running is being acted on, not sitting in an undecided
+    backlog, and already has its own live progress/ETA display (see
+    "Live print progress") - a separate "this is old" signal on top of
+    that would just be a second, different kind of staleness mixed into
+    one view. Same scoping queue_wait_seconds() above already uses for
+    exactly that reason."""
+    if job.status not in (JobStatus.queued, JobStatus.approved):
+        return False
+    wait_s = queue_wait_seconds(job)
+    return wait_s is not None and wait_s >= threshold_days * 86400
 
 
 def _duration_correction_factor(session: Session) -> float:
@@ -358,6 +379,82 @@ def reject(session: Session, job: Job, admin: Admin, note: str) -> Job:
     session.commit()
     session.refresh(job)
     return job
+
+
+def delete_old_job(session: Session, job: Job, admin: Admin) -> None:
+    """Genuinely deletes a stale, still-undecided job - reachable only
+    from /admin/jobs/old (routers/admin.py), never a general "delete any
+    queued job" action. Not another terminal status like reject() above
+    (which deliberately keeps the job and archives its files as a
+    permanent record) - per the user, this specific action "removes the
+    job... and deletes the model files, with no undo," the same delete
+    semantics as the separate to-do item for a user deleting their own
+    queued job (this is the admin-side equivalent for one that's gone
+    stale instead, not a different kind of delete).
+
+    The job's own prior event history (submit, slice, queue-submission,
+    etc.) is deleted along with it rather than left behind as orphaned
+    rows a global log join can no longer resolve to a filename - once
+    the job itself is gone, that per-job history has nothing left to
+    attach meaningfully to. What actually persists is one new,
+    job_id=None event recording the deletion itself (who did it, and
+    what/whose it was) - the exact same pattern user_deleted already
+    uses for a User that's gone by the time anyone reads that log entry
+    back."""
+    _require_status(job, JobStatus.queued, JobStatus.approved)
+    user = session.get(User, job.user_id)
+    submitter = user.name if user else "?"
+    for event in session.exec(select(JobEvent).where(JobEvent.job_id == job.id)).all():
+        session.delete(event)
+    delete_job_files(job)
+    log_event(
+        session,
+        None,
+        _admin_actor(admin),
+        "job_deleted",
+        detail=f"{job.original_filename} (submitted by {submitter})",
+    )
+    session.delete(job)
+    session.commit()
+
+
+def requeue_job(session: Session, job: Job, admin: Admin) -> Job:
+    """The "still relevant, just give it another chance" option
+    alongside delete_old_job() above, on /admin/jobs/old - per the user,
+    a way to move a stale job back to the normal queue rather than only
+    being able to delete or reject it. Status is untouched (still
+    queued or approved); only queued_at resets to now, which is also
+    what queue_position() orders by - so this genuinely sends it to the
+    back of the line again, the same as if it had just been submitted,
+    not just a display change that leaves it cutting ahead of jobs that
+    have been waiting less time."""
+    _require_status(job, JobStatus.queued, JobStatus.approved)
+    job.queued_at = datetime.now(timezone.utc)
+    session.add(job)
+    log_event(session, job.id, _admin_actor(admin), "requeued")
+    session.commit()
+    session.refresh(job)
+    return job
+
+
+def delete_all_old_jobs(session: Session, admin: Admin, threshold_days: int) -> int:
+    """Bulk version of delete_old_job() above, for clearing an entire
+    backlog in one click rather than one job at a time - per the user.
+    Re-checks is_old_job() itself against the current threshold rather
+    than trusting whatever a caller's own page happened to render a
+    moment earlier, so this can't delete something that's since been
+    requeued or is otherwise no longer actually old. Each job is deleted
+    exactly the way delete_old_job() deletes one (its own event history
+    removed, files deleted, one job_id=None "job_deleted" event logged) -
+    just looped, not a separate bulk-specific code path; one commit per
+    job rather than a single batched commit, same as calling the
+    single-job delete route N times by hand would do - simple over
+    optimal for what's expected to be a handful of jobs at once, not
+    thousands. Returns how many were actually deleted."""
+    to_delete = [job for job in active_jobs(session) if is_old_job(job, threshold_days)]
+    for job in to_delete:
+        delete_old_job(session, job, admin)
+    return len(to_delete)
 
 
 def release(session: Session, job: Job, admin: Admin) -> Job:

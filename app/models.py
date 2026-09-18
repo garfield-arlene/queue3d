@@ -182,6 +182,15 @@ class Settings(SQLModel, table=True):
     # Defaults to "UTC" so an untouched deployment shows exactly what it
     # always has.
     display_timezone: str = Field(default="UTC")
+    # How many days a queued/approved job can sit waiting before it counts
+    # as "old" - see jobs.is_old_job, /admin/jobs/old. Splits the normal
+    # queue view from a separate backlog view, per the user, rather than
+    # just showing everything together forever. Scoped to queued/approved
+    # only, not printing - a print actively running is being acted on,
+    # not sitting in backlog (same reasoning jobs.queue_wait_seconds
+    # already uses). Defaults to 30, matching the to-do list's own
+    # example value.
+    old_job_threshold_days: int = Field(default=30)
 
 
 class JobEvent(SQLModel, table=True):

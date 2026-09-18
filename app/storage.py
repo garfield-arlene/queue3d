@@ -112,6 +112,22 @@ def move_draft_to_archive(job) -> None:
         job.supports_path = str(dest_supports)
 
 
+def delete_job_files(job) -> None:
+    """Permanently removes a job's own files from queue/ - used only by
+    jobs.delete_old_job, the one place this app actually deletes files
+    outright rather than archiving them (contrast move_job_to_archive/
+    move_draft_to_archive above, and "nothing this app finishes with
+    just disappears" everywhere else) - per the user, this specific
+    delete is meant to have "no undo," unlike every other terminal
+    outcome. Tolerant of any file being absent, same as the archive
+    functions - an approved-but-not-yet-sliced-again job could be
+    missing its makerbot/supports files in some edge cases."""
+    stl_path, makerbot_path, supports_path = queue_paths(job.id)
+    for path in (stl_path, makerbot_path, supports_path):
+        if path.exists():
+            path.unlink()
+
+
 def read_makerbot_duration_s(makerbot_path: Path) -> float | None:
     """Read the slicer's own duration estimate out of a .makerbot's
     meta.json - see slicing/README.md for the file format. Returns None on

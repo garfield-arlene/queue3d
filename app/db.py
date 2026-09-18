@@ -169,6 +169,18 @@ def _migrate_to_4_4_0(conn):
         )
 
 
+def _migrate_to_4_5_0(conn):
+    """New Settings.old_job_threshold_days column - the admin-configurable
+    age threshold splitting the normal queue view from /admin/jobs/old
+    (see jobs.is_old_job). Defaults to 30, matching the to-do list's own
+    example value; purely additive."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(settings)")).fetchall()}
+    if "old_job_threshold_days" not in cols:
+        conn.execute(
+            text("ALTER TABLE settings ADD COLUMN old_job_threshold_days INTEGER NOT NULL DEFAULT 30")
+        )
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -188,6 +200,7 @@ MIGRATIONS = {
     "3.3.0": _migrate_to_3_3_0,
     "3.4.0": _migrate_to_3_4_0,
     "4.4.0": _migrate_to_4_4_0,
+    "4.5.0": _migrate_to_4_5_0,
 }
 
 

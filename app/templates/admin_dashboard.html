@@ -3,6 +3,7 @@
 {% block nav %}
   <a href="/admin/users">Users</a>
   <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
   <a href="/admin/log">Activity log</a>
   <a href="/admin/settings">Settings</a>
   <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
@@ -20,6 +21,14 @@
   </p>
 
   {% include "_printer_status.html" %}
+
+  {% if old_job_count %}
+    <p class="notice">
+      {{ old_job_count }} job{{ "s" if old_job_count != 1 else "" }} waiting
+      longer than {{ old_job_threshold_days }} day{{ "s" if old_job_threshold_days != 1 else "" }}
+      - <a href="/admin/jobs/old">view old jobs</a>.
+    </p>
+  {% endif %}
 
   {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
 

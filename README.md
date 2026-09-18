@@ -197,6 +197,18 @@ Managing user accounts:
   instead of a hardcoded "UTC" label that wasn't always accurate to
   what was actually displayed. Takes effect immediately for every
   viewer on save, no restart needed.
+- **An "Old jobs" backlog view for still-undecided jobs** - a
+  queued/approved job that's been waiting longer than an admin-configured
+  threshold (`/admin/settings`, default 30 days) moves out of the normal
+  queue entirely into a separate view, so a growing backlog doesn't get
+  lost among everything else. Fully actionable there - approve, reject,
+  release, or move it back to the queue with a fresh wait clock - or
+  delete it outright (one at a time or all at once), which genuinely
+  removes the job and its model file with no undo, unlike every other
+  outcome in this app. Deliberately excludes `printing` jobs, confirmed
+  with the user - a print actively running is being acted on, not
+  sitting in an undecided backlog. The main dashboard flags how many
+  are waiting, with a link straight to the backlog view.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -239,7 +251,7 @@ Managing user accounts:
   sitting in the queue since (days/hours/minutes) - the timestamp is
   already recorded (`Job.created_at`/`queued_at`), it's just not
   displayed anywhere yet.~~ **Done** - see Features above.
-- Let admins configure an age threshold (e.g. 30 days) and split
+- ~~Let admins configure an age threshold (e.g. 30 days) and split
   still-waiting jobs into two separate views by it: the normal queue view
   for anything younger than the threshold, and a separate "old jobs" view
   for anything at or past it - mutually exclusive, not shown in both.
@@ -248,7 +260,9 @@ Managing user accounts:
   (still awaiting a decision), or also to ones that are `printing` (already
   being acted on, so arguably shouldn't count as stale backlog). Jobs in
   this "old jobs" view should have an admin delete option - see "Audit
-  log" below, since that delete has to be logged like any other change.
+  log" below, since that delete has to be logged like any other change.~~
+  **Done** - see Features above (confirmed by the user: queued/approved
+  only, not printing).
 - Let a user restore an archived model (`slice_failed`, `rejected`,
   `failed`, or `done` - any job whose files ended up in `archive/`) back
   into their working space to modify and resubmit, rather than only being
@@ -290,10 +304,14 @@ Managing user accounts:
   type, date range. Explicitly deferred by the user rather than built
   alongside the log itself; currently just capped at the 500 most recent
   entries with no way to narrow that down.
-- Once the two delete features above (a user deleting their own queued
+- ~~Once the two delete features above (a user deleting their own queued
   model, an admin deleting an old one) actually exist, each needs its own
   log entry too, and an admin deletion specifically must say who did it -
-  the log doesn't have anything to log yet for actions that don't exist.
+  the log doesn't have anything to log yet for actions that don't exist.~~
+  Half done: an admin deleting an old job is logged (`job_deleted`, actor
+  + filename + submitter) - see "Old jobs" in Features. Still waiting on
+  the other half (a user deleting their own queued job) actually being
+  built.
 
 **Backups & recovery**
 - Let admins see a list of backups taken and a manifest of what's actually
