@@ -339,6 +339,16 @@ class _MakerBotClient:
         (name, type, firmware version, serial...)."""
         return self.request("handshake", {})
 
+    def get_system_information(self):
+        """Requires authentication. Referenced in the original camera
+        protocol investigation (project memory makerbot-network-protocol,
+        test-print/camera_probe3.py) as returning a `current_process` field
+        - never actually decoded there, just confirmed to exist. Exposed
+        here (see admin_printer_info.html) so the app can find out what it
+        actually contains - an active print's progress, hopefully -
+        without needing a separate throwaway script each time."""
+        return self.request("get_system_information", {})
+
     def capture_one_frame(self, timeout=15, grace_period=3.0) -> bytes:
         """Returns one JPEG frame's raw bytes from the printer's camera.
 
@@ -584,6 +594,18 @@ class _PersistentConnection:
                 self._last_error = "needs_pairing"
                 raise PrinterError(f"Couldn't capture a photo from the printer's camera: {e}")
 
+    def system_information(self) -> dict:
+        with self._lock:
+            client = self._connected_client()
+            try:
+                return client.get_system_information()
+            except (_MakerBotError, OSError, TimeoutError) as e:
+                # Same reasoning as capture_photo's except clause above.
+                self._client.close()
+                self._client = None
+                self._last_error = "needs_pairing"
+                raise PrinterError(f"Couldn't read the printer's status: {e}")
+
     def close(self) -> None:
         """Cleanly closes the connection, if one is open - called on app
         shutdown (see main.py) so a restart doesn't leave the old
@@ -694,6 +716,17 @@ def capture_photo() -> bytes:
     should block recording a job's actual outcome (see
     jobs.mark_finished)."""
     return _connection.capture_photo()
+
+
+def system_information() -> dict:
+    """Raw `get_system_information` reply, over the same persistent
+    connection as everything else here (connecting/authenticating first
+    if needed). Raises PrinterError on any failure. Currently just for
+    finding out what's actually in this, particularly `current_process`
+    while a job is printing (see routers/admin.py's printer_info,
+    admin_printer_info.html) - not documented by MakerBot anywhere, only
+    ever confirmed to exist, not decoded."""
+    return _connection.system_information()
 
 
 def _upload_and_print(client: "_MakerBotClient", makerbot_path: Path) -> None:

@@ -27,7 +27,7 @@ from jobs import (
     user_has_active_jobs,
 )
 from models import Admin, Job, Settings, User
-from printer import connection_status, pairing_status, start_pairing
+from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
 from templates_env import templates
 
 router = APIRouter(prefix="/admin")
@@ -118,6 +118,28 @@ def printer_pair(
     (and starts polling for it) from _dashboard_context above."""
     start_pairing()
     return RedirectResponse("/admin/dashboard", status_code=303)
+
+
+@router.get("/printer/info")
+def printer_info(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """Raw `get_system_information` reply from the printer - see
+    printer.system_information(). Exists to find out what this actually
+    contains (particularly `current_process` while a job is printing,
+    towards a real progress indicator - see README.md's Printer to-do
+    list) since MakerBot never documented this JSON-RPC method anywhere;
+    not wired into anything else yet."""
+    error = None
+    info = None
+    try:
+        info = system_information()
+    except PrinterError as e:
+        error = str(e)
+    return templates.TemplateResponse(
+        request, "admin_printer_info.html", {"admin": admin, "info": info, "error": error}
+    )
 
 
 def _get_job_or_404(session: Session, job_id: int) -> Job:

@@ -39,6 +39,7 @@
           <td>{{ job.status.value }}</td>
           <td class="muted">
             {% if row.eta %}
+              {% include "_print_progress.html" %}
               {# .isoformat() alone has no offset - these datetimes are
                  always UTC but come back tzinfo-naive from SQLite (same
                  as event.at elsewhere in this app), so the "Z" here is

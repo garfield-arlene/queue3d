@@ -34,6 +34,7 @@
               {% if job.duration_estimate_s %} - est. {{ (job.duration_estimate_s / 60) | round | int }} min print{% endif %}
             {% elif job.status.value == 'printing' %}
               printing now
+              {% include "_print_progress.html" %}
               {% if row.eta %}
                 {# See admin_dashboard.html's identical span for why the
                    trailing "Z" here is required, not decorative. #}

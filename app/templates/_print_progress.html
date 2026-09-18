@@ -1,0 +1,27 @@
+{# Live percent-complete for a job that's printing right now, read
+   directly from the printer - see jobs.print_progress(). Included by
+   admin_dashboard.html/_jobs_table.html for the initial render (no
+   `progress` in scope yet there - the "load" trigger below fires an
+   immediate first fetch rather than leaving this blank for up to 10s),
+   and re-rendered standalone by GET /jobs/{id}/progress for the actual
+   polling - same self-terminating pattern as _jobs_table.html's
+   slicing-progress polling: only carries hx-get/hx-trigger while the job
+   is still actually 'printing', so polling stops on its own once it
+   isn't (done, failed, or anything else). Percent is only ever shown
+   for step == "printing" - see that function's docstring for why every
+   other step (seen: "final_heating") is shown as just its own name
+   instead, never a misleading percentage. A live read failing (printer
+   unreachable, no live process, stale/mismatched reply) shows nothing
+   here at all - printing_eta's estimate-based countdown, rendered
+   alongside this, is the fallback either way. #}
+<span id="print-progress-{{ job.id }}"
+  {% if job.status.value == 'printing' %}
+    hx-get="/jobs/{{ job.id }}/progress" hx-trigger="load, every 10s" hx-swap="outerHTML"
+  {% endif %}
+>
+  {% if progress and progress.percent is not none %}
+    <progress value="{{ progress.percent }}" max="100"></progress> {{ progress.percent }}% complete
+  {% elif progress and progress.step %}
+    <progress></progress> {{ progress.step.replace('_', ' ') }}&hellip;
+  {% endif %}
+</span>

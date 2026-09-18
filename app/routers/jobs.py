@@ -14,6 +14,7 @@ from sqlmodel import Session
 
 from auth import AuthRedirect
 from db import get_session
+from jobs import print_progress
 from models import Job
 from templates_env import templates
 
@@ -51,6 +52,20 @@ def supports_file(job_id: int, request: Request, session: Session = Depends(get_
     if job.supports_path and Path(job.supports_path).exists():
         return FileResponse(job.supports_path, media_type="application/json")
     return JSONResponse([])
+
+
+@router.get("/{job_id}/progress")
+def progress_fragment(job_id: int, request: Request, session: Session = Depends(get_session)):
+    """Just the live-progress span, for the htmx polling in
+    _print_progress.html to re-fetch while this job is still printing -
+    see that template for why polling stops on its own once it isn't.
+    Same owner-or-admin access as everything else here - a read-only,
+    best-effort printer query (see jobs.print_progress), never something
+    that can fail the request outright."""
+    job = _job_with_access(job_id, request, session)
+    return templates.TemplateResponse(
+        request, "_print_progress.html", {"job": job, "progress": print_progress(job)}
+    )
 
 
 @router.get("/{job_id}/photo.jpg")

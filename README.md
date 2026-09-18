@@ -107,6 +107,17 @@ Managing user accounts:
   that stops the done/failed action. See `app/README.md`'s "Printer
   camera" section for the protocol write-up and the framing bug this
   surfaced.
+- **Live print progress, read from the printer** - both dashboards show
+  a real percent-complete and progress bar for the job that's currently
+  printing, polled directly from the printer's own `get_system_information`
+  reply (`current_process.progress`) rather than guessed from the
+  original time estimate - confirmed live to track actual print progress
+  (not just elapsed time) and to match what the printer's own screen
+  shows. Falls back to the estimate-based countdown (see the persistent
+  connection above) whenever a live reading isn't available. See
+  `app/README.md`'s "Live print progress" section for how this was
+  confirmed, and `/admin/printer/info` for the raw reply this is read
+  from.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -230,9 +241,14 @@ Managing user accounts:
   the header (`templates/base.html`).
 
 **Printer**
-- Live print progress/status while a job is printing - `mark_done`/
-  `mark_failed` are still a manual admin action; the printer's protocol
-  has a status-notification mechanism that isn't consumed yet.
+- ~~Live print progress while a job is printing~~ **Done** - see Features
+  below ("Live print progress, read from the printer") and
+  `app/README.md`'s "Live print progress" section.
+- Detect a print finishing or failing automatically, rather than relying
+  on an admin to click `mark_done`/`mark_failed` by hand -
+  `current_process`'s `complete`/`cancelled`/`error` fields (found
+  alongside `progress`, see the print-progress feature above) look like
+  a real path to this, just not built yet.
 - ~~Camera access confirmed, wire a photo into the job record~~ **Done** -
   see Features above ("A build-plate photo on every finished job") and
   `app/README.md`'s "Printer camera" section.

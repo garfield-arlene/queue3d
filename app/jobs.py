@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 from db import engine
 from models import Admin, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES, User
 from pipeline import run_slice
-from printer import PrinterError, capture_photo, send_print_job
+from printer import PrinterError, capture_photo, send_print_job, system_information
 from storage import (
     archive_photo_path,
     move_job_to_archive,
@@ -162,16 +162,58 @@ def printing_eta(job: Job) -> datetime | None:
     (released_at/duration_estimate_s both need to be set - a job released
     before duration estimation existed, or one the slicer couldn't
     estimate for, has neither). Purely `released_at + duration_estimate_s`
-    - there's no live progress feed from the printer to correct this
-    against once printing starts (see README.md's "Printer" to-do list),
-    so per the user, this is a clearly-labeled countdown from the
-    original estimate, not a claim of real progress. Rendered client-side
-    (see static/countdown.js) rather than recomputed "minutes remaining"
+    - a fallback for whenever a live read isn't available (see
+    print_progress below for the real thing), so per the user, this is a
+    clearly-labeled countdown from the original estimate on its own, not
+    a claim of real progress. Rendered client-side (see
+    static/countdown.js) rather than recomputed "minutes remaining"
     server-side, so it keeps ticking between page loads/htmx polls
     without needing a matching request each time."""
     if job.status != JobStatus.printing or job.released_at is None or job.duration_estimate_s is None:
         return None
     return job.released_at + timedelta(seconds=job.duration_estimate_s)
+
+
+def print_progress(job: Job) -> dict | None:
+    """Live progress for a job that's printing right now, read directly
+    from the printer (printer.system_information()) rather than derived
+    from the original time estimate - see printing_eta() above for that
+    estimate-only fallback, still needed for whenever this isn't
+    available. Confirmed live against the real printer:
+    `current_process.progress` tracks genuine print progress (its ratio
+    to elapsed time visibly grows rather than staying constant, and it
+    matched what the printer's own screen showed at the same moment) -
+    but only once `current_process.step == "printing"`. Earlier steps
+    (seen: "final_heating") reset `progress` to their own, unrelated
+    0-100 scale (heating-to-temperature progress, not print progress), so
+    showing it as print-percent then would be actively misleading -
+    other, undocumented step values presumably exist too, and get the
+    same conservative treatment: a percentage is only ever returned for
+    the one step confirmed to mean "percent of the print done."
+
+    Returns None - "no live reading available," not "0% done" - if the
+    job isn't printing, the read fails (printer unreachable; this is
+    read-only/best-effort and must never block anything else), or
+    current_process doesn't actually name this job's file (a stale reply,
+    or genuinely a different job - matched by filename since
+    current_process has no job id of its own to compare against)."""
+    if job.status != JobStatus.printing or not job.makerbot_path:
+        return None
+    try:
+        info = system_information()
+    except PrinterError:
+        return None
+    current = info.get("current_process")
+    if not current:
+        return None
+    if Path(current.get("filename") or "").name != Path(job.makerbot_path).name:
+        return None
+    step = current.get("step")
+    return {
+        "step": step,
+        "percent": current.get("progress") if step == "printing" else None,
+        "time_remaining_s": current.get("time_remaining"),
+    }
 
 
 def _require_status(job: Job, *allowed: JobStatus):

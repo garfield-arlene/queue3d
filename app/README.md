@@ -415,6 +415,73 @@ reasoning about how the browser would parse it - a passing render test
 alone (attribute present, page loads) would not have caught this, and it
 was not caught by simply trying it against the real printer once.
 
+### Live print progress
+
+**Why this exists:** the user noticed the printer's own on-device timer
+runs inaccurate, and asked whether percent-complete polling might be
+better - it is. `get_system_information` (JSON-RPC, requires
+authentication - `printer.system_information()`) returns a
+`current_process` object while something's printing, undocumented by
+MakerBot anywhere and never fully decoded in the earlier protocol
+investigation (only confirmed to exist). Investigated live, deliberately
+carefully rather than assumed, since a wrong read here would be *worse*
+than no read at all - a confidently-wrong percentage is worse than an
+honest "estimate only":
+
+- **Idle**: `current_process` is `null`.
+- **Heating** (`step: "final_heating"`): `progress` climbs 0→100+ as the
+  extruder approaches its target temperature - confirmed by comparing it
+  to `(current_temperature - room_temp) / (target - room_temp)`, which
+  landed within a couple points of the reported value. This is heating
+  progress, not print progress.
+- **Printing** (`step: "printing"`): `progress` resets to a low number
+  and climbs again from there - **confirmed to track genuine print
+  state, not just elapsed time**, by comparing two live samples against
+  simple `elapsed_time / time_estimation` math: the gap between the
+  reported `progress` and that naive ratio *grew* over time (roughly 1
+  point of gap at one sample, 5 points at a later one) rather than
+  staying constant, which it would if `progress` were just re-deriving
+  the same time-based estimate. Also independently confirmed to match
+  what the printer's own on-device screen showed at the same moment,
+  live, side by side. `time_remaining`, by contrast, *did* match simple
+  `time_estimation - elapsed_time` subtraction almost exactly at both
+  samples - useful as a live number, but not shown to be smarter than
+  what `printing_eta()` below already computes from the original
+  estimate alone.
+
+Given that, `jobs.print_progress(job)` only ever returns a percentage
+for `step == "printing"` - every other step (including ones never
+observed, since this firmware isn't documented) shows just its own name
+instead of guessing what its `progress` scale means. Matched to the
+right job by comparing `current_process.filename` against
+`job.makerbot_path` (current_process carries no job id of its own) -
+without that check, a stale reply or a reply belonging to a completely
+different job could get attributed to the wrong row.
+
+**Read-only and best-effort throughout, same as the camera capture
+above:** `print_progress()` returns `None` - "no live reading right
+now," not "0% done" - on any failure (printer unreachable, no active
+process, filename mismatch), and the UI simply falls back to
+`printing_eta()`'s estimate-based countdown when that happens, exactly
+as if this feature didn't exist. A failed live read never blocks
+anything else.
+
+`GET /jobs/{id}/progress` (`routers/jobs.py`, same owner-or-admin access
+as everything else there) serves the live fragment
+(`_print_progress.html`) that both dashboards embed; `hx-trigger="load,
+every 10s"` fires an immediate first fetch (so it isn't blank on page
+load) and then keeps polling only for as long as the job is actually
+`printing` - the same self-terminating pattern `_jobs_table.html`
+already uses for slicing progress.
+
+**`/admin/printer/info`** (`admin_printer_info.html`) shows the raw
+`get_system_information` reply as-is - built for this investigation, and
+kept as a real diagnostic page rather than thrown away, since MakerBot
+never documented this method and a future investigation (see the
+`complete`/`cancelled`/`error` fields noted in README.md's Printer to-do
+list, towards detecting a print's outcome automatically) will need to
+look at the raw shape again.
+
 ### Persistent printer connection
 
 **Why this exists - a real, live-confirmed hardware limitation, not
