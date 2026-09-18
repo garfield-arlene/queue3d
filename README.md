@@ -335,6 +335,36 @@ Managing user accounts:
   end like a restored one does - those are different user expectations and
   worth deciding deliberately rather than defaulting to whichever is
   easier to build.
+- **Model orientation/sizing controls - up next, on hold mid-session per
+  the user ("Let's put this obj file feature on hold... When we resume,
+  let's work on adding the model controls").** Explicitly spelled out,
+  not just "resize controls" (superseding that bare bullet below and
+  folding it in here):
+  - **Rotate the model on the build plate, along any axis** - motivated
+    partly by fit (if a model is diagonal or doesn't fit some other way,
+    rotating it might let it fit the plate) and partly by print quality/
+    success (see snap-to-surface next).
+  - **"Snap to surface"** - pick a face on the model and reorient it so
+    that face becomes the new bottom, flat on the plate. The user's own
+    motivating example: the Christmas tree model that's been failing
+    `mbotmake`'s bed-centering check (see `app/README.md`'s "A real
+    stuck-slicing incident" section) might pass once stood upright on
+    its actual flat base, printing bottom-to-top toward the star, instead
+    of however it happened to be authored/oriented in the original file.
+    Directly ties into the still-open centroid/centering investigation
+    there - reorienting to a sensible print orientation may address some
+    of what centroid-based centering alone couldn't.
+  - **Resize, maintaining aspect ratio.**
+  - **A one-click "auto-resize to fit"** for a model too large for the
+    build plate - shrinks it down to fit rather than requiring the user
+    to guess at a scale factor by hand.
+  
+  All of this needs a real design pass before building (where these
+  controls live - the upload form, the job edit page, or both; how
+  rotation/resize interact with the existing supports overlay and
+  duration estimate; whether changing orientation/size on an
+  already-`queued`/`approved` job re-slices in place or counts as a new
+  submission, the same open question the bullet above already raises).
 - ~~Let a user delete their own model from the queue (they may no longer
   want it) - with a clear warning first that this is permanent: it removes
   the job from the queue/list and deletes the model files, with no undo.
@@ -386,7 +416,10 @@ Managing user accounts:
 - Color selection for users - 1st/2nd/3rd preference, chosen from a
   dropdown populated by an admin-managed list of colors (admins check or
   uncheck which colors are currently available, based on inventory).
-- Controls for resizing a model before submitting.
+- ~~Controls for resizing a model before submitting.~~ Folded into the
+  fuller "Model orientation/sizing controls" item under Job review &
+  feedback above, once the user spelled out the full scope (rotate,
+  snap-to-surface, resize, auto-fit) - not a separate item any more.
 
 **Appearance**
 - ~~An admin setting for the display timezone - every timestamp shown
