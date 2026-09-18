@@ -1010,6 +1010,65 @@ in isolated testing: one shared cookie holding both a user session (mode
 `/dashboard` and `/admin/dashboard` each independently resolved to the
 right one.
 
+### Login rate-limiting
+
+**Why this exists:** per the user - PINs are short by design (low
+signup friction), which also makes them easier to guess, and nothing
+previously slowed down repeated attempts at all, for either account
+type. An admin's password is a higher-stakes target than any one
+user's PIN, so this applies to both, not just the short-PIN case that
+motivated it.
+
+**Deliberately simple: a fixed threshold and a fixed lockout duration**
+(`auth.LOGIN_LOCKOUT_THRESHOLD = 5`, `LOGIN_LOCKOUT_DURATION = 15
+minutes`), not escalating durations or per-IP tracking. **Per-account,
+not per-IP or global** - the actual threat here is one person guessing
+a specific other person's credentials, not general anti-abuse; an IP
+on a shared LAN says nothing useful about who's actually attempting a
+login, and a global limit would let one person's failed attempts lock
+everyone else out.
+
+**`User.failed_login_attempts`/`locked_until` and the identical pair on
+`Admin`** (schema `3.3.0`) - both account types work identically via
+plain duck typing in `auth.py`'s `check_lockout()`/
+`record_failed_login()`/`record_successful_login()`, rather than a
+shared base class, matching how little else in this codebase bothers
+abstracting over the two account types. `check_lockout()` runs
+*before* even checking the submitted password/PIN - both so a
+locked-out login doesn't do needless bcrypt work and so a correct
+password/PIN submitted while locked out is still rejected with the
+"try again in N minutes" message, not "didn't match" - a lockout can't
+be probed around by anyone who happens to already know the real
+credentials. Reaching the threshold resets the attempt counter back to
+0 (rather than letting it climb forever) as it sets `locked_until`;
+a real successful login clears both fields outright.
+
+**Caught in isolated testing, the same naive/aware `datetime` gotcha
+this app has already hit for `released_at`/`finished_at`/`event.at`:**
+the first version of `check_lockout()` did
+`account.locked_until - datetime.now(timezone.utc)` directly, and
+crashed with `TypeError: can't subtract offset-naive and
+offset-aware datetimes`. `locked_until` is always *written* as UTC,
+but SQLite round-trips a written datetime back as tzinfo-naive once
+re-read - while a value just set moments ago on the same in-memory
+object (not yet re-fetched from the DB) is still tzinfo-aware, so this
+can't be fixed by just assuming one or the other. Fixed by stripping
+tzinfo from both sides (`.replace(tzinfo=None)`) before comparing.
+Verified by retesting the exact failing scenario (a correct password/
+PIN submitted while locked out) after the fix, confirming the correct
+"Too many failed attempts" message renders instead of crashing.
+
+Verified in isolated testing: 4 failed attempts (below threshold)
+leaves the account usable with no lockout; the 5th sets `locked_until`
+~15 minutes out and resets the counter; a correct password/PIN
+submitted while locked out is still rejected with the lockout message;
+manually expiring `locked_until` into the past lets a correct
+password/PIN through normally and clears both fields; identical
+behavior confirmed for admin login; and the `3.3.0` migration applies
+cleanly against both a fresh database and a real copy of the actual
+production database, correctly defaulting every existing account (4
+users, 1 admin) to `failed_login_attempts=0, locked_until=None`.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on

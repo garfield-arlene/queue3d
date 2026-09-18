@@ -125,6 +125,23 @@ def _migrate_to_3_2_0(conn):
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN theme_mode VARCHAR"))
 
 
+def _migrate_to_3_3_0(conn):
+    """New User.failed_login_attempts/locked_until and
+    Admin.failed_login_attempts/locked_until columns - login
+    rate-limiting (see auth.py). Purely additive; failed_login_attempts
+    defaults to 0 (not NULL) so existing rows read as "no failed
+    attempts on record" rather than needing a None-check everywhere this
+    gets incremented."""
+    for table in ("user", "admin"):
+        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if "failed_login_attempts" not in cols:
+            conn.execute(
+                text(f"ALTER TABLE {table} ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0")
+            )
+        if "locked_until" not in cols:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN locked_until DATETIME"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -141,6 +158,7 @@ MIGRATIONS = {
     "2.5.0": _migrate_to_2_5_0,
     "3.1.0": _migrate_to_3_1_0,
     "3.2.0": _migrate_to_3_2_0,
+    "3.3.0": _migrate_to_3_3_0,
 }
 
 

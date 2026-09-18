@@ -39,6 +39,15 @@ class User(SQLModel, table=True):
     # themes.py) - independently persisted the same way and for the same
     # reason.
     theme_mode: str | None = Field(default=None)
+    # Login rate-limiting (see auth.py's check_lockout/record_failed_login/
+    # record_successful_login) - failed_login_attempts counts consecutive
+    # failures since the last success or lockout; locked_until, once set,
+    # blocks login regardless of correct credentials until that moment
+    # passes. Per the user: PINs are short by design, which also makes
+    # them easier to guess, and nothing previously slowed down repeated
+    # attempts at all.
+    failed_login_attempts: int = Field(default=0)
+    locked_until: datetime | None = Field(default=None)
 
 
 class Admin(SQLModel, table=True):
@@ -50,6 +59,11 @@ class Admin(SQLModel, table=True):
     # pick their own look independently of any user's.
     theme: str | None = Field(default=None)
     theme_mode: str | None = Field(default=None)
+    # Same login rate-limiting as User above - an admin's password is a
+    # higher-stakes target than any one user's PIN, so this applies here
+    # too, not just the short-PIN case that motivated it.
+    failed_login_attempts: int = Field(default=0)
+    locked_until: datetime | None = Field(default=None)
 
 
 class SchemaVersion(SQLModel, table=True):

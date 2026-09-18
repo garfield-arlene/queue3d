@@ -153,6 +153,16 @@ Managing user accounts:
   Logged with actor `"system"` so the activity log always shows whether
   a given outcome was a human's click or the poller's own. See
   `app/README.md`'s "Automatic completion detection" section.
+- **Login rate-limiting** - both account types lock out for 15 minutes
+  after 5 failed attempts in a row, since PINs are short by design (low
+  signup friction) and an admin password is a higher-stakes target -
+  nothing previously slowed down repeated guessing at all. Per-account,
+  not per-IP or global: the actual threat is one person guessing a
+  specific other person's credentials, not general abuse. A correct
+  password/PIN submitted while locked out is still rejected with the
+  lockout message, not "didn't match" - so a lockout can't be probed
+  around by anyone who happens to already know the real credentials.
+  See `app/README.md`'s "Login rate-limiting" section.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -389,9 +399,9 @@ Managing user accounts:
   form.
 
 **Accounts**
-- Rate-limiting or lockout on login attempts - PINs are short by design
+- ~~Rate-limiting or lockout on login attempts - PINs are short by design
   for low signup friction, which also makes them easier to guess; nothing
-  currently slows down repeated attempts.
+  currently slows down repeated attempts.~~ **Done** - see Features above.
 - Let an admin reset a user's PIN, in case they forget it - today there's
   no recovery path at all short of the user just signing up under a new
   name (losing their submission history) or an admin deleting/recreating

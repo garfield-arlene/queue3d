@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session, select
 
-from auth import admin_by_username, require_admin, verify_secret
+from auth import admin_by_username, check_lockout, record_failed_login, record_successful_login, require_admin, verify_secret
 from backup import get_last_successful_backup, is_stale
 from db import get_session
 from jobs import (
@@ -47,14 +47,24 @@ def login(
     password: str = Form(...),
     session: Session = Depends(get_session),
 ):
-    admin = admin_by_username(session, username.strip())
+    username = username.strip()
+    admin = admin_by_username(session, username)
+    if admin is not None:
+        lockout_error = check_lockout(admin)
+        if lockout_error:
+            return templates.TemplateResponse(
+                request, "admin_login.html", {"error": lockout_error, "username": username}
+            )
     if admin is None or not verify_secret(password, admin.password_hash):
+        if admin is not None:
+            record_failed_login(session, admin)
         return templates.TemplateResponse(
             request,
             "admin_login.html",
             {"error": "Username and password didn't match.", "username": username},
         )
 
+    record_successful_login(session, admin)
     request.session["admin_id"] = admin.id
     return RedirectResponse("/admin/dashboard", status_code=303)
 
