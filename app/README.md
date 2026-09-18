@@ -936,23 +936,32 @@ in favor of letting each person - user or admin - pick their own.
 set, use the default") are the real schema change this needs (`3.1.0`).
 
 **`base.html`'s existing styles, refactored into CSS custom properties
-under `:root` - the "Default" theme - with zero visible change.** A
-future theme adds a `[data-theme="<id>"]` block overriding just the
-tokens it wants different, not a full copy of every rule in the file.
-One deliberate choice worth explaining: `--bg`/`--text` default to the
-CSS Color 4 system keywords `Canvas`/`CanvasText`, not hardcoded colors -
-that's exactly what a browser already renders when no background/color
-is set at all, which is what this page has always done, including
-automatically following the OS's own light/dark preference via
-`color-scheme: light dark`. Hardcoding real colors for "Default" instead
-would have been a real regression (locking the page to always-light
-regardless of the viewer's OS setting) disguised as a harmless refactor -
-system-color keywords keep the exact current behavior while still being
-a real, overridable token for a future theme that wants to fix its own
-colors instead of following the OS. `themes.py` is the one list of
-selectable ids -> display names, shared by both settings pages and used
-to validate a submitted choice, so a bad/stale value can never get saved
-and silently fail to match anything in the CSS.
+under `:root` - "Default" + "Light" - with zero visible change.** A
+future theme/mode combination adds a `[data-theme="<id>"]` and/or
+`[data-theme="<id>"][data-mode="dark"]` block overriding just the tokens
+it wants different, not a full copy of every rule in the file.
+`themes.py` is the one list of selectable theme ids and mode ids ->
+display names, shared by both settings pages and used to validate a
+submitted choice, so a bad/stale value can never get saved and silently
+fail to match anything in the CSS.
+
+**Light/dark is its own axis, separate from theme, not folded into
+it** - `User.theme_mode`/`Admin.theme_mode` (schema `3.2.0`, added right
+after `theme` itself), so picking a theme and a mode are two independent
+choices; every theme is expected to define both a light and a dark
+palette, not just Default. This actually *superseded* an earlier design
+choice in this same section: the first version of this feature had
+`--bg`/`--text` default to the CSS Color 4 system keywords `Canvas`/
+`CanvasText` specifically so the page kept following the OS's own light/
+dark preference automatically. Once an explicit, saved, per-account mode
+toggle existed, that became the wrong behavior, not just an unrelated
+old decision to leave alone - a viewer who explicitly picks "Light"
+should get light even if their OS is set to dark, and `Canvas`/
+`CanvasText` can't do that; they just track the OS regardless of what
+was chosen. Replaced with real hardcoded colors for both modes, and
+`color-scheme` set explicitly to `light` or `dark` to match (not "light
+dark") so native form controls (checkboxes, scrollbars) follow the
+chosen mode too, not the OS.
 
 **`templates_env.current_theme(request)`** is a Jinja *global* function,
 not something threaded through every route's own context - `base.html`
@@ -976,6 +985,30 @@ tries to call it as a function.
 internet access (see "Deployment: zero internet access, by design"
 above)**: any future theme's fonts, wallpaper images, or anything else
 must ship as local static files, never a CDN or external URL.
+
+**A real bug from a legitimate, deliberate usage pattern: two roles,
+two tabs, one browser.** The user keeps a user session and an admin
+session open side by side in the same browser on purpose - and nothing
+about logging in as one role has ever cleared the other's session key
+(not new to this feature, just never mattered until something actually
+read both `admin_id` and `user_id` from the same session). The first
+version of `current_theme()`/`current_mode()` unconditionally preferred
+`admin_id` whenever it was present, so in a dual-session browser, the
+*admin's* theme silently applied to the user's own pages too - not a
+data bug (every account's stored preference was always correct going in
+and coming out), a resolution bug in which account's preference got
+looked at for a given page. Deliberately not fixed by clearing the other
+role's session key on login - that would have broken the exact dual-tab
+workflow that surfaced this - fixed instead in
+`templates_env._signed_in_account()` by checking which role's page a
+given request is actually for (`/admin/...` vs. everything else, the
+same split `require_admin`/`require_user` already use), so each tab
+resolves to its own role's preference regardless of what the other tab
+in the same browser is doing. Verified with the exact reported scenario
+in isolated testing: one shared cookie holding both a user session (mode
+`dark`) and an admin session (mode `light`) at once, confirming
+`/dashboard` and `/admin/dashboard` each independently resolved to the
+right one.
 
 ### Browsing finished jobs, and the audit log
 

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="{{ current_theme(request) }}">
+<html lang="en" data-theme="{{ current_theme(request) }}" data-mode="{{ current_mode(request) }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,28 +8,39 @@
   <script src="/static/countdown.js"></script>
   <style>
     /* Theme tokens - see app/themes.py for the selectable set and
-       app/README.md's "Themes" section for how a viewer's stored choice
-       (User.theme/Admin.theme) becomes the data-theme attribute above.
-       This :root block *is* the "Default" theme - a future theme adds a
-       [data-theme="<id>"] block below overriding just the tokens it
-       wants to change, not a full copy of every rule in this file.
+       app/README.md's "Themes" section for how a viewer's two separate
+       stored choices (User.theme/theme_mode, Admin.theme/theme_mode)
+       become the data-theme/data-mode attributes above. This :root block
+       *is* "Default" + "Light" - every other theme/mode combination adds
+       a [data-theme="<id>"] and/or [data-theme="<id>"][data-mode="dark"]
+       block below overriding just the tokens it wants different, not a
+       full copy of every rule in this file. Mode is a separate axis from
+       theme, not folded into it - per the user, every theme gets both a
+       light and a dark variant.
 
-       --bg/--text default to the CSS Color 4 system keywords Canvas/
-       CanvasText rather than hardcoded colors deliberately: those are
-       exactly what a browser already renders when no background/color is
-       set at all, including following the OS's own light/dark
-       preference via color-scheme below - so "Default" behaves
-       identically to how this page always has, while still being a real,
-       overridable token for a future theme that wants to fix its own
-       colors instead of following the OS. */
+       Hardcoded colors, not the CSS Color 4 system keywords Canvas/
+       CanvasText an earlier version of this used: those tracked the OS's
+       own light/dark preference automatically, which is exactly what an
+       explicit, saved-per-account mode toggle needs to override instead
+       of defer to - a viewer who explicitly picks "Light" should get
+       light even if their OS is set to dark, which Canvas/CanvasText
+       can't do. color-scheme is set to match each mode explicitly too
+       (not "light dark"), so native form controls (checkboxes, date
+       pickers, scrollbars) follow the chosen mode as well, not the OS. */
     :root {
-      color-scheme: light dark;
-      --bg: Canvas;
-      --text: CanvasText;
+      color-scheme: light;
+      --bg: #ffffff;
+      --text: #1a1a1a;
       --error: #c0392b;
       --border: #8883;
       --border-strong: #8886;
       --detail-bg: #8881;
+    }
+    :root[data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #1a1a1a;
+      --text: #e8e8e8;
+      --error: #ff6b6b;
     }
     body {
       background: var(--bg);

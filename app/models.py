@@ -35,6 +35,10 @@ class User(SQLModel, table=True):
     # ever getting removed from themes.THEMES can't strand an account on
     # a dead value.
     theme: str | None = Field(default=None)
+    # Light/dark - a separate axis from theme, not folded into it (see
+    # themes.py) - independently persisted the same way and for the same
+    # reason.
+    theme_mode: str | None = Field(default=None)
 
 
 class Admin(SQLModel, table=True):
@@ -42,9 +46,10 @@ class Admin(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     password_hash: str
     created_at: datetime = Field(default_factory=utcnow)
-    # Same per-account preference as User.theme above - admins pick their
-    # own look independently of any user's.
+    # Same per-account preferences as User.theme/theme_mode above - admins
+    # pick their own look independently of any user's.
     theme: str | None = Field(default=None)
+    theme_mode: str | None = Field(default=None)
 
 
 class SchemaVersion(SQLModel, table=True):

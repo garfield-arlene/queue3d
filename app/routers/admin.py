@@ -30,7 +30,7 @@ from jobs import (
 from models import Admin, Job, Settings, User
 from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
 from templates_env import templates
-from themes import DEFAULT_THEME, THEMES, is_valid_theme
+from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
 
 router = APIRouter(prefix="/admin")
 
@@ -346,7 +346,9 @@ def _admin_settings_context(session: Session, admin: Admin, error: str | None = 
         "admin": admin,
         "settings": get_settings(session),
         "themes": THEMES,
+        "modes": MODES,
         "selected_theme": admin.theme or DEFAULT_THEME,
+        "selected_mode": admin.theme_mode or DEFAULT_MODE,
         "error": error,
         "saved": saved,
     }
@@ -385,19 +387,23 @@ def update_settings(
 def update_admin_theme(
     request: Request,
     theme: str = Form(...),
+    mode: str = Form(...),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     """Separate from update_settings above on purpose - this is the
-    signed-in admin's own personal preference (models.Admin.theme), not
-    part of the shared, site-wide Settings row every admin edits
-    together, so it gets its own form/endpoint rather than being bundled
-    into the same submit."""
+    signed-in admin's own personal preference (models.Admin.theme/
+    theme_mode), not part of the shared, site-wide Settings row every
+    admin edits together, so it gets its own form/endpoint rather than
+    being bundled into the same submit."""
     error = None
     if not is_valid_theme(theme):
         error = "Not a real theme choice."
+    elif not is_valid_mode(mode):
+        error = "Not a real mode choice."
     else:
         admin.theme = theme
+        admin.theme_mode = mode
         session.add(admin)
         session.commit()
     return templates.TemplateResponse(

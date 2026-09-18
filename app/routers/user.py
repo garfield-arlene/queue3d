@@ -23,7 +23,7 @@ from jobs import (
 from models import DRAFT_STATUSES, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, scratch_stl_path
 from templates_env import templates
-from themes import DEFAULT_THEME, THEMES, is_valid_theme
+from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
 
 # OrcaSlicer's own support_style values, each confirmed (by directly
 # comparing sliced gcode output, not just guessed) to actually produce
@@ -119,40 +119,46 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
+def _user_settings_context(user: User, error: str | None = None, saved: bool = False):
+    return {
+        "user": user,
+        "themes": THEMES,
+        "modes": MODES,
+        "selected_theme": user.theme or DEFAULT_THEME,
+        "selected_mode": user.theme_mode or DEFAULT_MODE,
+        "error": error,
+        "saved": saved,
+    }
+
+
 @router.get("/settings")
 def settings_page(
     request: Request,
     user: User = Depends(require_user),
 ):
-    return templates.TemplateResponse(
-        request, "user_settings.html", {"user": user, "themes": THEMES, "selected_theme": user.theme or DEFAULT_THEME}
-    )
+    return templates.TemplateResponse(request, "user_settings.html", _user_settings_context(user))
 
 
 @router.post("/settings")
 def update_settings(
     request: Request,
     theme: str = Form(...),
+    mode: str = Form(...),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
     error = None
     if not is_valid_theme(theme):
         error = "Not a real theme choice."
+    elif not is_valid_mode(mode):
+        error = "Not a real mode choice."
     else:
         user.theme = theme
+        user.theme_mode = mode
         session.add(user)
         session.commit()
     return templates.TemplateResponse(
-        request,
-        "user_settings.html",
-        {
-            "user": user,
-            "themes": THEMES,
-            "selected_theme": user.theme or DEFAULT_THEME,
-            "error": error,
-            "saved": error is None,
-        },
+        request, "user_settings.html", _user_settings_context(user, error, error is None)
     )
 
 

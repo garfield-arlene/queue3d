@@ -17,6 +17,13 @@
         {% endfor %}
       </select>
     </label>
+    <label>Mode<br>
+      <select name="mode">
+        {% for value, label in modes.items() %}
+          <option value="{{ value }}" {% if selected_mode == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <p class="muted">Follows your account across logins, not just this browser.</p>
     <button type="submit">Save</button>
   </form>

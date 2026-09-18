@@ -131,14 +131,17 @@ Managing user accounts:
   by hand. Only learns from completed ("done") prints, never cancelled
   or failed ones, whose duration says nothing about how long a full
   print actually takes.
-- **Per-account theme selection** - both users and admins get their own
-  settings page to pick a UI theme, persisting across logins/devices
-  (not a browser-only preference). The current look is now a real,
-  named "Default" theme rather than just "whatever the CSS says" -
-  `base.html`'s styles are CSS custom properties a future theme
-  overrides selectively, with zero visible change to how the app looks
-  today. Only "Default" exists as an actual choice so far; see the To do
-  list for adding more. See `app/README.md`'s "Themes" section.
+- **Per-account theme and light/dark mode selection** - both users and
+  admins get their own settings page to pick a UI theme and a light/dark
+  mode independently, persisting across logins/devices (not a
+  browser-only preference). The current look is now a real, named
+  "Default" theme (in its "Light" mode) rather than just "whatever the
+  CSS says" - `base.html`'s styles are CSS custom properties a future
+  theme/mode combination overrides selectively, with zero visible change
+  to how the app looked before this. Only "Default" exists as an actual
+  theme choice so far, though both Light and Dark are real, fully
+  working modes for it already; see the To do list for adding more
+  themes. See `app/README.md`'s "Themes" section.
 - **Automatic completion detection** - a background poller notices a
   print finishing, failing, or being cancelled on its own (via the same
   printer status read as the live progress bar above) and records the
@@ -268,13 +271,19 @@ Managing user accounts:
   at once, not per-page.
 - ~~Convert the current look into a real, named "Default" theme, with a
   per-user/per-admin settings page to pick one, persisting across
-  logins~~ **Done** - see Features below ("Per-account theme selection")
-  and `app/README.md`'s "Themes" section. Only "Default" actually exists
-  as a choice today - the infrastructure (settings pages, persistence,
-  the CSS token structure a theme overrides) is what's built; more
-  themes is genuinely new work, not just filling in a dropdown.
-- More themes beyond "Default" - color changes, wallpaper, light/dark as
-  their own selectable options. Everything must ship as local static
+  logins~~ **Done** - see Features below ("Per-account theme and
+  light/dark mode selection") and `app/README.md`'s "Themes" section.
+  Only "Default" actually exists as a theme choice today - the
+  infrastructure (settings pages, persistence, the CSS token structure a
+  theme/mode overrides) is what's built; more themes is genuinely new
+  work, not just filling in a dropdown.
+- ~~Light/dark mode~~ **Done** - a separate toggle from theme, per the
+  user, not folded into it - every theme (so far just "Default") gets
+  both a light and a dark palette. See Features above and
+  `app/README.md`'s "Themes" section.
+- More themes beyond "Default" - color changes, wallpaper, as their own
+  selectable options (each needing both a light and dark palette, per
+  the user - see "Themes" above). Everything must ship as local static
   files - no CDN fonts, no external image URLs (see "Deployment: zero
   internet access" - this app runs with none, ever).
 - A logo for the app, shown on every page next to the "queue3d" title in

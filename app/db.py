@@ -113,6 +113,18 @@ def _migrate_to_3_1_0(conn):
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN theme VARCHAR"))
 
 
+def _migrate_to_3_2_0(conn):
+    """New User.theme_mode/Admin.theme_mode columns - light/dark, a
+    separate axis from theme (see themes.py), added the same way and for
+    the same reason as theme itself in 3.1.0 just above. Purely additive
+    (both nullable, `None` meaning "no preference set, use the
+    default")."""
+    for table in ("user", "admin"):
+        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if "theme_mode" not in cols:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN theme_mode VARCHAR"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -128,6 +140,7 @@ MIGRATIONS = {
     "2.4.0": _migrate_to_2_4_0,
     "2.5.0": _migrate_to_2_5_0,
     "3.1.0": _migrate_to_3_1_0,
+    "3.2.0": _migrate_to_3_2_0,
 }
 
 
