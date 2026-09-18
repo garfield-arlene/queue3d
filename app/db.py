@@ -98,6 +98,21 @@ def _migrate_to_2_5_0(conn):
     conn.execute(text("CREATE INDEX ix_jobevent_job_id ON jobevent (job_id)"))
 
 
+def _migrate_to_3_1_0(conn):
+    """New User.theme/Admin.theme columns - a per-account UI theme
+    preference (see themes.py, templates_env.current_theme()) that
+    follows an account across logins/devices, per the user ("I want a
+    settings page for the users to select their own theme that will
+    persist across logins"). Purely additive (both nullable, `None`
+    meaning "no preference set, use the default"), but still needs a real
+    ALTER TABLE on each table - same as every other purely-additive entry
+    here."""
+    for table in ("user", "admin"):
+        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if "theme" not in cols:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN theme VARCHAR"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -112,6 +127,7 @@ MIGRATIONS = {
     "2.1.0": _migrate_to_2_1_0,
     "2.4.0": _migrate_to_2_4_0,
     "2.5.0": _migrate_to_2_5_0,
+    "3.1.0": _migrate_to_3_1_0,
 }
 
 

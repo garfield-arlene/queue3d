@@ -30,6 +30,7 @@ from jobs import (
 from models import Admin, Job, Settings, User
 from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
 from templates_env import templates
+from themes import DEFAULT_THEME, THEMES, is_valid_theme
 
 router = APIRouter(prefix="/admin")
 
@@ -340,15 +341,24 @@ def get_settings(session: Session) -> Settings:
     return settings
 
 
+def _admin_settings_context(session: Session, admin: Admin, error: str | None = None, saved: bool = False):
+    return {
+        "admin": admin,
+        "settings": get_settings(session),
+        "themes": THEMES,
+        "selected_theme": admin.theme or DEFAULT_THEME,
+        "error": error,
+        "saved": saved,
+    }
+
+
 @router.get("/settings")
 def settings_page(
     request: Request,
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return templates.TemplateResponse(
-        request, "admin_settings.html", {"admin": admin, "settings": get_settings(session)}
-    )
+    return templates.TemplateResponse(request, "admin_settings.html", _admin_settings_context(session, admin))
 
 
 @router.post("/settings")
@@ -367,9 +377,31 @@ def update_settings(
         session.add(settings)
         session.commit()
     return templates.TemplateResponse(
-        request,
-        "admin_settings.html",
-        {"admin": admin, "settings": get_settings(session), "error": error, "saved": error is None},
+        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
+    )
+
+
+@router.post("/settings/theme")
+def update_admin_theme(
+    request: Request,
+    theme: str = Form(...),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Separate from update_settings above on purpose - this is the
+    signed-in admin's own personal preference (models.Admin.theme), not
+    part of the shared, site-wide Settings row every admin edits
+    together, so it gets its own form/endpoint rather than being bundled
+    into the same submit."""
+    error = None
+    if not is_valid_theme(theme):
+        error = "Not a real theme choice."
+    else:
+        admin.theme = theme
+        session.add(admin)
+        session.commit()
+    return templates.TemplateResponse(
+        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
     )
 
 

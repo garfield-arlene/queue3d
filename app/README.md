@@ -845,6 +845,66 @@ server has `--reload` watching the actual repo. Test a *risky* migration
 distinction) against an isolated copy of the database first, not the
 live one, regardless of how confident the migration looks on paper.
 
+### Themes
+
+**Why this exists:** per the user, wanting to add more themes later
+(color changes, wallpaper, light/dark) - starting with converting the
+existing look into a real, named "Default" theme rather than just
+"whatever the CSS happens to say," so a future theme is a genuine
+alternative to switch to, not a rewrite of the only option that exists.
+
+**Per-account, not per-browser, and not site-wide.** Explicitly decided
+by the user over the two real alternatives: a per-browser preference
+(`localStorage`, no schema change needed) wouldn't follow someone to a
+different device, and the user wants it to "persist across logins";
+a single site-wide choice (one admin-set theme for everyone, like the
+shared printer this app is built around) was the other option, rejected
+in favor of letting each person - user or admin - pick their own.
+`User.theme`/`Admin.theme` (both nullable - `None` means "no preference
+set, use the default") are the real schema change this needs (`3.1.0`).
+
+**`base.html`'s existing styles, refactored into CSS custom properties
+under `:root` - the "Default" theme - with zero visible change.** A
+future theme adds a `[data-theme="<id>"]` block overriding just the
+tokens it wants different, not a full copy of every rule in the file.
+One deliberate choice worth explaining: `--bg`/`--text` default to the
+CSS Color 4 system keywords `Canvas`/`CanvasText`, not hardcoded colors -
+that's exactly what a browser already renders when no background/color
+is set at all, which is what this page has always done, including
+automatically following the OS's own light/dark preference via
+`color-scheme: light dark`. Hardcoding real colors for "Default" instead
+would have been a real regression (locking the page to always-light
+regardless of the viewer's OS setting) disguised as a harmless refactor -
+system-color keywords keep the exact current behavior while still being
+a real, overridable token for a future theme that wants to fix its own
+colors instead of following the OS. `themes.py` is the one list of
+selectable ids -> display names, shared by both settings pages and used
+to validate a submitted choice, so a bad/stale value can never get saved
+and silently fail to match anything in the CSS.
+
+**`templates_env.current_theme(request)`** is a Jinja *global* function,
+not something threaded through every route's own context - `base.html`
+(which every page extends) needs a viewer's theme on every single
+render, and `request` is already available in every template regardless
+of what its own route passed in (Starlette's Jinja2Templates adds it
+automatically), so this only needs a global function reading
+`request.session`, not a bigger context-passing change touching every
+router. **Caught in testing before this shipped:** a settings page's own
+context happened to also use the name `current_theme` for the *selected
+theme string* being displayed in its dropdown - since Jinja resolves a
+page's own context over a same-named global, `base.html`'s
+`current_theme(request)` call ended up trying to call that *string*,
+crashing every settings page with `TypeError: 'str' object is not
+callable`. Fixed by renaming the per-page variable to `selected_theme` -
+worth remembering as a real trap: a Jinja global and a template context
+key sharing a name silently shadows the global, and only breaks whatever
+tries to call it as a function.
+
+**Everything self-hosted, no exceptions - this app runs with zero
+internet access (see "Deployment: zero internet access, by design"
+above)**: any future theme's fonts, wallpaper images, or anything else
+must ship as local static files, never a CDN or external URL.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on

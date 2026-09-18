@@ -133,6 +133,14 @@ Managing user accounts:
   by hand. Only learns from completed ("done") prints, never cancelled
   or failed ones, whose duration says nothing about how long a full
   print actually takes.
+- **Per-account theme selection** - both users and admins get their own
+  settings page to pick a UI theme, persisting across logins/devices
+  (not a browser-only preference). The current look is now a real,
+  named "Default" theme rather than just "whatever the CSS says" -
+  `base.html`'s styles are CSS custom properties a future theme
+  overrides selectively, with zero visible change to how the app looks
+  today. Only "Default" exists as an actual choice so far; see the To do
+  list for adding more. See `app/README.md`'s "Themes" section.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -249,9 +257,17 @@ Managing user accounts:
   etc.) is UTC today, unlabeled as such in most places even though it's
   what's actually stored and compared against. Should apply everywhere
   at once, not per-page.
-- Light/dark theme, with a toggle.
-- Selectable themes - not just wallpaper/background/color, but ones that
-  change the page layout itself, not only its palette.
+- ~~Convert the current look into a real, named "Default" theme, with a
+  per-user/per-admin settings page to pick one, persisting across
+  logins~~ **Done** - see Features below ("Per-account theme selection")
+  and `app/README.md`'s "Themes" section. Only "Default" actually exists
+  as a choice today - the infrastructure (settings pages, persistence,
+  the CSS token structure a theme overrides) is what's built; more
+  themes is genuinely new work, not just filling in a dropdown.
+- More themes beyond "Default" - color changes, wallpaper, light/dark as
+  their own selectable options. Everything must ship as local static
+  files - no CDN fonts, no external image URLs (see "Deployment: zero
+  internet access" - this app runs with none, ever).
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
 

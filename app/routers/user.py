@@ -23,6 +23,7 @@ from jobs import (
 from models import DRAFT_STATUSES, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, scratch_stl_path
 from templates_env import templates
+from themes import DEFAULT_THEME, THEMES, is_valid_theme
 
 # OrcaSlicer's own support_style values, each confirmed (by directly
 # comparing sliced gcode output, not just guessed) to actually produce
@@ -116,6 +117,43 @@ def login(
 def logout(request: Request):
     request.session.pop("user_id", None)
     return RedirectResponse("/login", status_code=303)
+
+
+@router.get("/settings")
+def settings_page(
+    request: Request,
+    user: User = Depends(require_user),
+):
+    return templates.TemplateResponse(
+        request, "user_settings.html", {"user": user, "themes": THEMES, "selected_theme": user.theme or DEFAULT_THEME}
+    )
+
+
+@router.post("/settings")
+def update_settings(
+    request: Request,
+    theme: str = Form(...),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    error = None
+    if not is_valid_theme(theme):
+        error = "Not a real theme choice."
+    else:
+        user.theme = theme
+        session.add(user)
+        session.commit()
+    return templates.TemplateResponse(
+        request,
+        "user_settings.html",
+        {
+            "user": user,
+            "themes": THEMES,
+            "selected_theme": user.theme or DEFAULT_THEME,
+            "error": error,
+            "saved": error is None,
+        },
+    )
 
 
 def _dashboard_context(session: Session, user: User, flash_error: str | None = None):

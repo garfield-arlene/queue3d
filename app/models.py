@@ -27,6 +27,14 @@ class User(SQLModel, table=True):
     # session, immediately (see auth.get_current_user) - without deleting
     # their account or job history. Reversible, unlike delete.
     disabled: bool = Field(default=False)
+    # A per-account UI preference (see themes.py), not a per-device one -
+    # per the user, this needs to follow them across logins/devices, which
+    # is exactly what a browser-only preference (localStorage) can't do.
+    # None means "no preference set" - templates_env.current_theme() falls
+    # back to themes.DEFAULT_THEME, not this column directly, so a theme
+    # ever getting removed from themes.THEMES can't strand an account on
+    # a dead value.
+    theme: str | None = Field(default=None)
 
 
 class Admin(SQLModel, table=True):
@@ -34,6 +42,9 @@ class Admin(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     password_hash: str
     created_at: datetime = Field(default_factory=utcnow)
+    # Same per-account preference as User.theme above - admins pick their
+    # own look independently of any user's.
+    theme: str | None = Field(default=None)
 
 
 class SchemaVersion(SQLModel, table=True):

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="{{ current_theme(request) }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,8 +7,33 @@
   <script src="/static/htmx.min.js"></script>
   <script src="/static/countdown.js"></script>
   <style>
-    :root { color-scheme: light dark; }
+    /* Theme tokens - see app/themes.py for the selectable set and
+       app/README.md's "Themes" section for how a viewer's stored choice
+       (User.theme/Admin.theme) becomes the data-theme attribute above.
+       This :root block *is* the "Default" theme - a future theme adds a
+       [data-theme="<id>"] block below overriding just the tokens it
+       wants to change, not a full copy of every rule in this file.
+
+       --bg/--text default to the CSS Color 4 system keywords Canvas/
+       CanvasText rather than hardcoded colors deliberately: those are
+       exactly what a browser already renders when no background/color is
+       set at all, including following the OS's own light/dark
+       preference via color-scheme below - so "Default" behaves
+       identically to how this page always has, while still being a real,
+       overridable token for a future theme that wants to fix its own
+       colors instead of following the OS. */
+    :root {
+      color-scheme: light dark;
+      --bg: Canvas;
+      --text: CanvasText;
+      --error: #c0392b;
+      --border: #8883;
+      --border-strong: #8886;
+      --detail-bg: #8881;
+    }
     body {
+      background: var(--bg);
+      color: var(--text);
       font-family: system-ui, sans-serif;
       max-width: 720px;
       margin: 0 auto;
@@ -22,13 +47,13 @@
     label { font-size: 0.9rem; opacity: 0.8; }
     input { font-size: 1rem; padding: 0.5rem; }
     button { font-size: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
-    .error { color: #c0392b; }
+    .error { color: var(--error); }
     .muted { opacity: 0.7; font-size: 0.9rem; }
     table { border-collapse: collapse; width: 100%; }
-    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #8883; }
-    .preview-container { width: 100%; max-width: 500px; height: 350px; border: 1px solid #8886; touch-action: none; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
+    .preview-container { width: 100%; max-width: 500px; height: 350px; border: 1px solid var(--border-strong); touch-action: none; }
     .preview-info { font-size: 0.85rem; opacity: 0.8; margin-top: 0.25rem; }
-    footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #8883; font-size: 0.8rem; opacity: 0.6; }
+    footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.8rem; opacity: 0.6; }
     progress { vertical-align: middle; margin-left: 0.5rem; }
     /* A collapsed-by-default technical detail (e.g. raw slicer output on
        a failure) - a native <details>/<summary> disclosure, not JS, so a
@@ -43,7 +68,7 @@
       max-height: 16rem;
       overflow-y: auto;
       font-size: 0.8rem;
-      background: #8881;
+      background: var(--detail-bg);
       padding: 0.5rem;
       border-radius: 4px;
     }

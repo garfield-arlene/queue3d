@@ -25,4 +25,17 @@
     </p>
     <button type="submit">Save</button>
   </form>
+
+  <h3>My preferences</h3>
+  <form method="post" action="/admin/settings/theme">
+    <label>Theme<br>
+      <select name="theme">
+        {% for value, label in themes.items() %}
+          <option value="{{ value }}" {% if selected_theme == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="muted">Yours alone - follows your admin account across logins, not shared with other admins.</p>
+    <button type="submit">Save</button>
+  </form>
 {% endblock %}
