@@ -486,9 +486,13 @@ class _PersistentConnection:
         # (found out the hard way: see project memory
         # makerbot-network-protocol). One of "unknown" (nothing's been
         # attempted this run yet - the saved token, if any, might be
-        # perfectly fine), "needs_pairing" (the last attempt's failure
-        # looked like an authentication problem), or "unreachable" (the
-        # last attempt's failure looked like a network problem instead -
+        # perfectly fine), "needs_pairing" (the connection is now dead and
+        # its token spent - either the last attempt's failure looked like
+        # an authentication problem directly, or a *previously* healthy,
+        # already-authenticated connection just failed for some other
+        # reason mid-operation and got closed; either way the same token
+        # won't authenticate a reconnect), or "unreachable" (never even
+        # got as far as authenticating - a network problem instead,
         # printer off/unplugged, wrong host - re-pairing wouldn't help).
         self._last_error = "unknown"
 
@@ -550,8 +554,19 @@ class _PersistentConnection:
                 # mid-upload (not just the printer rejecting the request)
                 # - drop it so the *next* call reconnects fresh instead of
                 # repeatedly retrying against a socket already known bad.
+                # _connected_client() already got this client past
+                # authentication once, successfully - the token it used is
+                # now spent (see this module's docstring), so reconnecting
+                # will need a fresh one regardless of what actually went
+                # wrong just now. Recording that here, not only on an
+                # auth failure during _connected_client() itself, is what
+                # this status is actually for: telling the dashboard "the
+                # next real attempt will need a re-pair" as soon as that's
+                # true, not only once something has already tried and
+                # failed a *second* time to discover it.
                 self._client.close()
                 self._client = None
+                self._last_error = "needs_pairing"
                 raise
 
     def capture_photo(self) -> bytes:
@@ -560,13 +575,13 @@ class _PersistentConnection:
             try:
                 return client.capture_one_frame()
             except (_MakerBotError, OSError, TimeoutError) as e:
-                # Same reasoning as send_print_job's except clause: an
-                # error here could mean the connection itself is bad now
-                # (capture_one_frame's raw socket handling is more
-                # invasive than a normal request()), not just a rejected
-                # request - drop it so the next call reconnects fresh.
+                # Same reasoning as send_print_job's except clause above -
+                # this client was already successfully authenticated by
+                # _connected_client(), so its (now spent) token won't work
+                # for the reconnect this failure forces either.
                 self._client.close()
                 self._client = None
+                self._last_error = "needs_pairing"
                 raise PrinterError(f"Couldn't capture a photo from the printer's camera: {e}")
 
     def close(self) -> None:
@@ -599,9 +614,11 @@ def close_connection() -> None:
 
 def connection_status() -> str:
     """One of "connected" (currently holding a live, authenticated
-    connection), "needs_pairing" (never paired, or the last real attempt
-    looked like an authentication failure), "unreachable" (the last real
-    attempt looked like a network failure instead - pairing again won't
+    connection), "needs_pairing" (never paired, or a connection just died
+    - whether during authentication itself or partway through a later
+    release/capture - leaving its now-spent token unable to reconnect),
+    "unreachable" (the last real attempt never even got as far as
+    authenticating - a network failure instead, so pairing again won't
     help), or "unknown" (paired at some point, nothing's actually been
     attempted against the printer yet this run, so whether that token
     still works genuinely isn't known - see _PersistentConnection's
