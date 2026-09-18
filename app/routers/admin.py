@@ -17,6 +17,7 @@ from jobs import (
     active_jobs,
     all_events,
     approve,
+    corrected_duration_estimate_s,
     finished_jobs,
     job_events,
     log_event,
@@ -68,7 +69,14 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
     rows = []
     for job in active_jobs(session):
         user = session.get(User, job.user_id)
-        rows.append({"job": job, "user_name": user.name if user else "?", "eta": printing_eta(session, job)})
+        rows.append(
+            {
+                "job": job,
+                "user_name": user.name if user else "?",
+                "eta": printing_eta(session, job),
+                "duration_estimate_s": corrected_duration_estimate_s(session, job),
+            }
+        )
     return {
         "admin": admin,
         "last_backup": last_backup,

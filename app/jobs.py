@@ -205,24 +205,37 @@ def _duration_correction_factor(session: Session) -> float:
     return max(1.0, statistics.median(ratios))
 
 
+def corrected_duration_estimate_s(session: Session, job: Job) -> float | None:
+    """job.duration_estimate_s scaled by _duration_correction_factor()
+    above, or None if the slicer never produced an estimate for this job
+    at all. The single place every displayed duration/ETA should go
+    through - per the user, after noticing a job's displayed estimate
+    changed (20 min shown at queue time, corrected to ~28 once released)
+    depending on *when* it was looked at rather than showing the same,
+    best-available number everywhere consistently. Cheap enough to call
+    per job/request - one small indexed query - that no caching is worth
+    the complexity yet."""
+    if job.duration_estimate_s is None:
+        return None
+    return job.duration_estimate_s * _duration_correction_factor(session)
+
+
 def printing_eta(session: Session, job: Job) -> datetime | None:
     """Estimated completion time for a job that's actively printing, or
     None if it isn't printing or there's nothing to estimate from
     (released_at/duration_estimate_s both need to be set - a job released
     before duration estimation existed, or one the slicer couldn't
-    estimate for, has neither). `released_at + duration_estimate_s`,
-    scaled by _duration_correction_factor() above - a fallback for
+    estimate for, has neither). `released_at + ` the history-corrected
+    estimate (see corrected_duration_estimate_s above) - a fallback for
     whenever a live read isn't available (see print_progress below for
     the real thing), so per the user, this is a clearly-labeled countdown
-    from the (history-corrected) original estimate, not a claim of real
-    progress. Rendered client-side (see static/countdown.js) rather than
-    recomputed "minutes remaining" server-side, so it keeps ticking
-    between page loads/htmx polls without needing a matching request each
-    time."""
+    from that estimate, not a claim of real progress. Rendered
+    client-side (see static/countdown.js) rather than recomputed "minutes
+    remaining" server-side, so it keeps ticking between page loads/htmx
+    polls without needing a matching request each time."""
     if job.status != JobStatus.printing or job.released_at is None or job.duration_estimate_s is None:
         return None
-    factor = _duration_correction_factor(session)
-    return job.released_at + timedelta(seconds=job.duration_estimate_s * factor)
+    return job.released_at + timedelta(seconds=corrected_duration_estimate_s(session, job))
 
 
 def print_progress(job: Job) -> dict | None:

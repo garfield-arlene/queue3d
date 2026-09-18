@@ -521,6 +521,18 @@ uncorrected slicer estimate outright - see README.md's Printer to-do
 list for capturing the printer's own elapsed time as a future
 refinement.
 
+**Applied everywhere a duration is shown, not just the live printing
+countdown.** Caught live: a job showed a 20-minute estimate at queue
+time, then a *different*, corrected number once released - the same
+job's own estimate silently depending on which page happened to look at
+it, when it should just be the one best-available number everywhere,
+consistently. `corrected_duration_estimate_s(session, job)` is the one
+place any displayed duration goes through now (queued/approved/sliced
+jobs' "est. N min," not just `printing_eta()`), computed once per row in
+`_dashboard_context()` (both routers) and passed down as
+`row.duration_estimate_s` rather than templates reaching for
+`job.duration_estimate_s` directly.
+
 ### Persistent printer connection
 
 **Why this exists - a real, live-confirmed hardware limitation, not

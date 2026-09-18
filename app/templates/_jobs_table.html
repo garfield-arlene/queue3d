@@ -28,10 +28,10 @@
               <progress></progress> slicing&hellip;
             {% elif job.status.value == 'sliced' %}
               sliced - not yet submitted to the queue
-              {% if job.duration_estimate_s %} - est. {{ (job.duration_estimate_s / 60) | round | int }} min print{% endif %}
+              {% if row.duration_estimate_s %} - est. {{ (row.duration_estimate_s / 60) | round | int }} min print{% endif %}
             {% elif job.status.value == 'queued' or job.status.value == 'approved' %}
               position {{ row.position }} in queue
-              {% if job.duration_estimate_s %} - est. {{ (job.duration_estimate_s / 60) | round | int }} min print{% endif %}
+              {% if row.duration_estimate_s %} - est. {{ (row.duration_estimate_s / 60) | round | int }} min print{% endif %}
             {% elif job.status.value == 'printing' %}
               printing now
               {% include "_print_progress.html" %}
