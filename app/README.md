@@ -1264,6 +1264,57 @@ against the already-verified Python version, not a live browser render
 in the environment it's being built in right now, worth being upfront
 about rather than claiming a check that didn't actually happen.
 
+### Submission timestamp and queue-wait for still-waiting jobs
+
+**Why this exists:** per README.md's to-do list, right after the
+duration-formatting item above and phrased almost identically ("the
+days/hours/minutes display") - the two are adjacent but distinct asks.
+This one is specifically about surfacing *when a job joined the queue*
+and *how long it's been waiting since*, not the print's own estimated
+length. Ties directly into the next to-do item (an admin-configurable
+"old jobs" age threshold) - this is the timestamp/duration that feature
+will actually split on.
+
+**`jobs.queue_wait_seconds(job)`** - `job.queued_at` (when
+`submit_draft()` actually moved it into the queue) is already recorded
+and already used for `queue_position()`'s own ordering; this is the
+first thing to actually *display* it. Deliberately `queued_at`, not
+`created_at` (upload time) - same reasoning `queue_position()` already
+documents: time spent sitting on a draft before submitting isn't queue
+wait anyone actually experienced. Same naive/aware handling as
+`auth.check_lockout()` (see that function's docstring) - `queued_at` is
+always written as UTC but comes back tzinfo-naive once round-tripped
+through SQLite, while a freshly-created "now" is tzinfo-aware; both
+sides have tzinfo stripped before subtracting. Feeds the same
+`jobs.format_duration()` the print-duration estimates already use (see
+above) - "waiting 2d 3h 15m" is the identical formatting rule, not a
+second one that happens to look similar.
+
+**Scoped to `queued`/`approved` only, not `printing`** - both routers'
+`_dashboard_context()` compute `row.queue_wait_display` unconditionally
+(it's cheap, and `queued_at` is still set once a job starts printing),
+but the templates only ever reference it inside the queued/approved
+branch. A printing job already shows live progress and an ETA countdown
+(see "Live print progress" and "What release does") - a "waiting since"
+figure would read as stale or actively wrong once a job is no longer
+waiting on anything, it's being acted on.
+
+**Shown on the admin dashboard as a new "Queued" column** (date/time +
+"waiting Xh Ym", the raw timestamp printed directly since `job.queued_at`
+is already in scope - only the elapsed-time half needs server-side
+computation) and **folded into the user's own dashboard's existing
+"position N in queue" line** (`_jobs_table.html`) rather than a new
+column there - that page's row already reads as one flowing sentence
+per status, and this is one more clause in it, not a separate fact that
+needs its own column.
+
+Verified end-to-end against an isolated instance: two real queued/
+approved jobs seeded with distinct `queued_at` values (one ~5 minutes
+ago, one just over 2 days ago) rendered as `"waiting 5m"` and
+`"waiting 2d 3h 15m"` respectively through the real routes/templates on
+both dashboards, and a still-`sliced` draft (never queued) correctly
+showed neither a timestamp nor a wait time on either page.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on

@@ -33,6 +33,7 @@ from jobs import (
     log_event,
     mark_finished,
     printing_eta,
+    queue_wait_seconds,
     reject,
     release,
     user_has_active_jobs,
@@ -91,6 +92,7 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
     for job in active_jobs(session):
         user = session.get(User, job.user_id)
         estimate_s = corrected_duration_estimate_s(session, job)
+        wait_s = queue_wait_seconds(job)
         rows.append(
             {
                 "job": job,
@@ -98,6 +100,7 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
                 "eta": printing_eta(session, job),
                 "duration_estimate_s": estimate_s,
                 "duration_display": format_duration(estimate_s) if estimate_s else None,
+                "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
             }
         )
     return {

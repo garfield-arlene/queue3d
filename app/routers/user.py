@@ -20,6 +20,7 @@ from jobs import (
     log_event,
     printing_eta,
     queue_position,
+    queue_wait_seconds,
     slice_and_update,
     start_reslice,
     submit_draft,
@@ -181,6 +182,7 @@ def _dashboard_context(session: Session, user: User, flash_error: str | None = N
     rows = []
     for job in jobs:
         estimate_s = corrected_duration_estimate_s(session, job)
+        wait_s = queue_wait_seconds(job)
         rows.append(
             {
                 "job": job,
@@ -188,6 +190,7 @@ def _dashboard_context(session: Session, user: User, flash_error: str | None = N
                 "eta": printing_eta(session, job),
                 "duration_estimate_s": estimate_s,
                 "duration_display": format_duration(estimate_s) if estimate_s else None,
+                "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
             }
         )
     return {

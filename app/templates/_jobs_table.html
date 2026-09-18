@@ -31,6 +31,7 @@
               {% if row.duration_display %} - est. {{ row.duration_display }} print{% endif %}
             {% elif job.status.value == 'queued' or job.status.value == 'approved' %}
               position {{ row.position }} in queue
+              {% if job.queued_at %} - queued {{ job.queued_at.strftime('%Y-%m-%d %H:%M UTC') }}, waiting {{ row.queue_wait_display }}{% endif %}
               {% if row.duration_display %} - est. {{ row.duration_display }} print{% endif %}
             {% elif job.status.value == 'printing' %}
               printing now

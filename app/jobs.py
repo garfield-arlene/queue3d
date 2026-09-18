@@ -159,6 +159,22 @@ def queue_position(session: Session, job: Job) -> int | None:
     return len(ahead) + 1
 
 
+def queue_wait_seconds(job: Job) -> float | None:
+    """How long ago a job actually joined the queue (job.queued_at), or
+    None if it hasn't yet (still a draft) - same reasoning
+    queue_position() above already uses for ordering: created_at (upload
+    time) isn't queue time, since sitting on a draft for a while before
+    submitting isn't time spent waiting in line. Same naive/aware
+    handling as auth.check_lockout() (see that function's docstring for
+    the full explanation) - queued_at is always written as UTC but comes
+    back tzinfo-naive once round-tripped through SQLite."""
+    if job.queued_at is None:
+        return None
+    queued_at = job.queued_at.replace(tzinfo=None)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    return max(0.0, (now - queued_at).total_seconds())
+
+
 def _duration_correction_factor(session: Session) -> float:
     """Median ratio of actual-to-estimated duration across past
     *successful* prints, applied to future estimates in printing_eta()

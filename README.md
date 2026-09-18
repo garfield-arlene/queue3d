@@ -182,6 +182,11 @@ Managing user accounts:
   everywhere a duration is displayed (queued/approved/sliced estimates,
   and the live "time remaining"/"over the estimate" countdown for a job
   that's printing).
+- **Submission timestamp and queue-wait shown for still-waiting jobs** -
+  both the admin queue and a user's own dashboard now show exactly when
+  a `queued`/`approved` job actually joined the queue and how long it's
+  been waiting since (days/hours/minutes, same formatting as duration
+  estimates above) - not just its position in line.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -220,10 +225,10 @@ Managing user accounts:
   manual "Mark failed" gap was real.)
 - ~~Break the estimated print duration into days/hours/minutes - it's
   currently total minutes only.~~ **Done** - see Features above.
-- Show the date/time a job was submitted, and how long it's been sitting
-  in the queue since (days/hours/minutes) - the timestamp is already
-  recorded (`Job.created_at`/`queued_at`), it's just not displayed
-  anywhere yet.
+- ~~Show the date/time a job was submitted, and how long it's been
+  sitting in the queue since (days/hours/minutes) - the timestamp is
+  already recorded (`Job.created_at`/`queued_at`), it's just not
+  displayed anywhere yet.~~ **Done** - see Features above.
 - Let admins configure an age threshold (e.g. 30 days) and split
   still-waiting jobs into two separate views by it: the normal queue view
   for anything younger than the threshold, and a separate "old jobs" view
