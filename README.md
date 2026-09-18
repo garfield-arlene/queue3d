@@ -218,6 +218,11 @@ Managing user accounts:
 - Controls for resizing a model before submitting.
 
 **Appearance**
+- An admin setting for the display timezone - every timestamp shown
+  anywhere in the app (the activity log, job history, "finished at",
+  etc.) is UTC today, unlabeled as such in most places even though it's
+  what's actually stored and compared against. Should apply everywhere
+  at once, not per-page.
 - Light/dark theme, with a toggle.
 - Selectable themes - not just wallpaper/background/color, but ones that
   change the page layout itself, not only its palette.

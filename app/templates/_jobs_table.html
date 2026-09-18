@@ -34,6 +34,11 @@
               {% if job.duration_estimate_s %} - est. {{ (job.duration_estimate_s / 60) | round | int }} min print{% endif %}
             {% elif job.status.value == 'printing' %}
               printing now
+              {% if row.eta %}
+                {# See admin_dashboard.html's identical span for why the
+                   trailing "Z" here is required, not decorative. #}
+                - <span data-countdown-eta="{{ row.eta.isoformat() }}Z"></span>
+              {% endif %}
             {% elif job.status.value == 'rejected' %}
               {{ job.admin_note or "no note given" }}
             {% elif job.status.value == 'slice_failed' %}

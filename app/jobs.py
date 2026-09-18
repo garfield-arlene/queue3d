@@ -4,7 +4,7 @@ and routers stay thin HTTP glue.
 """
 
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlmodel import Session, select
@@ -154,6 +154,24 @@ def queue_position(session: Session, job: Job) -> int | None:
         .where(Job.queued_at < job.queued_at)
     ).all()
     return len(ahead) + 1
+
+
+def printing_eta(job: Job) -> datetime | None:
+    """Estimated completion time for a job that's actively printing, or
+    None if it isn't printing or there's nothing to estimate from
+    (released_at/duration_estimate_s both need to be set - a job released
+    before duration estimation existed, or one the slicer couldn't
+    estimate for, has neither). Purely `released_at + duration_estimate_s`
+    - there's no live progress feed from the printer to correct this
+    against once printing starts (see README.md's "Printer" to-do list),
+    so per the user, this is a clearly-labeled countdown from the
+    original estimate, not a claim of real progress. Rendered client-side
+    (see static/countdown.js) rather than recomputed "minutes remaining"
+    server-side, so it keeps ticking between page loads/htmx polls
+    without needing a matching request each time."""
+    if job.status != JobStatus.printing or job.released_at is None or job.duration_estimate_s is None:
+        return None
+    return job.released_at + timedelta(seconds=job.duration_estimate_s)
 
 
 def _require_status(job: Job, *allowed: JobStatus):

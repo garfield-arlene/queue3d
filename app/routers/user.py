@@ -9,7 +9,16 @@ from auth import (
     verify_secret,
 )
 from db import get_session
-from jobs import JobActionError, jobs_for_user, log_event, queue_position, slice_and_update, start_reslice, submit_draft
+from jobs import (
+    JobActionError,
+    jobs_for_user,
+    log_event,
+    printing_eta,
+    queue_position,
+    slice_and_update,
+    start_reslice,
+    submit_draft,
+)
 from models import DRAFT_STATUSES, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, scratch_stl_path
 from templates_env import templates
@@ -110,7 +119,10 @@ def logout(request: Request):
 
 def _dashboard_context(session: Session, user: User, flash_error: str | None = None):
     jobs = jobs_for_user(session, user.id)
-    rows = [{"job": job, "position": queue_position(session, job)} for job in jobs]
+    rows = [
+        {"job": job, "position": queue_position(session, job), "eta": printing_eta(job)}
+        for job in jobs
+    ]
     return {
         "user": user,
         "rows": rows,

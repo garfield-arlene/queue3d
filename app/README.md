@@ -384,6 +384,37 @@ Not yet built: live print progress/status polling (the printer's own
 would need to be consumed) and detecting completion automatically -
 `mark_done`/`mark_failed` are still a manual admin action for now.
 
+**A countdown from the original estimate, in place of that missing live
+status - explicitly not a substitute for it.** Per the user, after
+noticing the printer's own on-device timer runs inaccurate: while a job
+is `printing`, both dashboards show a live "~N min remaining" (or "~N
+min over the estimate" once it runs past zero, rather than freezing at
+0:00 or hiding - the estimate is already known to run off in practice,
+and pretending otherwise would be worse than just saying so) instead of
+the flat total estimate shown for a queued/approved job.
+`jobs.printing_eta()` computes `released_at + duration_estimate_s` once,
+server-side; `static/countdown.js` re-renders it from the client's own
+clock every 15s, so it keeps ticking between page loads and htmx polls
+without a matching request each time. Deliberately reads the DOM fresh
+on every tick rather than caching element references - some of these
+spans live inside `_jobs_table.html`, which htmx replaces wholesale on
+its own polling cycle, and a `<script>` tag doesn't re-run just because
+it got swapped back in.
+
+**A real bug caught before shipping, worth remembering:** `released_at`
+comes back from SQLite as a tzinfo-*naive* datetime, even though it's
+always written as UTC (`datetime.now(timezone.utc)`) - same gotcha
+`event.at.strftime(... 'UTC')` already works around elsewhere in this
+app. A plain `{{ eta.isoformat() }}` in the template would silently omit
+the UTC offset, and a browser's `new Date(...)` parses an offset-less
+ISO string as *local* time - every countdown would have been off by
+however many hours from UTC, on every viewer's own clock, in a way that
+would never show up testing from a system already set to UTC. Caught
+only by checking what the rendered attribute value actually was and
+reasoning about how the browser would parse it - a passing render test
+alone (attribute present, page loads) would not have caught this, and it
+was not caught by simply trying it against the real printer once.
+
 ### Persistent printer connection
 
 **Why this exists - a real, live-confirmed hardware limitation, not
