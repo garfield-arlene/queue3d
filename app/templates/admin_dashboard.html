@@ -12,7 +12,7 @@
 
   <p{% if backup_stale %} class="error"{% else %} class="muted"{% endif %}>
     {% if last_backup %}
-      Last successful backup: {{ last_backup.started_at.strftime('%Y-%m-%d %H:%M UTC') }}
+      Last successful backup: {{ last_backup.started_at | local_time }}
       (drive {{ last_backup.target_label }}){% if backup_stale %} - overdue, check the backup cron job{% endif %}
     {% else %}
       No successful backup on record yet{% if backup_stale %} - check the backup cron job{% endif %}.
@@ -39,7 +39,7 @@
           <td>{{ job.status.value }}</td>
           <td class="muted">
             {% if job.status.value in ('queued', 'approved') and job.queued_at %}
-              {{ job.queued_at.strftime('%Y-%m-%d %H:%M UTC') }}<br>
+              {{ job.queued_at | local_time }}<br>
               waiting {{ row.queue_wait_display }}
             {% endif %}
           </td>

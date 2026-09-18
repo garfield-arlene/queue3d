@@ -24,7 +24,7 @@
       {% for row in rows %}
         {% set event = row.event %}
         <tr>
-          <td class="muted">{{ event.at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+          <td class="muted">{{ event.at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
           <td>
             {% if event.job_id %}
               <a href="/admin/jobs/{{ event.job_id }}/log">{{ row.filename }}</a>

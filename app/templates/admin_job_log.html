@@ -24,7 +24,7 @@
       <tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th><th></th></tr>
       {% for event in events %}
         <tr>
-          <td class="muted">{{ event.at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+          <td class="muted">{{ event.at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
           <td>{{ event.actor }}</td>
           <td>{{ event.action }}</td>
           <td class="muted">

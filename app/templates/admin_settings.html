@@ -23,6 +23,20 @@
       app/README.md) removes any draft older than this, so abandoned
       drafts don't sit around forever.
     </p>
+    <label>Display timezone<br>
+      <select name="display_timezone">
+        {% for tz in timezones %}
+          <option value="{{ tz }}" {% if settings.display_timezone == tz %}selected{% endif %}>{{ tz }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="muted">
+      Every timestamp everywhere in the app (activity log, job history,
+      "finished at", etc.) is shown in this timezone - takes effect
+      immediately for everyone, not just after a restart. Data is still
+      stored and compared internally as UTC regardless; this only
+      changes what a viewer actually reads on the page.
+    </p>
     <button type="submit">Save</button>
   </form>
 

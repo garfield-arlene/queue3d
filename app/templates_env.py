@@ -8,6 +8,9 @@ separate instances would mean three places to keep in sync. One shared
 instance, one place to set it.
 """
 
+from datetime import datetime, timezone as _utc
+from zoneinfo import ZoneInfo
+
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
@@ -84,3 +87,68 @@ def current_mode(request) -> str:
 
 templates.env.globals["current_theme"] = current_theme
 templates.env.globals["current_mode"] = current_mode
+
+
+# ---- display timezone (see models.Settings.display_timezone) ----
+# Site-wide, not per-viewer like theme/mode above - one admin-set zone
+# for the whole deployment. Cached in-process (module-level, not
+# re-read from the DB on every call) because local_time() below runs
+# once per *timestamp shown*, not once per page - an activity log page
+# alone can render hundreds of rows, and this app is single-process (one
+# Pi, one SQLite file - see db.py), so a plain global is both safe and
+# correct: there's no other worker that could see a stale value. Primed
+# once at startup (main.py) from the stored Settings row, and updated
+# immediately whenever an admin actually saves a new one
+# (routers/admin.py's update_settings) - never re-read from the DB on
+# the hot path in between.
+_display_timezone_name = "UTC"
+_display_timezone = ZoneInfo("UTC")
+
+
+def is_valid_timezone(name: str) -> bool:
+    try:
+        ZoneInfo(name)
+    except Exception:
+        return False
+    return True
+
+
+def set_display_timezone(name: str) -> None:
+    """Updates the in-process cache local_time() reads. Falls back to
+    UTC for a name that isn't a real IANA zone rather than raising -
+    should never actually happen (update_settings validates with
+    is_valid_timezone() above before saving), but a template filter is
+    the wrong place to let a bad stored value take down every page that
+    renders a timestamp."""
+    global _display_timezone_name, _display_timezone
+    if is_valid_timezone(name):
+        _display_timezone_name = name
+        _display_timezone = ZoneInfo(name)
+    else:
+        _display_timezone_name = "UTC"
+        _display_timezone = ZoneInfo("UTC")
+
+
+def local_time(dt: datetime | None, fmt: str = "%Y-%m-%d %H:%M %Z") -> str:
+    """Jinja filter: `{{ some_utc_datetime | local_time }}` - converts to
+    the admin-configured display timezone (default UTC) and formats with
+    a real zone abbreviation (%Z - "EST"/"EDT"/"UTC"/etc.) rather than
+    the hardcoded "UTC" label most timestamp displays used to have
+    baked into their own format string regardless of what was actually
+    shown. Every datetime this app stores is UTC but comes back
+    tzinfo-naive once round-tripped through SQLite (the same recurring
+    gotcha as auth.check_lockout() and elsewhere) - `.replace(tzinfo=None)`
+    first normalizes an already-aware value (e.g. one just created
+    in-process, not yet re-fetched) down to naive too, so this works
+    identically either way before attaching the real UTC tzinfo and
+    converting. `dt=None` (a timestamp field that hasn't happened yet -
+    finished_at on a still-active job, etc.) returns "" so this can be
+    used directly in a template without a separate `{% if %}` guard
+    purely for that."""
+    if dt is None:
+        return ""
+    aware_utc = dt.replace(tzinfo=None).replace(tzinfo=_utc.utc)
+    return aware_utc.astimezone(_display_timezone).strftime(fmt)
+
+
+templates.env.filters["local_time"] = local_time

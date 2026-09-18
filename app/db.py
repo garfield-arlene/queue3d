@@ -154,6 +154,21 @@ def _migrate_to_3_4_0(conn):
         conn.execute(text("ALTER TABLE job ADD COLUMN failure_reason VARCHAR"))
 
 
+def _migrate_to_4_4_0(conn):
+    """New Settings.display_timezone column - an admin-configurable IANA
+    zone name every timestamp in the app is shown in (see
+    templates_env.local_time), rather than the unlabeled UTC every
+    display was hardcoded to before. Defaults to 'UTC' - the exact
+    values every existing timestamp is already stored as and was already
+    (silently) displayed as, so this changes nothing for a deployment
+    that never visits the new settings field."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(settings)")).fetchall()}
+    if "display_timezone" not in cols:
+        conn.execute(
+            text("ALTER TABLE settings ADD COLUMN display_timezone VARCHAR NOT NULL DEFAULT 'UTC'")
+        )
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -172,6 +187,7 @@ MIGRATIONS = {
     "3.2.0": _migrate_to_3_2_0,
     "3.3.0": _migrate_to_3_3_0,
     "3.4.0": _migrate_to_3_4_0,
+    "4.4.0": _migrate_to_4_4_0,
 }
 
 

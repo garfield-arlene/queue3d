@@ -21,7 +21,7 @@
         <tr>
           <td>{{ user.name }}</td>
           <td>{{ "disabled" if user.disabled else "active" }}</td>
-          <td class="muted">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+          <td class="muted">{{ user.created_at | local_time('%Y-%m-%d') }}</td>
           <td>
             {% if user.disabled %}
               <form method="post" action="/admin/users/{{ user.id }}/enable" style="display:inline">

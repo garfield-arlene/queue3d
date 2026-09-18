@@ -187,6 +187,16 @@ Managing user accounts:
   a `queued`/`approved` job actually joined the queue and how long it's
   been waiting since (days/hours/minutes, same formatting as duration
   estimates above) - not just its position in line.
+- **Admin-configurable display timezone** - one setting
+  (`/admin/settings`, any IANA zone name) controls what timezone every
+  timestamp in the app is shown in - the activity log, job history,
+  "finished at", queue-wait, backup times, all of it, everywhere at
+  once, not per-page or per-account. Data is still stored and compared
+  internally as UTC regardless; this only changes what a viewer reads
+  on the page, and now shows a real zone abbreviation (EST/EDT/UTC/etc.)
+  instead of a hardcoded "UTC" label that wasn't always accurate to
+  what was actually displayed. Takes effect immediately for every
+  viewer on save, no restart needed.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -301,11 +311,11 @@ Managing user accounts:
 - Controls for resizing a model before submitting.
 
 **Appearance**
-- An admin setting for the display timezone - every timestamp shown
+- ~~An admin setting for the display timezone - every timestamp shown
   anywhere in the app (the activity log, job history, "finished at",
   etc.) is UTC today, unlabeled as such in most places even though it's
   what's actually stored and compared against. Should apply everywhere
-  at once, not per-page.
+  at once, not per-page.~~ **Done** - see Features below.
 - ~~Convert the current look into a real, named "Default" theme, with a
   per-user/per-admin settings page to pick one, persisting across
   logins~~ **Done** - see Features below ("Per-account theme and

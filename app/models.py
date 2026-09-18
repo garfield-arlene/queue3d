@@ -157,10 +157,11 @@ TERMINAL_STATUSES = {JobStatus.rejected, JobStatus.done, JobStatus.failed, JobSt
 
 
 class Settings(SQLModel, table=True):
-    """A single-row table of admin-configurable settings - just one so far.
-    A real key/value settings table would be overkill for one integer;
-    add columns here as more settings show up rather than reaching for
-    that until there's actually more than one."""
+    """A single-row table of admin-configurable settings that apply to
+    the whole app at once, not per-account - see User/Admin.theme for
+    the per-account equivalent. Not a generic key/value store; add
+    columns here as more settings show up rather than reaching for that
+    until there's actually more than a couple."""
 
     id: int = Field(default=1, primary_key=True)
     # How long a sliced-but-never-submitted draft sits before
@@ -170,6 +171,17 @@ class Settings(SQLModel, table=True):
     # draft feature raises doesn't have one right answer for every
     # deployment's traffic/storage.
     draft_expiry_days: int = Field(default=7)
+    # An IANA zone name (e.g. "America/New_York") every timestamp in the
+    # app is displayed in - see templates_env.local_time. Every
+    # timestamp is still stored and compared internally as UTC
+    # (unchanged, and it must stay that way - see that module's
+    # docstring); this only affects what a viewer actually reads on the
+    # page. Site-wide, not per-account: per the user, "should apply
+    # everywhere at once, not per-page" - one admin-set value for the
+    # whole deployment, not a per-viewer preference like theme/mode are.
+    # Defaults to "UTC" so an untouched deployment shows exactly what it
+    # always has.
+    display_timezone: str = Field(default="UTC")
 
 
 class JobEvent(SQLModel, table=True):

@@ -4,6 +4,8 @@ by whoever controls the server. Approving/releasing print jobs is a
 position of trust over many users' shared printer time; open
 admin signup would defeat the whole point of the review gate."""
 
+import zoneinfo
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session, select
@@ -40,7 +42,7 @@ from jobs import (
 )
 from models import Admin, Job, Settings, User
 from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
-from templates_env import templates
+from templates_env import is_valid_timezone, set_display_timezone, templates
 from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
 
 router = APIRouter(prefix="/admin")
@@ -418,6 +420,11 @@ def _admin_settings_context(session: Session, admin: Admin, error: str | None = 
         "modes": MODES,
         "selected_theme": admin.theme or DEFAULT_THEME,
         "selected_mode": admin.theme_mode or DEFAULT_MODE,
+        # Sorted once per render, not cached - this list only matters
+        # while the settings page itself is open, nowhere near often
+        # enough to be worth a module-level cache the way
+        # templates_env's actual display timezone is.
+        "timezones": sorted(zoneinfo.available_timezones()),
         "error": error,
         "saved": saved,
     }
@@ -436,17 +443,26 @@ def settings_page(
 def update_settings(
     request: Request,
     draft_expiry_days: int = Form(...),
+    display_timezone: str = Form(...),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     error = None
     if draft_expiry_days < 1:
         error = "Draft expiry must be at least 1 day."
+    elif not is_valid_timezone(display_timezone):
+        error = "Not a real timezone choice."
     else:
         settings = get_settings(session)
         settings.draft_expiry_days = draft_expiry_days
+        settings.display_timezone = display_timezone
         session.add(settings)
         session.commit()
+        # Takes effect immediately, for every viewer, not just after a
+        # restart - see templates_env.set_display_timezone for why this
+        # in-process cache exists at all rather than a DB read per
+        # timestamp shown.
+        set_display_timezone(display_timezone)
     return templates.TemplateResponse(
         request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
     )

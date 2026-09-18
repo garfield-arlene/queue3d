@@ -1315,6 +1315,104 @@ ago, one just over 2 days ago) rendered as `"waiting 5m"` and
 both dashboards, and a still-`sliced` draft (never queued) correctly
 showed neither a timestamp nor a wait time on either page.
 
+### Admin-configurable display timezone
+
+**Why this exists:** per README.md's Appearance to-do list - every
+timestamp shown anywhere in the app was UTC, unlabeled as such in most
+places even though that's genuinely what was stored and compared
+against internally. "Should apply everywhere at once, not per-page" per
+the user - a site-wide admin setting, not a per-account preference like
+theme/mode.
+
+**`Settings.display_timezone`** (schema `4.4.0`, an IANA zone name
+string, defaults to `"UTC"`) - the shared, site-wide `Settings` singleton
+table already used for `draft_expiry_days` gets its second field, per
+that model's own stated policy of adding columns there rather than
+reaching for a generic key/value store until there's a real need.
+Deliberately site-wide, not per-account: unlike theme/mode (see
+"Themes"), there's no reasonable case here for two people looking at the
+same job's timestamp to see two different times - a shared printer used
+in one physical place has one real local time.
+
+**`templates_env.local_time`** - a Jinja *filter*
+(`{{ some_utc_datetime | local_time }}`), not a global function like
+`current_theme`/`current_mode`, since this operates on a value being
+displayed rather than reading `request` - most timestamp displays just
+swap a raw `.strftime(...)` call for the filter directly. Converts to the
+configured zone and formats with `%Z` by default, so what's shown is a
+real zone abbreviation ("EST"/"EDT"/"UTC") rather than the old hardcoded
+`"UTC"` string every display used to have baked into its own format
+regardless of whether that was still accurate. Same naive/aware handling
+as `auth.check_lockout()` and `jobs.queue_wait_seconds()` (see either's
+docstring) - every stored datetime is UTC but comes back tzinfo-naive
+from SQLite, while one just created in-process is still tzinfo-aware;
+`.replace(tzinfo=None)` first normalizes either case the same way before
+attaching real UTC tzinfo and converting. `dt=None` returns `""` rather
+than requiring a separate `{% if %}` guard in every template that uses
+it - several existing call sites (`admin_finished_jobs.html`'s
+`finished_at`, for a job that hasn't finished yet) had exactly that
+guard, now redundant and removed.
+
+**Cached in-process, not re-read from the DB on every call - a real
+design choice, not a premature optimization:** `local_time()` runs once
+per *timestamp shown*, not once per page - `/admin/log` alone can render
+hundreds of rows. A module-level global (`templates_env`'s
+`_display_timezone`/`_display_timezone_name`, updated via
+`set_display_timezone()`) avoids hundreds of redundant single-row
+lookups for a value that only ever changes when an admin explicitly
+saves a new one. Safe specifically because this app is single-process
+(one Pi, one SQLite file - see "Deployment: zero internet access, by
+design") - there's no other worker process that could see a stale
+value. Primed once at startup (`main.py`, from the stored `Settings` row
+- falling back to a fresh `Settings()`'s own "UTC" default on a brand
+new database with no row yet) and updated immediately in
+`routers/admin.py`'s `update_settings()` the moment a new value is
+actually saved - a change takes effect for every viewer right away, no
+restart required, confirmed live in isolated testing (saved a new
+timezone through the real route, then re-rendered the dashboard and
+activity log in the same running process and saw both switch
+immediately).
+
+**Validated against Python's own `zoneinfo.available_timezones()`**
+(`templates_env.is_valid_timezone`) - 598 real IANA names on this
+machine, backed by the system's own tzdata (confirmed working with no
+`tzdata` pip package installed - Python's `zoneinfo` module falls back
+to the OS's `/usr/share/zoneinfo`, present by default on essentially
+every Linux distribution, so this needs no extra dependency and no
+internet access to work, consistent with this project's zero-internet
+deployment target). An invalid submitted value is rejected with a clear
+error and never saved, same pattern as every other settings-form
+validation in this app; `set_display_timezone()` itself also falls back
+to UTC defensively for a bad *stored* value (should never happen given
+that validation, but a template filter is the wrong place to let a bad
+value take down every page that shows a timestamp). The settings page
+offers the full sorted list in a plain `<select>` rather than a curated
+short list - a school deployment could be anywhere, and there's no way
+to guess which handful of zones would actually be relevant.
+
+**A genuinely different migration-ordering outcome than either previous
+incident (see [[queue3d-version-policy]]) - this time following the
+revised rule worked exactly as intended, worth recording precisely.**
+The migration function was written and registered in `MIGRATIONS`
+*before* `VERSION` was bumped, per that rule. Because `init_db()`
+compares `MIGRATIONS`' own keys against the *stored* version - not
+against `APP_VERSION` - the `4.4.0` migration actually ran on the very
+next `.py`-triggered reload, *before* `VERSION` was bumped at all:
+confirmed directly by copying the real production database mid-task and
+finding `display_timezone='UTC'` already present while
+`schemaversion.version` still read `"4.3.0"`. This is a real, different
+side effect from either prior incident (the first: a stored version
+correctly bumped, no schema change; the second: a stored version bumped
+too early, the promised column never added) - here the opposite
+happened, an under-reported version with the column already genuinely
+correct - and it's the *safe* direction to be wrong in: `VERSION`
+merely lagged reality for one bump cycle rather than a table missing a
+column it was recorded as already having. Confirmed self-correcting:
+once `VERSION` was actually bumped to `4.4.0`, the next reload re-ran
+`_migrate_to_4_4_0` (a safe no-op, guarded by the same "column already
+exists" check every migration here uses) and `schemaversion.version`
+caught up to the true state.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on
