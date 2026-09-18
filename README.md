@@ -95,24 +95,22 @@ Managing user accounts:
   button starts pairing right from there (with on-screen instructions to
   go press the printer's dial) instead of needing server/CLI access to
   run `pair_printer.py` by hand.
-- **A build-plate photo on every finished job, built but not yet
-  confirmed live** - marking a job done or failed automatically captures
-  a photo from the printer's onboard camera (over the same persistent
-  JSON-RPC connection) and links it from the job's own log, the global
-  activity log, and the submitting user's own dashboard row - so both
-  the user and an admin can see what actually happened, and an admin can
-  visually confirm which physical print belongs to which submitter's
-  claim. A failed capture (camera or printer unreachable at the moment)
-  never blocks recording the job's own outcome - it's logged as a
-  failed-capture detail instead, not an error that stops the done/failed
-  action. **Not counted as done per the user - a real photo has been
-  captured and viewed in isolated testing, but every real attempt in the
-  actual production app so far has failed, always on the connection
-  being dead by the time a job is marked done/failed (idle timeout over
-  a long print, a physical cancel, or one of this branch's own
-  `--reload`-triggering deploys), never on the capture logic itself.**
-  See `app/README.md`'s "Printer camera" section for the protocol
-  write-up and the framing bug this surfaced.
+- **A build-plate photo on every finished job** - marking a job done or
+  failed automatically captures a photo from the printer's onboard camera
+  (over the same persistent JSON-RPC connection) and links it from the
+  job's own log, the global activity log, and the submitting user's own
+  dashboard row - so both the user and an admin can see what actually
+  happened, and an admin can visually confirm which physical print
+  belongs to which submitter's claim. A failed capture (camera or printer
+  unreachable at the moment) never blocks recording the job's own
+  outcome - it's logged as a failed-capture detail instead, not an error
+  that stops the done/failed action. **Confirmed working for real**, not
+  just in isolated testing - job #15's automatically-detected completion
+  produced and saved a real, viewed photo of the finished print on the
+  build plate, after several rounds of real-world failures (always the
+  connection or a cleanup-step bug, never the core capture logic) that
+  are all documented and fixed. See `app/README.md`'s "Printer camera"
+  section for the protocol write-up and the bugs this surfaced.
 - **Live print progress, read from the printer** - both dashboards show
   a real percent-complete and progress bar for the job that's currently
   printing, polled directly from the printer's own `get_system_information`
@@ -314,23 +312,20 @@ Managing user accounts:
   job is marked finished, which would let the correction stop
   inheriting whatever delay elapsed between the physical print actually
   finishing and someone noticing.
-- Camera access confirmed, photo capture wired into the job record - see
-  Features above ("A build-plate photo on every finished job, built but
-  not yet confirmed live"). **Not done yet, per the user**: real code,
-  verified with a real captured-and-viewed photo in isolated testing,
-  but every attempt in the actual production app has failed so far
-  (always the connection, not the capture logic) - stays open until an
-  actual real job's photo has been captured and viewed successfully.
-  Automatic completion detection (below) should meaningfully help here -
-  it captures the moment the printer itself reports done, closing most
-  of the gap where the connection kept dying before an admin got to
-  click - but isn't a guarantee on its own, and the dedicated-camera plan
-  right below stays the actual fix for the printer connection's
-  remaining flakiness.
+- ~~Camera access confirmed, photo capture wired into the job record~~
+  **Done** - see Features above ("A build-plate photo on every finished
+  job") and `app/README.md`'s "Printer camera" section. Confirmed with
+  an actual real photo, not just isolated testing - job #15's
+  automatically-detected completion produced and saved one for real.
 - A dedicated camera, independent of the printer's own flaky single-
-  session connection - per the user, after every real photo-capture
-  attempt above failed on the connection rather than the capture logic
-  itself. Plan settled on, hardware not yet in hand: an ESP32-CAM
+  session connection - per the user, after a string of real
+  photo-capture failures (all since fixed - see Features above) that
+  were always the connection or a related bug, never the core capture
+  logic. Photo capture does now work end-to-end for real, but the
+  printer's one-session-at-a-time design (see "Persistent printer
+  connection") is a structural limit no amount of client-side code can
+  fully engineer around - a dedicated camera would sidestep it entirely.
+  Plan settled on, hardware not yet in hand: an ESP32-CAM
   (WiFi, not PoE - doesn't touch the router's limited LAN port budget,
   which the printer and the Pi already mostly use up), flashed with
   open-source firmware serving a plain local HTTP snapshot - no cloud
