@@ -43,8 +43,29 @@ def run_slice(
         if supports_json_path is not None:
             cmd += ["--gcode-out", str(gcode_path)]
 
+        # stdin=DEVNULL - a real incident, not foresight: mbotmake (called
+        # two subprocess layers down, see slicing/slice.py) has its own
+        # internal `input()` call on certain internal errors (a bed-
+        # centering sanity check failing for an unusually-shaped model -
+        # see app/README.md's "Uploading .obj and .zip files" section for
+        # the specific one that surfaced this). Without this, the whole
+        # chain inherits whatever stdin the app's own process has - a real
+        # terminal in normal dev/deployment use - so that `input()` blocks
+        # forever waiting for a keystroke nobody will ever type, instead
+        # of raising EOFError immediately the way it does when stdin is
+        # already closed/empty. The 600s timeout below still eventually
+        # fires either way, but only kills this direct child - the
+        # blocked grandchild (mbotmake) would otherwise leak indefinitely
+        # rather than exiting with it. Confirmed live: a real job got
+        # stuck this way; killing the process tree by hand was the only
+        # way to unwedge it before this fix existed.
         result = subprocess.run(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=600
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            timeout=600,
         )
         output = result.stdout or ""
         success = result.returncode == 0 and output_makerbot_path.exists()

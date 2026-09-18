@@ -269,6 +269,13 @@ Managing user accounts:
   before slicing - `trimesh` (Python, fill holes/fix normals/fix winding)
   or `admesh` (a small purpose-built STL repair CLI) are the two realistic
   options to build it on.
+- Centering an uploaded model by its actual geometric centroid, not just
+  its bounding-box center (`slicing/stl_to_3mf.center_vertices` today) -
+  a real asymmetric model was seen to fail `mbotmake`'s own bed-centering
+  sanity check this way (see `app/README.md`'s "A real stuck-slicing
+  incident" section); centroid-based centering might avoid that class of
+  failure for future oddly-shaped models. Not attempted yet - would need
+  confirming it doesn't just move the mismatch somewhere else.
 
 **Job review & feedback**
 - ~~Show failure reasons to the user, not just rejection notes - rejection
@@ -357,6 +364,15 @@ Managing user accounts:
   `archive/` instead; this is about visibility into the database-level
   backups themselves (see `backup.py`), for confirming they're actually
   capturing what's expected.
+- Periodic disk-space checks on the relevant volumes - the OS disk and
+  each mounted USB backup flash drive (see `backup.py`'s rotation between
+  two targets) - so running low is surfaced before a backup silently
+  fails or the queue itself can't accept new uploads, not discovered
+  after the fact.
+- A system performance view for admins - CPU and RAM usage, presumably
+  alongside the disk-space check above on the same page, given a Pi is a
+  real resource-constrained target and slicing (OrcaSlicer + mbotmake)
+  is genuinely CPU/memory-heavy.
 
 **Print options**
 - Color selection for users - 1st/2nd/3rd preference, chosen from a

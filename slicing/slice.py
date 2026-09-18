@@ -97,6 +97,7 @@ def slice_stl(stl_path, output_makerbot_path, enable_supports=False, support_sty
             [str(ORCASLICER), "--outputdir", str(tmp), "--arrange", "0", "--orient", "0", "--slice", "0", str(project_3mf)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
             text=True,
         )
         # OrcaSlicer's AppImage wrapper emits a harmless libexpat version
@@ -117,10 +118,18 @@ def slice_stl(stl_path, output_makerbot_path, enable_supports=False, support_sty
             shutil.copy(gcode_path, gcode_out_path)
 
         print("Converting to .makerbot (mbotmake, Replicator+ / Tough Smart Extruder+)...")
+        # stdin=DEVNULL - mbotmake itself calls input() on certain internal
+        # errors (a bed-centering sanity check, at least - see
+        # mbotmake:929); without this it blocks forever waiting for a
+        # keystroke instead of failing fast with a clean EOFError. See
+        # pipeline.run_slice's own comment on its outer subprocess.run for
+        # the real incident this fixes - a genuinely stuck job, not a
+        # hypothetical.
         result = subprocess.run(
             [sys.executable, str(MBOTMAKE), "-RepPlus", "-ToughExt", str(gcode_path)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
             text=True,
         )
         print(result.stdout)

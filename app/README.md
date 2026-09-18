@@ -482,6 +482,59 @@ split below, which is why the end state here is `sliced` rather than the
 `queued` this was originally verified against - re-confirmed after that
 change, not just assumed still true.)
 
+### A real stuck-slicing incident: subprocess stdin inheritance
+
+**What happened, reported directly by the user:** "I uploaded an obj
+file and started the slicing process. The status shows submitted, but
+the progress bar is showing that it's still working... is it stuck?"
+Checked the real running process, not just the database: both `slice.py`
+and its own child `mbotmake` were genuinely still alive, several minutes
+in, but at essentially zero CPU time - not computing, blocked. `mbotmake`
+has an internal `input()` call (line 929) on certain errors of its own -
+here, a bed-centering sanity check (`assert -0.15 < xrel < 0.15`,
+comparing the printed toolpath's actual bounding-box center to zero,
+relative to its own width) failing for this particular model's geometry.
+None of the three `subprocess.run()` calls in this pipeline
+(`pipeline.run_slice`'s own, plus `slice.py`'s two - OrcaSlicer and
+mbotmake) ever set `stdin` explicitly, so all three inherit whatever
+stdin the app's own process has - a real terminal in normal dev/
+deployment use, confirmed directly (`/proc/<pid>/fd/0` pointed at a real
+`/dev/pts/0`). That `input()` call was blocking forever waiting for a
+keystroke nobody would ever type, rather than raising `EOFError`
+immediately the way it does when stdin is already closed - which is
+exactly what happened when this got reproduced from a context with no
+real terminal attached, initially making it look like a one-off that
+couldn't be reproduced until stdin was deliberately checked and
+controlled for.
+
+**Fixed with `stdin=subprocess.DEVNULL` on all three calls** - a job
+that hits this now fails in well under a second with a clean error
+instead of hanging for however long it takes the outer 600-second
+`subprocess.run` timeout to fire (and even then, only the direct child
+gets killed by that timeout - the blocked grandchild `mbotmake` would
+otherwise leak indefinitely as an orphaned process, never actually
+cleaned up). Confirmed both ways on the real failing model: with stdin
+left alone, it reproduces the exact hang; with `stdin=subprocess.DEVNULL`
+in place, the identical input fails fast (well under a second) with a
+clean `RuntimeError` instead. Also re-verified a normal successful slice
+still works unchanged with the fix in place - this only changes what an
+*already-failing* run does, not the success path.
+
+**The Christmas-tree model's own slicing failure is real and separate,
+not something patched over** - an asymmetric shape whose naive
+bounding-box centering (`stl_to_3mf.center_vertices`, based on the raw
+mesh's min/max) doesn't line up closely enough with where the actual
+print material ends up once sliced, and `mbotmake` refuses to proceed
+rather than risk a mispositioned print. Deliberately not "fixed" by
+loosening that assertion - it's third-party vendored code whose exact
+tolerance reasoning isn't fully understood here, and weakening an
+unfamiliar safety check to make one model pass risks silently producing
+bad real-world prints for others instead of a clean, honest failure.
+Recentering based on the mesh's actual geometric centroid rather than
+its bounding-box center might address this class of failure for future
+asymmetric models - noted as a possible angle for the existing "model
+repair" to-do item, not attempted here.
+
 ### What release does
 
 `jobs.release()` enforces the one-job-at-a-time rule, then calls
