@@ -249,6 +249,20 @@ Managing user accounts:
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
 
+**Help / instructions**
+- A how-to page (or a small set of them, split by what the reader is
+  currently looking at, if that ends up clearer than one long page)
+  walking through everything from registration to submitting a job with
+  every feature along the way - supports, style choices, checking queue
+  position, reading the log, viewing a finished job's photo, all of it.
+  Linked from every page, for every user, not just buried somewhere.
+- A parallel instructions page for admins - reviewing/approving/
+  rejecting/releasing, reading the activity log, the printer status
+  banner and pairing, managing user accounts. Also linked from every
+  admin page. Should cover creating and managing *other admin* accounts
+  once that feature exists (see "Accounts" below - not built yet) - add
+  that section when that feature is actually built, not before.
+
 **Printer**
 - ~~Live print progress while a job is printing~~ **Done** - see Features
   below ("Live print progress, read from the printer") and
