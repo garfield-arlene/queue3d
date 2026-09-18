@@ -81,9 +81,78 @@ Managing user accounts:
   (`/admin/jobs/{id}/log`, linked from the queue, the finished-jobs list,
   and the global log).
 - **Release to the printer over the network** - an approved job is sent
-  and started directly; no walking a file over on a flash drive.
+  and started directly; no walking a file over on a flash drive. One
+  persistent, authenticated connection is held open for the app's whole
+  run rather than reconnecting per release - the printer's own pairing
+  tokens are only ever good for one authenticated session, confirmed live
+  against the real hardware, so reconnecting fresh every time would have
+  meant only the first release after any pairing ever actually worked.
 - **One job on the printer at a time**, enforced - releasing a second job
   while one is already printing is blocked with a clear error.
+- **Printer status on the admin dashboard** - rather than only finding
+  out the printer needs re-pairing when a release actually fails, the
+  dashboard shows its connection state plainly, and a "Pair printer"
+  button starts pairing right from there (with on-screen instructions to
+  go press the printer's dial) instead of needing server/CLI access to
+  run `pair_printer.py` by hand.
+- **A build-plate photo on every finished job** - marking a job done or
+  failed automatically captures a photo from the printer's onboard camera
+  (over the same persistent JSON-RPC connection) and links it from the
+  job's own log, the global activity log, and the submitting user's own
+  dashboard row - so both the user and an admin can see what actually
+  happened, and an admin can visually confirm which physical print
+  belongs to which submitter's claim. A failed capture (camera or printer
+  unreachable at the moment) never blocks recording the job's own
+  outcome - it's logged as a failed-capture detail instead, not an error
+  that stops the done/failed action. **Confirmed working for real**, not
+  just in isolated testing - job #15's automatically-detected completion
+  produced and saved a real, viewed photo of the finished print on the
+  build plate, after several rounds of real-world failures (always the
+  connection or a cleanup-step bug, never the core capture logic) that
+  are all documented and fixed. See `app/README.md`'s "Printer camera"
+  section for the protocol write-up and the bugs this surfaced.
+- **Live print progress, read from the printer** - both dashboards show
+  a real percent-complete and progress bar for the job that's currently
+  printing, polled directly from the printer's own `get_system_information`
+  reply (`current_process.progress`) rather than guessed from the
+  original time estimate - confirmed live to track actual print progress
+  (not just elapsed time) and to match what the printer's own screen
+  shows. Falls back to the estimate-based countdown (see the persistent
+  connection above) whenever a live reading isn't available. See
+  `app/README.md`'s "Live print progress" section for how this was
+  confirmed, and `/admin/printer/info` for the raw reply this is read
+  from.
+- **A history-corrected time estimate** - the fallback countdown shown
+  whenever a live progress reading isn't available no longer trusts the
+  slicer's own time estimate outright: it's scaled by the median
+  actual-vs-estimated ratio across past successful prints (the first one
+  in real use took 43.5% longer than estimated), so the estimate gets
+  more realistic as more prints complete, without ever needing to be set
+  by hand. Only learns from completed ("done") prints, never cancelled
+  or failed ones, whose duration says nothing about how long a full
+  print actually takes.
+- **Per-account theme and light/dark mode selection** - both users and
+  admins get their own settings page to pick a UI theme and a light/dark
+  mode independently, persisting across logins/devices (not a
+  browser-only preference). The current look is now a real, named
+  "Default" theme (in its "Light" mode) rather than just "whatever the
+  CSS says" - `base.html`'s styles are CSS custom properties a future
+  theme/mode combination overrides selectively, with zero visible change
+  to how the app looked before this. Only "Default" exists as an actual
+  theme choice so far, though both Light and Dark are real, fully
+  working modes for it already; see the To do list for adding more
+  themes. See `app/README.md`'s "Themes" section.
+- **Automatic completion detection** - a background poller notices a
+  print finishing, failing, or being cancelled on its own (via the same
+  printer status read as the live progress bar above) and records the
+  outcome immediately, without waiting for an admin to click "Mark
+  done"/"Mark failed" - closing the exact gap that caused every real
+  photo-capture failure so far (the connection dying between a print
+  actually finishing and someone noticing). The manual buttons are
+  unchanged - this is a safety net on top of them, not a replacement.
+  Logged with actor `"system"` so the activity log always shows whether
+  a given outcome was a human's click or the poller's own. See
+  `app/README.md`'s "Automatic completion detection" section.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -92,13 +161,14 @@ Managing user accounts:
 - **App version number** shown as a footer on every page, read from
   `app/VERSION` at startup - bump that file to change what's shown, no code
   change needed.
+- **Automated security checks** on every push and pull request
+  (`.github/workflows/security.yml`) - dependency vulnerability scanning
+  (`pip-audit`), static analysis for risky code patterns (`bandit`), and
+  secret scanning (`gitleaks`, alongside GitHub's own native scanning on
+  this public repo). Dependabot also opens a PR on its own when a
+  dependency has a newer version, rather than waiting to be asked.
 
 ## To do
-
-**Security & CI**
-- A pipeline to run security checks automatically (e.g. dependency
-  vulnerability scanning, static analysis, secret scanning) rather than
-  relying on manual review.
 
 **Upload**
 - Accept file types beyond `.stl` - `.3mf`, `.obj`, and `.zip` (presumably
@@ -194,33 +264,141 @@ Managing user accounts:
 - Controls for resizing a model before submitting.
 
 **Appearance**
-- Light/dark theme, with a toggle.
-- Selectable themes - not just wallpaper/background/color, but ones that
-  change the page layout itself, not only its palette.
+- An admin setting for the display timezone - every timestamp shown
+  anywhere in the app (the activity log, job history, "finished at",
+  etc.) is UTC today, unlabeled as such in most places even though it's
+  what's actually stored and compared against. Should apply everywhere
+  at once, not per-page.
+- ~~Convert the current look into a real, named "Default" theme, with a
+  per-user/per-admin settings page to pick one, persisting across
+  logins~~ **Done** - see Features below ("Per-account theme and
+  light/dark mode selection") and `app/README.md`'s "Themes" section.
+  Only "Default" actually exists as a theme choice today - the
+  infrastructure (settings pages, persistence, the CSS token structure a
+  theme/mode overrides) is what's built; more themes is genuinely new
+  work, not just filling in a dropdown.
+- ~~Light/dark mode~~ **Done** - a separate toggle from theme, per the
+  user, not folded into it - every theme (so far just "Default") gets
+  both a light and a dark palette. See Features above and
+  `app/README.md`'s "Themes" section.
+- More themes beyond "Default" - color changes, wallpaper, as their own
+  selectable options (each needing both a light and dark palette, per
+  the user - see "Themes" above). Everything must ship as local static
+  files - no CDN fonts, no external image URLs (see "Deployment: zero
+  internet access" - this app runs with none, ever).
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
 
+**Help / instructions**
+- A how-to page (or a small set of them, split by what the reader is
+  currently looking at, if that ends up clearer than one long page)
+  walking through everything from registration to submitting a job with
+  every feature along the way - supports, style choices, checking queue
+  position, reading the log, viewing a finished job's photo, all of it.
+  Linked from every page, for every user, not just buried somewhere.
+- A parallel instructions page for admins - reviewing/approving/
+  rejecting/releasing, reading the activity log, the printer status
+  banner and pairing, managing user accounts. Also linked from every
+  admin page. Should cover creating and managing *other admin* accounts
+  once that feature exists (see "Accounts" below - not built yet) - add
+  that section when that feature is actually built, not before.
+
 **Printer**
-- Live print progress/status while a job is printing - `mark_done`/
-  `mark_failed` are still a manual admin action; the printer's protocol
-  has a status-notification mechanism that isn't consumed yet.
-- More robust pairing: after a power-on, the printer's HTTP pairing
+- ~~Live print progress while a job is printing~~ **Done** - see Features
+  below ("Live print progress, read from the printer") and
+  `app/README.md`'s "Live print progress" section.
+- ~~Detect a print finishing or failing automatically, rather than
+  relying on an admin to click `mark_done`/`mark_failed` by hand~~
+  **Done** - see Features below ("Automatic completion detection") and
+  `app/README.md`'s section of the same name.
+- ~~Correct the fallback time estimate using real completion history~~
+  **Done** - see Features below ("A history-corrected time estimate")
+  and `app/README.md`'s "Live print progress" section. What's still
+  open: the correction is based on `finished_at` (when an admin clicked
+  "Mark done"), not the printer's own recorded elapsed time for that
+  print - the two automatic-detection and precise-history items above
+  both point at capturing `current_process.elapsed_time` at the moment a
+  job is marked finished, which would let the correction stop
+  inheriting whatever delay elapsed between the physical print actually
+  finishing and someone noticing.
+- ~~Camera access confirmed, photo capture wired into the job record~~
+  **Done** - see Features above ("A build-plate photo on every finished
+  job") and `app/README.md`'s "Printer camera" section. Confirmed with
+  an actual real photo, not just isolated testing - job #15's
+  automatically-detected completion produced and saved one for real.
+- A dedicated camera, independent of the printer's own flaky single-
+  session connection - per the user, after a string of real
+  photo-capture failures (all since fixed - see Features above) that
+  were always the connection or a related bug, never the core capture
+  logic. Photo capture does now work end-to-end for real, but the
+  printer's one-session-at-a-time design (see "Persistent printer
+  connection") is a structural limit no amount of client-side code can
+  fully engineer around - a dedicated camera would sidestep it entirely.
+  Plan settled on, hardware not yet in hand: an ESP32-CAM
+  (WiFi, not PoE - doesn't touch the router's limited LAN port budget,
+  which the printer and the Pi already mostly use up), flashed with
+  open-source firmware serving a plain local HTTP snapshot - no cloud
+  possible at all, since there's no vendor service to even opt into.
+  Free 3D-printable cases with a standard 1/4"-20 tripod thread exist
+  already (e.g. Printables' "ESP32 CAM Case with Tripod Mount"), paired
+  with a small clamp mount (a compact super-clamp + mini ball head, not
+  a full articulating arm - the ESP32-CAM is featherweight) gripping an
+  edge of the printer itself, Velcro not required. Deliberately not
+  built yet - per the user, waiting until the actual hardware is in hand
+  to test against rather than writing capture code blind. Once built:
+  a generic "fetch a configured snapshot URL" capture path, swappable
+  per printer (setting up cleanly for the already-planned second
+  printer), with RTSP as a fallback for any future camera that only
+  streams rather than serving a plain snapshot.
+- **The persistent-connection fix is built** (see Features below) - the
+  investigation that found the underlying problem, and why the fix is
+  architectural rather than a retry/backoff tweak, is in `app/README.md`'s
+  "Persistent printer connection" section. Two things about it still
+  worth remembering as real limits, not bugs to chase further: it doesn't
+  make pairing permanent - an app restart or the printer being
+  power-cycled (this printer's normal day-to-day usage pattern) still
+  drops the connection and needs one more dial-press before the next
+  release, same as before, just not *between every single release*
+  within one continuous run any more; and the printer's HTTP pairing
   service has been observed to take roughly a minute to come up after its
-  network/JSON-RPC service already answers, causing pairing to fail if
-  attempted too early; and a saved pairing token has been observed to stop
-  working at least once (cause not confirmed - possibly related to
-  dismissing a printer error via its dial). Pairing should retry through
-  the former automatically and the app should detect and recover from the
-  latter without needing someone to notice and manually re-pair.
+  network/JSON-RPC service already answers, so pairing immediately after
+  power-on can still fail on timing alone. Once during the investigation,
+  a pairing request was also accepted server-side (got as far as "waiting
+  for the dial press") but nothing ever rendered on the printer's screen
+  to press - resolved on its own on a later attempt, cause not confirmed,
+  possibly a UI-state issue from repeated pairing attempts in quick
+  succession. Pairing should retry through the slow-HTTP-service case
+  automatically.
+- ~~Surface a clear "needs re-pairing" state on the admin dashboard,
+  with a way to start pairing from there~~ **Done** - see Features below
+  ("Printer status on the admin dashboard") and `app/README.md`'s
+  "Printer status and in-app pairing" section.
 - Bed adhesion tuning in the slicing profile - a test print completed
   without error but didn't stick to the bed (first-layer/Z-offset/brim
   settings need dialing in for the actual printer).
 - Support for printer models/brands beyond the MakerBot Replicator+.
+- An admin UI for managing printers - add/remove a printer and pair it,
+  all from within the app, rather than today's CLI-only, server-access-
+  required flow (`pair_printer.py`, one `data/printer_auth.json`/
+  `QUEUE3D_PRINTER_HOST` implicitly assuming a single printer). Real
+  prerequisite, not just a UI wrapper around what exists: the data model
+  and `jobs.release()`'s one-job-at-a-time rule are currently written
+  for exactly one printer - this needs an actual multi-printer design
+  (which printer a job goes to, per-printer queues or one shared queue
+  with printer selection, per-printer pairing state) before it's just a
+  form.
 
 **Accounts**
 - Rate-limiting or lockout on login attempts - PINs are short by design
   for low signup friction, which also makes them easier to guess; nothing
   currently slows down repeated attempts.
+- Let an admin reset a user's PIN, in case they forget it - today there's
+  no recovery path at all short of the user just signing up under a new
+  name (losing their submission history) or an admin deleting/recreating
+  the account outright.
+- ~~Capture account lifecycle actions (registration, disable, re-enable,
+  delete) in the activity log, not just job actions~~ **Done** - see
+  `app/README.md`'s "Account actions in the activity log" section.
 - ~~Let admins manage user accounts from the UI~~ **Done** - any admin can
   disable/re-enable or permanently delete a user, individually or all at
   once, from `/admin/users`. Disabling blocks login immediately, even from

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Printer info - queue3d{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <a href="/admin/users">Users</a>
+  <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/log">Activity log</a>
+  <a href="/admin/settings">Settings</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Printer info</h2>
+  <p class="muted">
+    Raw <code>get_system_information</code> reply from the printer -
+    MakerBot never documented this JSON-RPC method anywhere, so this is
+    here to see what it actually contains (particularly
+    <code>current_process</code> while a job is printing) rather than
+    guessing. Not wired into anything else yet.
+  </p>
+
+  {% if error %}
+    <p class="error">{{ error }}</p>
+  {% else %}
+    <pre style="white-space: pre-wrap; word-break: break-word; background: #8881; padding: 0.75rem; border-radius: 4px;">{{ info | tojson(indent=2) }}</pre>
+  {% endif %}
+{% endblock %}

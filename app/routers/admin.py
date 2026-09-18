@@ -13,18 +13,24 @@ from backup import get_last_successful_backup, is_stale
 from db import get_session
 from jobs import (
     JobActionError,
+    _admin_actor,
     active_jobs,
     all_events,
     approve,
+    corrected_duration_estimate_s,
     finished_jobs,
     job_events,
+    log_event,
     mark_finished,
+    printing_eta,
     reject,
     release,
     user_has_active_jobs,
 )
 from models import Admin, Job, Settings, User
+from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
 from templates_env import templates
+from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
 
 router = APIRouter(prefix="/admin")
 
@@ -64,13 +70,22 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
     rows = []
     for job in active_jobs(session):
         user = session.get(User, job.user_id)
-        rows.append({"job": job, "user_name": user.name if user else "?"})
+        rows.append(
+            {
+                "job": job,
+                "user_name": user.name if user else "?",
+                "eta": printing_eta(session, job),
+                "duration_estimate_s": corrected_duration_estimate_s(session, job),
+            }
+        )
     return {
         "admin": admin,
         "last_backup": last_backup,
         "backup_stale": is_stale(last_backup),
         "rows": rows,
         "action_error": action_error,
+        "printer_status": connection_status(),
+        "pairing": pairing_status(),
     }
 
 
@@ -82,6 +97,57 @@ def dashboard(
 ):
     return templates.TemplateResponse(
         request, "admin_dashboard.html", _dashboard_context(session, admin)
+    )
+
+
+@router.get("/printer-status")
+def printer_status_fragment(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """Just the printer-status banner, for the htmx polling in
+    templates/_printer_status.html to re-fetch while pairing is in
+    progress - see that template for why polling stops on its own once
+    it's done."""
+    return templates.TemplateResponse(
+        request,
+        "_printer_status.html",
+        {"printer_status": connection_status(), "pairing": pairing_status()},
+    )
+
+
+@router.post("/printer/pair")
+def printer_pair(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """Kicks off pairing in the background (see printer.start_pairing) -
+    a no-op if one's already running - then sends the admin straight back
+    to the dashboard, which shows the "waiting for the dial press" state
+    (and starts polling for it) from _dashboard_context above."""
+    start_pairing()
+    return RedirectResponse("/admin/dashboard", status_code=303)
+
+
+@router.get("/printer/info")
+def printer_info(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """Raw `get_system_information` reply from the printer - see
+    printer.system_information(). Exists to find out what this actually
+    contains (particularly `current_process` while a job is printing,
+    towards a real progress indicator - see README.md's Printer to-do
+    list) since MakerBot never documented this JSON-RPC method anywhere;
+    not wired into anything else yet."""
+    error = None
+    info = None
+    try:
+        info = system_information()
+    except PrinterError as e:
+        error = str(e)
+    return templates.TemplateResponse(
+        request, "admin_printer_info.html", {"admin": admin, "info": info, "error": error}
     )
 
 
@@ -197,6 +263,7 @@ def disable_user(
     user = _get_user_or_404(session, user_id)
     user.disabled = True
     session.add(user)
+    log_event(session, None, _admin_actor(admin), "user_disabled", detail=user.name)
     session.commit()
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -211,6 +278,7 @@ def enable_user(
     user = _get_user_or_404(session, user_id)
     user.disabled = False
     session.add(user)
+    log_event(session, None, _admin_actor(admin), "user_enabled", detail=user.name)
     session.commit()
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -226,6 +294,7 @@ def delete_user(
     if user_has_active_jobs(session, user.id):
         error = f"Can't delete {user.name} - they still have a job in the queue or printing. Resolve it first."
         return templates.TemplateResponse(request, "admin_users.html", _users_context(session, admin, error))
+    log_event(session, None, _admin_actor(admin), "user_deleted", detail=user.name)
     session.delete(user)
     session.commit()
     return RedirectResponse("/admin/users", status_code=303)
@@ -246,6 +315,7 @@ def delete_all_users(
         )
         return templates.TemplateResponse(request, "admin_users.html", _users_context(session, admin, error))
     for user in users:
+        log_event(session, None, _admin_actor(admin), "user_deleted", detail=user.name)
         session.delete(user)
     session.commit()
     return RedirectResponse("/admin/users", status_code=303)
@@ -271,15 +341,26 @@ def get_settings(session: Session) -> Settings:
     return settings
 
 
+def _admin_settings_context(session: Session, admin: Admin, error: str | None = None, saved: bool = False):
+    return {
+        "admin": admin,
+        "settings": get_settings(session),
+        "themes": THEMES,
+        "modes": MODES,
+        "selected_theme": admin.theme or DEFAULT_THEME,
+        "selected_mode": admin.theme_mode or DEFAULT_MODE,
+        "error": error,
+        "saved": saved,
+    }
+
+
 @router.get("/settings")
 def settings_page(
     request: Request,
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return templates.TemplateResponse(
-        request, "admin_settings.html", {"admin": admin, "settings": get_settings(session)}
-    )
+    return templates.TemplateResponse(request, "admin_settings.html", _admin_settings_context(session, admin))
 
 
 @router.post("/settings")
@@ -298,9 +379,35 @@ def update_settings(
         session.add(settings)
         session.commit()
     return templates.TemplateResponse(
-        request,
-        "admin_settings.html",
-        {"admin": admin, "settings": get_settings(session), "error": error, "saved": error is None},
+        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
+    )
+
+
+@router.post("/settings/theme")
+def update_admin_theme(
+    request: Request,
+    theme: str = Form(...),
+    mode: str = Form(...),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Separate from update_settings above on purpose - this is the
+    signed-in admin's own personal preference (models.Admin.theme/
+    theme_mode), not part of the shared, site-wide Settings row every
+    admin edits together, so it gets its own form/endpoint rather than
+    being bundled into the same submit."""
+    error = None
+    if not is_valid_theme(theme):
+        error = "Not a real theme choice."
+    elif not is_valid_mode(mode):
+        error = "Not a real mode choice."
+    else:
+        admin.theme = theme
+        admin.theme_mode = mode
+        session.add(admin)
+        session.commit()
+    return templates.TemplateResponse(
+        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
     )
 
 
@@ -366,8 +473,8 @@ def activity_log_page(
     session: Session = Depends(get_session),
 ):
     rows = [
-        {"event": event, "filename": filename}
-        for event, filename in all_events(session, limit=ACTIVITY_LOG_LIMIT)
+        {"event": event, "filename": filename, "photo_path": photo_path}
+        for event, filename, photo_path in all_events(session, limit=ACTIVITY_LOG_LIMIT)
     ]
     return templates.TemplateResponse(
         request,

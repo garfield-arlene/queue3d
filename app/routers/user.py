@@ -9,10 +9,21 @@ from auth import (
     verify_secret,
 )
 from db import get_session
-from jobs import JobActionError, jobs_for_user, log_event, queue_position, slice_and_update, start_reslice, submit_draft
+from jobs import (
+    JobActionError,
+    corrected_duration_estimate_s,
+    jobs_for_user,
+    log_event,
+    printing_eta,
+    queue_position,
+    slice_and_update,
+    start_reslice,
+    submit_draft,
+)
 from models import DRAFT_STATUSES, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, scratch_stl_path
 from templates_env import templates
+from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
 
 # OrcaSlicer's own support_style values, each confirmed (by directly
 # comparing sliced gcode output, not just guessed) to actually produce
@@ -65,6 +76,9 @@ def signup(
     session.commit()
     session.refresh(user)
 
+    log_event(session, None, f"user:{user.name}", "user_registered")
+    session.commit()
+
     request.session["user_id"] = user.id
     return RedirectResponse("/dashboard", status_code=303)
 
@@ -105,9 +119,60 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
+def _user_settings_context(user: User, error: str | None = None, saved: bool = False):
+    return {
+        "user": user,
+        "themes": THEMES,
+        "modes": MODES,
+        "selected_theme": user.theme or DEFAULT_THEME,
+        "selected_mode": user.theme_mode or DEFAULT_MODE,
+        "error": error,
+        "saved": saved,
+    }
+
+
+@router.get("/settings")
+def settings_page(
+    request: Request,
+    user: User = Depends(require_user),
+):
+    return templates.TemplateResponse(request, "user_settings.html", _user_settings_context(user))
+
+
+@router.post("/settings")
+def update_settings(
+    request: Request,
+    theme: str = Form(...),
+    mode: str = Form(...),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    error = None
+    if not is_valid_theme(theme):
+        error = "Not a real theme choice."
+    elif not is_valid_mode(mode):
+        error = "Not a real mode choice."
+    else:
+        user.theme = theme
+        user.theme_mode = mode
+        session.add(user)
+        session.commit()
+    return templates.TemplateResponse(
+        request, "user_settings.html", _user_settings_context(user, error, error is None)
+    )
+
+
 def _dashboard_context(session: Session, user: User, flash_error: str | None = None):
     jobs = jobs_for_user(session, user.id)
-    rows = [{"job": job, "position": queue_position(session, job)} for job in jobs]
+    rows = [
+        {
+            "job": job,
+            "position": queue_position(session, job),
+            "eta": printing_eta(session, job),
+            "duration_estimate_s": corrected_duration_estimate_s(session, job),
+        }
+        for job in jobs
+    ]
     return {
         "user": user,
         "rows": rows,

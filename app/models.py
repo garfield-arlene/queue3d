@@ -27,6 +27,18 @@ class User(SQLModel, table=True):
     # session, immediately (see auth.get_current_user) - without deleting
     # their account or job history. Reversible, unlike delete.
     disabled: bool = Field(default=False)
+    # A per-account UI preference (see themes.py), not a per-device one -
+    # per the user, this needs to follow them across logins/devices, which
+    # is exactly what a browser-only preference (localStorage) can't do.
+    # None means "no preference set" - templates_env.current_theme() falls
+    # back to themes.DEFAULT_THEME, not this column directly, so a theme
+    # ever getting removed from themes.THEMES can't strand an account on
+    # a dead value.
+    theme: str | None = Field(default=None)
+    # Light/dark - a separate axis from theme, not folded into it (see
+    # themes.py) - independently persisted the same way and for the same
+    # reason.
+    theme_mode: str | None = Field(default=None)
 
 
 class Admin(SQLModel, table=True):
@@ -34,6 +46,10 @@ class Admin(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     password_hash: str
     created_at: datetime = Field(default_factory=utcnow)
+    # Same per-account preferences as User.theme/theme_mode above - admins
+    # pick their own look independently of any user's.
+    theme: str | None = Field(default=None)
+    theme_mode: str | None = Field(default=None)
 
 
 class SchemaVersion(SQLModel, table=True):
@@ -143,14 +159,19 @@ class Settings(SQLModel, table=True):
 
 
 class JobEvent(SQLModel, table=True):
-    """One row per job-affecting action - the audit log. `Job` itself only
+    """One row per audited action - the activity log. `Job` itself only
     ever holds the *current* snapshot (`reviewed_at`/`reviewed_by_admin_id`/
     `admin_note` capture just the latest review, nothing earlier), which
     was the actual gap that prompted this: a rejection was recorded
     correctly but there was nowhere to go *see* that it had been, so it
     read as if nothing had happened. This is the full history instead -
     every submit, slice attempt, re-slice, queue-submit, approve, reject,
-    release, done/failed, and expiry, in order, for a given job.
+    release, done/failed, and expiry, in order, for a given job - plus,
+    per the user ("all actions should be captured"), account lifecycle
+    actions that aren't tied to any one job at all: a user registering,
+    and an admin disabling/re-enabling/deleting one. `job_id` is nullable
+    for exactly that reason (schema 2.5.0) - None for an account action,
+    with the affected user's name in `detail` instead of a job's filename.
 
     `actor` is a plain label (`"user:<name>"`, `"admin:<username>"`, or
     `"system"` for an automated action like draft expiry) rather than a
@@ -160,7 +181,7 @@ class JobEvent(SQLModel, table=True):
     displayed, never joined against."""
 
     id: int | None = Field(default=None, primary_key=True)
-    job_id: int = Field(foreign_key="job.id", index=True)
+    job_id: int | None = Field(default=None, foreign_key="job.id", index=True)
     at: datetime = Field(default_factory=utcnow)
     actor: str
     action: str  # short verb: "submitted", "sliced", "slice_failed", "reslice_started", "queued", "approved", "rejected", "released", "done", "failed", "expired"
@@ -203,3 +224,11 @@ class Job(SQLModel, table=True):
     admin_note: str | None = Field(default=None)
     released_at: datetime | None = Field(default=None)
     finished_at: datetime | None = Field(default=None)
+    # A photo of the build plate, taken via the printer's camera the
+    # moment an admin marks this job done or failed (see jobs.mark_finished)
+    # - regardless of outcome, so both the submitter and an admin have a
+    # visual record of what actually happened, not just a status word.
+    # None if capture failed (camera/printer unreachable, etc.) - a
+    # missing photo never blocks recording the print's own outcome, see
+    # that function's docstring.
+    photo_path: str | None = Field(default=None)

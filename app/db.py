@@ -50,6 +50,81 @@ def _migrate_to_2_1_0(conn):
         )
 
 
+def _migrate_to_2_4_0(conn):
+    """New Job.photo_path column - a photo of the build plate, captured
+    via the printer's camera when a job is marked done/failed (see
+    jobs.mark_finished, app/README.md's "Printer camera"). Purely
+    additive (a new nullable column, nothing renamed or backfilled), but
+    still needs a real ALTER TABLE - create_all() only creates tables
+    that don't exist yet, it never alters an existing one, same as every
+    other entry in this dict."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "photo_path" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN photo_path VARCHAR"))
+
+
+def _migrate_to_2_5_0(conn):
+    """JobEvent.job_id becomes nullable - the activity log now also
+    records account lifecycle actions (signup, disable, re-enable,
+    delete) that aren't tied to any one job (see that model's docstring).
+    SQLite can't relax a column's NOT NULL constraint with a plain ALTER
+    TABLE, so this rebuilds the table: a new one with the relaxed schema,
+    every existing row copied across unchanged (a job_id that was never
+    NULL before is trivially still valid once NULL is merely *allowed*),
+    the old one dropped, the new one renamed into its place."""
+    info = conn.execute(text("PRAGMA table_info(jobevent)")).fetchall()
+    job_id_col = next((c for c in info if c[1] == "job_id"), None)
+    if job_id_col is None or job_id_col[3] == 0:  # column gone, or already nullable
+        return
+    conn.execute(
+        text(
+            "CREATE TABLE jobevent_new ("
+            "id INTEGER NOT NULL, "
+            "job_id INTEGER, "
+            "at DATETIME NOT NULL, "
+            "actor VARCHAR NOT NULL, "
+            "action VARCHAR NOT NULL, "
+            "detail VARCHAR NOT NULL, "
+            "PRIMARY KEY (id), "
+            "FOREIGN KEY(job_id) REFERENCES job (id))"
+        )
+    )
+    conn.execute(
+        text("INSERT INTO jobevent_new (id, job_id, at, actor, action, detail) "
+             "SELECT id, job_id, at, actor, action, detail FROM jobevent")
+    )
+    conn.execute(text("DROP TABLE jobevent"))
+    conn.execute(text("ALTER TABLE jobevent_new RENAME TO jobevent"))
+    conn.execute(text("CREATE INDEX ix_jobevent_job_id ON jobevent (job_id)"))
+
+
+def _migrate_to_3_1_0(conn):
+    """New User.theme/Admin.theme columns - a per-account UI theme
+    preference (see themes.py, templates_env.current_theme()) that
+    follows an account across logins/devices, per the user ("I want a
+    settings page for the users to select their own theme that will
+    persist across logins"). Purely additive (both nullable, `None`
+    meaning "no preference set, use the default"), but still needs a real
+    ALTER TABLE on each table - same as every other purely-additive entry
+    here."""
+    for table in ("user", "admin"):
+        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if "theme" not in cols:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN theme VARCHAR"))
+
+
+def _migrate_to_3_2_0(conn):
+    """New User.theme_mode/Admin.theme_mode columns - light/dark, a
+    separate axis from theme (see themes.py), added the same way and for
+    the same reason as theme itself in 3.1.0 just above. Purely additive
+    (both nullable, `None` meaning "no preference set, use the
+    default")."""
+    for table in ("user", "admin"):
+        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if "theme_mode" not in cols:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN theme_mode VARCHAR"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -62,6 +137,10 @@ def _migrate_to_2_1_0(conn):
 # to _migrate_to_2_1_0, and add it here keyed by that same new version.
 MIGRATIONS = {
     "2.1.0": _migrate_to_2_1_0,
+    "2.4.0": _migrate_to_2_4_0,
+    "2.5.0": _migrate_to_2_5_0,
+    "3.1.0": _migrate_to_3_1_0,
+    "3.2.0": _migrate_to_3_2_0,
 }
 
 

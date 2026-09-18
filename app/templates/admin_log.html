@@ -11,7 +11,8 @@
   <h2>Activity log</h2>
   <p class="muted">
     Every submit, slice, re-slice, queue-submit, approve, reject, release,
-    and outcome, across every job, most recent first.
+    and outcome, across every job - plus account actions (registration,
+    disable, re-enable, delete) - most recent first.
     {% if rows|length >= limit %}Showing the most recent {{ limit }} - filters for narrowing this down are on the to-do list.{% endif %}
   </p>
 
@@ -19,12 +20,18 @@
     <p class="muted">No activity recorded yet.</p>
   {% else %}
     <table>
-      <tr><th>When</th><th>File</th><th>Actor</th><th>Action</th><th>Detail</th></tr>
+      <tr><th>When</th><th>File</th><th>Actor</th><th>Action</th><th>Detail</th><th></th></tr>
       {% for row in rows %}
         {% set event = row.event %}
         <tr>
           <td class="muted">{{ event.at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
-          <td><a href="/admin/jobs/{{ event.job_id }}/log">{{ row.filename }}</a></td>
+          <td>
+            {% if event.job_id %}
+              <a href="/admin/jobs/{{ event.job_id }}/log">{{ row.filename }}</a>
+            {% else %}
+              <span class="muted">(account)</span>
+            {% endif %}
+          </td>
           <td>{{ event.actor }}</td>
           <td>{{ event.action }}</td>
           <td class="muted">
@@ -35,6 +42,11 @@
               </details>
             {% else %}
               {{ event.detail }}
+            {% endif %}
+          </td>
+          <td>
+            {% if event.action in ('done', 'failed') and row.photo_path %}
+              <a href="/jobs/{{ event.job_id }}/photo.jpg">Photo</a>
             {% endif %}
           </td>
         </tr>

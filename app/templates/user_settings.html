@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Settings - queue3d{% endblock %}
+{% block nav %}
+  <a href="/dashboard">&laquo; My submissions</a>
+  <form method="post" action="/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Settings</h2>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  {% if saved %}<p class="muted">Saved.</p>{% endif %}
+
+  <form method="post" action="/settings">
+    <label>Theme<br>
+      <select name="theme">
+        {% for value, label in themes.items() %}
+          <option value="{{ value }}" {% if selected_theme == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Mode<br>
+      <select name="mode">
+        {% for value, label in modes.items() %}
+          <option value="{{ value }}" {% if selected_mode == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="muted">Follows your account across logins, not just this browser.</p>
+    <button type="submit">Save</button>
+  </form>
+{% endblock %}

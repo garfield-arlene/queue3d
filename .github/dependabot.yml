@@ -1,0 +1,14 @@
+# Complements the pip-audit job in .github/workflows/security.yml -
+# that catches a known vulnerability on every push; this proactively opens
+# a PR to bump a dependency (including the GitHub Actions themselves, e.g.
+# actions/checkout) on a schedule, before a scan even has to catch one.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/app"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

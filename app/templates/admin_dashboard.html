@@ -19,6 +19,8 @@
     {% endif %}
   </p>
 
+  {% include "_printer_status.html" %}
+
   {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
 
   <h3>Queue</h3>
@@ -36,7 +38,17 @@
           <td><a href="/admin/jobs/{{ job.id }}/log">Log</a></td>
           <td>{{ job.status.value }}</td>
           <td class="muted">
-            {% if job.duration_estimate_s %}{{ (job.duration_estimate_s / 60) | round | int }} min{% endif %}
+            {% if row.eta %}
+              {% include "_print_progress.html" %}
+              {# .isoformat() alone has no offset - these datetimes are
+                 always UTC but come back tzinfo-naive from SQLite (same
+                 as event.at elsewhere in this app), so the "Z" here is
+                 required, not decorative: without it, the browser's
+                 Date() would parse this as *local* time instead. #}
+              <span data-countdown-eta="{{ row.eta.isoformat() }}Z"></span>
+            {% elif row.duration_estimate_s %}
+              {{ (row.duration_estimate_s / 60) | round | int }} min
+            {% endif %}
           </td>
           <td>
             {% if job.status.value == 'queued' %}

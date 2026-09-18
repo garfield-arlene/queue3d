@@ -14,6 +14,7 @@ from sqlmodel import Session
 
 from auth import AuthRedirect
 from db import get_session
+from jobs import print_progress
 from models import Job
 from templates_env import templates
 
@@ -51,3 +52,29 @@ def supports_file(job_id: int, request: Request, session: Session = Depends(get_
     if job.supports_path and Path(job.supports_path).exists():
         return FileResponse(job.supports_path, media_type="application/json")
     return JSONResponse([])
+
+
+@router.get("/{job_id}/progress")
+def progress_fragment(job_id: int, request: Request, session: Session = Depends(get_session)):
+    """Just the live-progress span, for the htmx polling in
+    _print_progress.html to re-fetch while this job is still printing -
+    see that template for why polling stops on its own once it isn't.
+    Same owner-or-admin access as everything else here - a read-only,
+    best-effort printer query (see jobs.print_progress), never something
+    that can fail the request outright."""
+    job = _job_with_access(job_id, request, session)
+    return templates.TemplateResponse(
+        request, "_print_progress.html", {"job": job, "progress": print_progress(job)}
+    )
+
+
+@router.get("/{job_id}/photo.jpg")
+def photo_file(job_id: int, request: Request, session: Session = Depends(get_session)):
+    """The build-plate photo captured when this job was marked done/failed
+    (see jobs.mark_finished) - same access rule as everything else here,
+    the job's own owner or any admin. 404 if none was ever captured
+    (camera unreachable at the time, or the job hasn't finished yet)."""
+    job = _job_with_access(job_id, request, session)
+    if not job.photo_path or not Path(job.photo_path).exists():
+        raise HTTPException(status_code=404, detail="No photo for this job")
+    return FileResponse(job.photo_path, media_type="image/jpeg")

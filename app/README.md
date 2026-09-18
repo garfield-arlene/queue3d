@@ -371,19 +371,644 @@ instead, rather than claiming a print started that may not have. Verified
 against the real printer: releasing an approved job actually made it heat
 up and start printing.
 
-Pairing is a one-time step (`pair_printer.py`, needs someone physically at
-the printer's dial) that saves a long-lived access token to
-`data/printer_auth.json`. If that token stops working (observed once
-during testing after dismissing a printer error via its dial - unclear if
-that specifically invalidates it or if it was coincidental), re-run
-`pair_printer.py`; `QUEUE3D_PRINTER_HOST`/`QUEUE3D_PRINTER_PORT` env vars
-override the printer's address if it's not at the default.
+Pairing (`pair_printer.py`, needs someone physically at the printer's
+dial) saves an access token to `data/printer_auth.json`; `QUEUE3D_PRINTER_HOST`/
+`QUEUE3D_PRINTER_PORT` env vars override the printer's address if it's
+not at the default. **Not actually a one-time-ever step, despite how
+that reads** - see "Persistent printer connection" right below for why,
+and what that does and doesn't fix.
 
 Not yet built: live print progress/status polling (the printer's own
 `get_system_information` exists in the protocol but isn't wired up - see
 `printer.py`'s `_dispatch` for where unsolicited status notifications
 would need to be consumed) and detecting completion automatically -
 `mark_done`/`mark_failed` are still a manual admin action for now.
+
+**A countdown from the original estimate, in place of that missing live
+status - explicitly not a substitute for it.** Per the user, after
+noticing the printer's own on-device timer runs inaccurate: while a job
+is `printing`, both dashboards show a live "~N min remaining" (or "~N
+min over the estimate" once it runs past zero, rather than freezing at
+0:00 or hiding - the estimate is already known to run off in practice,
+and pretending otherwise would be worse than just saying so) instead of
+the flat total estimate shown for a queued/approved job.
+`jobs.printing_eta()` computes `released_at + duration_estimate_s` once,
+server-side; `static/countdown.js` re-renders it from the client's own
+clock every 15s, so it keeps ticking between page loads and htmx polls
+without a matching request each time. Deliberately reads the DOM fresh
+on every tick rather than caching element references - some of these
+spans live inside `_jobs_table.html`, which htmx replaces wholesale on
+its own polling cycle, and a `<script>` tag doesn't re-run just because
+it got swapped back in.
+
+**A real bug caught before shipping, worth remembering:** `released_at`
+comes back from SQLite as a tzinfo-*naive* datetime, even though it's
+always written as UTC (`datetime.now(timezone.utc)`) - same gotcha
+`event.at.strftime(... 'UTC')` already works around elsewhere in this
+app. A plain `{{ eta.isoformat() }}` in the template would silently omit
+the UTC offset, and a browser's `new Date(...)` parses an offset-less
+ISO string as *local* time - every countdown would have been off by
+however many hours from UTC, on every viewer's own clock, in a way that
+would never show up testing from a system already set to UTC. Caught
+only by checking what the rendered attribute value actually was and
+reasoning about how the browser would parse it - a passing render test
+alone (attribute present, page loads) would not have caught this, and it
+was not caught by simply trying it against the real printer once.
+
+### Live print progress
+
+**Why this exists:** the user noticed the printer's own on-device timer
+runs inaccurate, and asked whether percent-complete polling might be
+better - it is. `get_system_information` (JSON-RPC, requires
+authentication - `printer.system_information()`) returns a
+`current_process` object while something's printing, undocumented by
+MakerBot anywhere and never fully decoded in the earlier protocol
+investigation (only confirmed to exist). Investigated live, deliberately
+carefully rather than assumed, since a wrong read here would be *worse*
+than no read at all - a confidently-wrong percentage is worse than an
+honest "estimate only":
+
+- **Idle**: `current_process` is `null`.
+- **Heating** (`step: "final_heating"`): `progress` climbs 0→100+ as the
+  extruder approaches its target temperature - confirmed by comparing it
+  to `(current_temperature - room_temp) / (target - room_temp)`, which
+  landed within a couple points of the reported value. This is heating
+  progress, not print progress.
+- **Printing** (`step: "printing"`): `progress` resets to a low number
+  and climbs again from there - **confirmed to track genuine print
+  state, not just elapsed time**, by comparing two live samples against
+  simple `elapsed_time / time_estimation` math: the gap between the
+  reported `progress` and that naive ratio *grew* over time (roughly 1
+  point of gap at one sample, 5 points at a later one) rather than
+  staying constant, which it would if `progress` were just re-deriving
+  the same time-based estimate. Also independently confirmed to match
+  what the printer's own on-device screen showed at the same moment,
+  live, side by side. `time_remaining`, by contrast, *did* match simple
+  `time_estimation - elapsed_time` subtraction almost exactly at both
+  samples - useful as a live number, but not shown to be smarter than
+  what `printing_eta()` below already computes from the original
+  estimate alone.
+
+Given that, `jobs.print_progress(job)` only ever returns a percentage
+for `step == "printing"` - every other step (including ones never
+observed, since this firmware isn't documented) shows just its own name
+instead of guessing what its `progress` scale means. Matched to the
+right job by comparing `current_process.filename` against
+`job.makerbot_path` (current_process carries no job id of its own) -
+without that check, a stale reply or a reply belonging to a completely
+different job could get attributed to the wrong row.
+
+**Read-only and best-effort throughout, same as the camera capture
+above:** `print_progress()` returns `None` - "no live reading right
+now," not "0% done" - on any failure (printer unreachable, no active
+process, filename mismatch), and the UI simply falls back to
+`printing_eta()`'s estimate-based countdown when that happens, exactly
+as if this feature didn't exist. A failed live read never blocks
+anything else.
+
+`GET /jobs/{id}/progress` (`routers/jobs.py`, same owner-or-admin access
+as everything else there) serves the live fragment
+(`_print_progress.html`) that both dashboards embed; `hx-trigger="load,
+every 10s"` fires an immediate first fetch (so it isn't blank on page
+load) and then keeps polling only for as long as the job is actually
+`printing` - the same self-terminating pattern `_jobs_table.html`
+already uses for slicing progress.
+
+**`/admin/printer/info`** (`admin_printer_info.html`) shows the raw
+`get_system_information` reply as-is - built for this investigation, and
+kept as a real diagnostic page rather than thrown away, since MakerBot
+never documented this method and a future investigation (see the
+`complete`/`cancelled`/`error` fields noted in README.md's Printer to-do
+list, towards detecting a print's outcome automatically) will need to
+look at the raw shape again.
+
+**Correcting the fallback estimate itself, from real history.** Even
+with live progress now available, `printing_eta()`'s estimate-based
+countdown still matters as the fallback for whenever a live reading
+isn't - and the slicer's own `duration_estimate_s` was observed running
+well short in real use (the first real completed print took 43.5% longer
+than estimated). `_duration_correction_factor()` computes the median
+ratio of actual (`finished_at - released_at`) to estimated duration
+across past `done` jobs, and `printing_eta()` scales the current job's
+estimate by it. Deliberately narrow about what counts as a valid data
+point:
+
+- Only `done` jobs, never `failed` ones - a failed print's duration says
+  nothing about how long a full print takes; it could have been cut
+  short at any point; averaging that in would corrupt the correction
+  rather than improve it. (Confirmed necessary directly: 2 of the first
+  3 finished jobs in real use were cancellations for bed adhesion,
+  finishing in well under their estimated time - including those would
+  have corrected the estimate *downward*, exactly backwards.)
+- Median, not mean, so one unusually slow print doesn't dominate every
+  future estimate as more data accumulates.
+- `max(1.0, ...)` - only ever corrects upward, since underestimating is
+  the specific, observed problem. No evidence yet that a future estimate
+  running long needs correcting the other way, and assuming so on no
+  evidence could make things worse, not better.
+
+**A known, accepted imprecision, not silently glossed over:**
+`finished_at` is when an admin clicked "Mark done," not confirmed to be
+the exact moment the printer itself actually finished - any delay
+between the two inflates every ratio computed from it. Precisely fixing
+this would mean capturing the printer's own `current_process.elapsed_time`
+(see `print_progress` above) at the moment of that click instead - not
+built here, since that reading has often been unavailable exactly when
+needed during this same investigation (the connection dying being the
+common case that motivated the printer status banner/pairing button in
+the first place). Still meaningfully better than trusting the raw,
+uncorrected slicer estimate outright - see README.md's Printer to-do
+list for capturing the printer's own elapsed time as a future
+refinement.
+
+**Applied everywhere a duration is shown, not just the live printing
+countdown.** Caught live: a job showed a 20-minute estimate at queue
+time, then a *different*, corrected number once released - the same
+job's own estimate silently depending on which page happened to look at
+it, when it should just be the one best-available number everywhere,
+consistently. `corrected_duration_estimate_s(session, job)` is the one
+place any displayed duration goes through now (queued/approved/sliced
+jobs' "est. N min," not just `printing_eta()`), computed once per row in
+`_dashboard_context()` (both routers) and passed down as
+`row.duration_estimate_s` rather than templates reaching for
+`job.duration_estimate_s` directly.
+
+### Automatic completion detection
+
+**Why this exists:** per the user, after this exact investigation:
+every real photo-capture failure that day traced back to the same root
+cause - the connection dying in the gap between a print *actually*
+finishing and an admin *noticing* and clicking "Mark done." Closing that
+gap is the whole point, not just saving a click - `jobs.mark_finished()`
+now runs the moment the printer itself reports the print is over, using
+whichever connection was already live from the most recent progress
+poll, not one that's had time to go idle or get killed by a cancel while
+nobody was looking.
+
+**A background thread, not tied to any request or open browser tab.**
+Relying on the live-progress UI polling (`GET /jobs/{id}/progress`)
+alone would only catch completion while someone happened to have the
+dashboard open - `jobs.start_auto_finish_poller()` (started once, from
+`main.py`'s startup handler) runs independently on a daemon thread,
+checking every 15 seconds via `jobs.check_and_finish_active_print()`:
+is anything `printing`? If not, skip the printer entirely - no network
+call, no cost, most of the time. If so, read `system_information()`
+(the same call `print_progress()` already uses) and act only on an
+*explicit* positive signal from `current_process` - `complete`,
+`cancelled`, or a truthy `error` - never on absence or ambiguity. If
+`current_process` has already gone missing or stopped matching the
+job's file by the time this polls (the printer cleared it before an
+in-between check caught the transition, or the connection simply isn't
+reachable that round), this does nothing and leaves the job `printing`,
+same as if the feature didn't exist - it never guesses at an outcome it
+can't actually confirm.
+
+**The manual Mark done/Mark failed buttons are completely unchanged** -
+this is a safety net layered on top of them, not a replacement. A
+detected outcome is logged with actor `"system"` (same convention
+`cleanup_drafts.py` already uses for automated draft expiry), with a
+`detail` prefix distinguishing *why* ("detected automatically - print
+complete" / "... cancelled at the printer" / "... printer reported an
+error: ..."), so the activity log always shows whether a given
+done/failed was a human's click or the poller's own.
+`mark_finished()`'s `admin` parameter is `Admin | None` accordingly -
+`None` for this automatic path, a real `Admin` for the existing manual
+one - both go through the exact same status transition, photo capture,
+and archiving logic either way.
+
+**Verified in isolated testing before deploying, not assumed correct:**
+a mocked `system_information()` reply confirmed all three outcomes
+separately - a job left `printing` untouched while genuinely still
+printing, correctly marked `done` on `complete: true`, and correctly
+marked `failed` (with the right reason in its detail) on `cancelled:
+true` - including a filename-matched job's photo-capture attempt still
+running (and failing gracefully, exactly as the manual path already
+does) rather than being skipped for the automatic path.
+
+### Persistent printer connection
+
+**Why this exists - a real, live-confirmed hardware limitation, not
+theoretical:** a pairing token is only good for exactly one authenticated
+session. Confirmed three separate ways against the real printer, each
+needing its own fresh dial-press pairing to test cleanly: a second,
+*simultaneous* connection with the same token is rejected while the first
+stays open; a new connection after cleanly closing the first also fails;
+and - to rule out our own client sending something the printer could
+reasonably react badly to, like an abrupt TCP reset - it still failed
+after a deliberately graceful close (half-closed write side, drained to a
+confirmed zero unread bytes, only then closed). That third result is what
+makes this conclusive: it isn't a disconnect-handling bug in
+`_MakerBotClient`, it's how the printer's tokens actually behave. Checked
+against MakerBot's own firmware release notes too (their support site is
+JS-rendered - a plain fetch gets nothing, needed a real browser to see
+it): `2.6.2` build `734`, what this printer runs, is the *last* firmware
+MakerBot ever shipped for the Replicator+ line, so this isn't a bug an
+update would fix even if one existed. Best guess, not confirmed: a
+deliberate one-token-per-session design, probably matching how MakerBot's
+own client software already behaves.
+
+The original design here connected fresh and re-authenticated for every
+single `send_print_job()` call - which the finding above means would only
+ever have worked for the *first* release after any given pairing, and
+failed authentication on every one after that. `_PersistentConnection`
+(`printer.py`) is the fix: one `_MakerBotClient`, authenticated once, held
+open and reused across every call for as long as it stays healthy, rather
+than reconnecting per action. `send_print_job()`'s own public signature
+didn't change at all - `jobs.release()` needed zero changes - the whole
+fix is internal to `printer.py`.
+
+- Before reusing the held connection, a cheap `handshake` call acts as a
+  health check; if that fails (printer rebooted, network dropped, the
+  connection just isn't alive any more), the dead client is dropped and a
+  fresh one is connected+authenticated in its place - which will itself
+  fail if the *previous* session already spent the saved token, correctly
+  surfacing as "this needs re-pairing," not a confusing raw exception.
+- `self._lock` (an `RLock`) is held for the full duration of one logical
+  operation (health-check-then-do-the-real-thing), not just around
+  individual `request()` calls - coarser than true request/response
+  pipelining would need, but it guarantees two things that actually
+  matter here: a file upload's `put_raw` announcement and its raw bytes
+  always land back-to-back with nothing else interleaved on the wire, and
+  a health check from one caller can never race a real upload from
+  another.
+- `close_connection()` (called from `main.py`'s shutdown handler) closes
+  the held connection cleanly on app shutdown/restart - not required for
+  correctness (the OS reclaims the socket on process exit regardless),
+  just tidy; the next call reconnects lazily either way.
+
+**What this does and doesn't actually fix - stated plainly, since it's
+easy to oversell:** it fixes releasing *multiple* jobs without needing to
+re-pair between each one, for as long as the app keeps running and the
+connection stays healthy - previously broken outright. It does **not**
+make pairing a true one-time-forever step: restarting the app, or the
+printer being power-cycled (its normal day-to-day usage pattern here),
+still drops the connection and needs one more dial-press before the next
+release. That's an inherent consequence of how the printer's tokens work,
+not something client-side code can engineer around.
+
+Verified live against the real printer, not assumed from the fix's
+design alone: three separate calls through `_PersistentConnection`
+returned the exact same connection object and stayed authenticated
+throughout, with no reconnect needed between them; separately, a second
+process was started fresh specifically to exercise the failure path, and
+correctly got the clear "needs re-pairing" `PrinterError` rather than a
+confusing raw exception, since that process's connection attempt was
+inherently a second session against an already-spent token.
+
+### Printer camera
+
+**Why this exists:** per the user, both the submitting user and an admin
+should be able to see what actually happened to a print, not just a status
+word - and an admin specifically needs to be able to visually confirm
+which physical print on the bed belongs to which submitter's claim.
+`jobs.mark_finished()` now captures a photo of the build plate,
+automatically, the moment a job is marked done or failed - regardless of
+which outcome - and links it from the job's own log, the global activity
+log, and the submitting user's dashboard row.
+
+**The protocol (reverse-engineered, undocumented by MakerBot):** there's
+no true one-shot "take a photo" method on this firmware -
+`request_camera_frame`/`get_available_cameras`/`get_camera_frame` are all
+`method not found`, confirmed live. What actually works is
+`request_camera_stream`: the printer immediately starts pushing frames
+continuously on the same JSON-RPC socket, each one a 16-byte big-endian
+binary header (`frame_size, width, height`, and a 4th field whose meaning
+isn't identified) immediately followed by exactly `frame_size` bytes of a
+real JPEG image - 640x480, roughly 4fps, roughly 33-34KB/frame observed.
+`end_camera_stream` stops it. `capture_one_frame()` (`printer.py`) drives
+this: request the stream, hand the *first* frame back to the caller,
+request the stream to stop.
+
+**Two bugs this surfaced, both found by testing against the real
+printer, not in review:**
+
+1. **Binary frame data isn't JSON, and can't share a naive parser with
+   the frames that are.** The wire format is otherwise "concatenated JSON
+   objects, framed by brace-counting" (see `_extract_message`) - fine for
+   ordinary request/response traffic, but raw JPEG bytes routinely contain
+   byte values equal to `{`/`}`, and brace-counting straight into one
+   crashes with a `UnicodeDecodeError` trying to `json.loads` binary
+   nonsense. The first fix attempt paused the background reader thread,
+   had the calling thread take over the raw socket directly, then
+   restarted the reader thread afterward - genuinely broken, caught by
+   live testing (a `mark_done` call hung indefinitely) before it ever
+   shipped: a thread blocked in `recv()` doesn't notice a "please stop"
+   flag until data actually arrives, so the two threads ended up racing to
+   read the same socket. The real fix keeps all of it on the *one* reader
+   thread that's already reading the socket (`_read_loop`/
+   `_consume_camera_frame`), handing a captured frame to the waiting
+   caller through a `queue.Queue` instead.
+
+   Getting frame boundaries right within that one thread took a second
+   round, also only caught live: the original assumption was that every
+   single frame is preceded by its own `camera_frame` JSON-RPC
+   notification (matching how the very first frame looked), so
+   `_read_loop` would go back to normal JSON parsing after each frame,
+   expecting another notification next. That assumption was wrong -
+   subsequent frames in the stream aren't necessarily preceded by a fresh
+   notification - and guessing wrong meant trying to brace-count straight
+   into the next frame's raw binary header, the exact same crash as above.
+   The fix doesn't guess: while a capture is active (or was, recently -
+   see `_camera_mode_until`, a *sliding* deadline that keeps extending as
+   long as frames keep arriving, since the printer keeps pushing for an
+   unpredictable stretch after `end_camera_stream`), `_read_loop` peeks at
+   the next byte before attempting to parse anything as JSON at all. A raw
+   frame's binary header can never start with `{` - that would make its
+   declared `frame_size` a nonsense value in the billions - so this cheap,
+   structural check tells raw frame data apart from a real JSON message
+   (a notification, or the `end_camera_stream` reply) without needing to
+   assume which one is coming next.
+
+2. **Killing a process that holds the connection with `SIGKILL` (`kill
+   -9`) instead of letting it shut down cleanly can wedge the printer's
+   session state**, observed directly while iterating on the fix above:
+   after a hard-killed test process (whose reader thread had already
+   crashed from bug #1, leaving its socket open but unread), a *brand
+   new* pairing's very first `authenticate` call was rejected outright
+   with `AuthenticationException` - not the already-understood
+   already-spent-token case (see "Persistent printer connection" above),
+   since this was a token that had never been used. This is why
+   `close_connection()` (`main.py`'s shutdown handler) matters in
+   practice, not just tidiness: a normal shutdown (`SIGTERM`) reaches it
+   and closes the socket cleanly; forcibly killing the process does not,
+   and the printer's firmware appears not to reliably notice the
+   connection is gone until something like a power cycle. Not something
+   client-side code can engineer around further - just a real operational
+   note (and the reason a couple of test cycles during this feature's own
+   development needed the printer power-cycled to recover).
+
+3. **A successfully-captured frame was being discarded because of a
+   failure in the cleanup step *after* it, not the capture itself** -
+   caught live, from the very first real end-to-end success of automatic
+   completion detection (see that section above): the job's log showed
+   `"photo capture failed: No response to 'end_camera_stream' within
+   10s"` - that specific error only happens *after* a real frame is
+   already sitting in hand, while waiting for the printer to acknowledge
+   "okay, I'll stop pushing frames now." The old code required that
+   acknowledgment to succeed before returning the frame at all, so a
+   slow/missing reply (plausibly the printer being genuinely busy
+   settling right at print completion - the exact moment this now gets
+   called from) threw the photo away for a reason that had nothing to do
+   with whether the photo itself was good. Fixed: `end_camera_stream`'s
+   own failure is now caught and ignored - safe to do, since the sliding
+   grace-period window (`_camera_mode_until`) already keeps the reader
+   thread correctly consuming/discarding any further trailing frames
+   regardless of whether this specific acknowledgment ever arrives.
+   Verified with a focused unit test (mocking `request()` to simulate
+   exactly this sequence) before deploying, not just reasoned about.
+
+**Failure handling:** `capture_photo()` (`printer.py`) raises
+`PrinterError` on any failure - camera unreachable, printer powered off,
+a capture that time out - and `mark_finished()` treats that as
+"no photo this time," never as a reason to block recording the job's
+actual outcome. The reason for a missing photo is still recorded in that
+job's log entry either way (`"photo captured"` or `"photo capture failed:
+..."`), so a missing photo reads as "camera unavailable at that moment,"
+not silence.
+
+`Job.photo_path` (nullable, added in schema `2.4.0`) points at
+`archive/{job_id}.photo.jpg`, saved directly there rather than through
+`scratch/`/`queue/` first - unlike the stl/makerbot/supports files, a
+job's photo only ever exists once the job has already reached a terminal
+state. Served via `/jobs/{id}/photo.jpg` (`routers/jobs.py`), same
+access rule as the model/supports files: the job's own owner, or any
+admin.
+
+### Printer status and in-app pairing
+
+**Why this exists:** a real incident during this feature's own
+development, not a hypothetical - repeated test pairings against the
+same physical printer left the real production app's long-held
+connection unable to reconnect, and the only way to find out was a
+release failing with a raw "couldn't establish a connection" error and
+no indication of what to do about it. The admin dashboard now shows the
+printer's connection state plainly (`_printer_status.html`,
+`printer.connection_status()`), and a "Pair printer" button
+(`POST /admin/printer/pair`) starts pairing right from the dashboard,
+instead of needing shell access to run `pair_printer.py` by hand.
+
+**Deliberately never checks the actual connection to answer "what's the
+status":** `connection_status()` only reports the outcome of the most
+recent *real* attempt (a release or a photo capture) - it never itself
+opens a connection or tries to authenticate just to answer a status
+question. This isn't a shortcut, it's a hard requirement given how the
+printer's tokens work (see "Persistent printer connection" above): a
+token is good for exactly one authenticated session, so a speculative
+"let's just check if this token still works" call, if it happened to
+succeed, would spend that session before the real work ever gets to use
+it - confirmed the hard way in this same debugging session, when a
+verification check run purely to confirm a fresh pairing worked ended up
+being the thing that used up its one shot, requiring yet another
+dial-press to actually fix anything. One of four states, tracked on
+`_PersistentConnection`:
+
+- `connected` - currently holding a live, authenticated connection.
+- `needs_pairing` - never paired, or the last real attempt's failure
+  looked like an authentication problem (the printer's own
+  `AuthenticationException`).
+- `unreachable` - the last real attempt's failure looked like a network
+  problem instead (timeout, connection refused).
+- `unknown` - paired at some point, but nothing has actually been
+  attempted against the printer yet this run, so whether that token
+  still works genuinely isn't known without trying it for real. Shown
+  as a neutral "not yet verified this session," not an error.
+
+**The "Pair printer" button is shown for all four states, not just
+`needs_pairing` - a deliberate change from this feature's first version,
+made after a real incident exposed why that gating was wrong.** This
+status is in-memory only (see `_PersistentConnection.__init__`) and
+therefore can't survive an app restart - a real one happened between a
+photo-capture failure that correctly recorded `needs_pairing` and the
+next page load, silently resetting the banner back to `unknown` with no
+button, even though the connection genuinely still needed re-pairing.
+Rather than try to make the status survive restarts (persisting it to
+disk was considered and explicitly rejected - the deployment pattern
+this is actually built for, per the user, is being turned on once each
+weekday morning, i.e. restarting is the normal case, not the exception,
+so a disk-persisted "last known status" would just as often be stale
+*information* pretending to be current), the fix is structural: the
+status text stays best-effort and is never load-bearing for whether the
+fix is available. Clicking "Pair printer" is safe regardless of the
+current status - `start_pairing()` only ever requests a new token over
+HTTP and saves it; it never touches or re-authenticates an
+already-`connected` client, so it can't break a connection that's
+actually still working unless that new pairing is actually completed
+(dial pressed). The only real side effect of clicking it unnecessarily:
+if a job is actively printing, it pops a pairing prompt on the printer's
+own screen - a momentary surprise for whoever's standing there, not
+something that touches the physical print itself (same control-plane/
+physical-printing separation already established throughout this
+section).
+
+**Pairing runs in a background thread, not inline in the request:**
+`pair()` blocks for up to two minutes waiting on a real dial-press -
+tying up an HTTP request handler for that long would be its own problem.
+`printer.start_pairing()` starts it on a daemon thread and returns
+immediately; the dashboard redirects back to itself, sees pairing is now
+in progress, and polls `GET /admin/printer-status` every 2 seconds via
+htmx until it finishes - the exact same self-terminating pattern
+`_jobs_table.html` already uses for slicing progress (see "Upload and
+slicing progress" above): the re-rendered fragment simply stops carrying
+`hx-trigger` once there's nothing left to wait for, so there's no
+separate "stop polling" signal to manage. A failed attempt's error stays
+visible on the dashboard (via `pairing_status()`) until either a retry
+succeeds or someone tries again - it doesn't just silently disappear.
+
+**A real, live report caught a confusing message right after a genuine
+success:** pairing via the button, then pressing the dial, then seeing
+the dashboard say "connection not yet verified this session" reads as
+"that didn't work" - even though it did (confirmed: the saved token's
+file had just been rewritten, and a real request right afterward
+succeeded). The wording was accurate but not distinguishing "never tried
+anything" from "just succeeded, deliberately not verified yet" (see
+above for why a fresh token is never speculatively checked) - both
+looked identical. `pairing_status()`'s `just_succeeded` flag (set the
+moment `start_pairing()`'s background thread actually saves a new token,
+cleared the moment a new attempt starts) lets the dashboard say "Pairing
+succeeded - ready for the next release or capture" specifically for that
+window, instead of the generic "not yet verified" message that reads as
+a possible failure.
+
+### Account actions in the activity log
+
+**Why this exists:** per the user, "all actions should be captured in
+the activity log" - registration, disable, re-enable, and delete, not
+just job actions. `JobEvent.job_id` (schema `2.5.0`) is now nullable for
+exactly this: `None` for an account lifecycle action that isn't tied to
+any one job, with the affected user's name in `detail` instead of a
+job's filename. `all_events()`'s join with `Job` became an outer join
+accordingly - an inner join would silently drop every account row from
+the global log, since there's no job on the other side of it to match.
+`admin_log.html` shows `(account)` in the File column for these rows
+instead of a job link. Logged from `routers/user.py`'s `signup` (actor is
+the new user themselves, action `user_registered`) and
+`routers/admin.py`'s disable/enable/delete endpoints (actor is the
+admin, action `user_disabled`/`user_enabled`/`user_deleted`) - "delete
+all" logs one row per user actually deleted, not one combined entry, so
+each is still individually visible in the log.
+
+**A different kind of migration than the ones before it:** every prior
+`MIGRATIONS` entry was a plain `ALTER TABLE ... ADD COLUMN` - additive,
+one statement. Relaxing an existing column's `NOT NULL` constraint isn't
+something SQLite supports via `ALTER TABLE` at all, so `_migrate_to_2_5_0`
+uses SQLite's standard workaround instead: create a new table with the
+relaxed schema, copy every row across unchanged, drop the old table,
+rename the new one into its place, recreate the index. Tested the same
+way as every migration here - a fresh database (this shape comes
+straight from `create_all()`, no migration involved), and a real copy of
+the user's own production database (confirmed: version recorded
+correctly, every existing row preserved with its original `job_id`
+intact, not touched by the "constraint" that's now just permissive
+rather than required).
+
+**Caught only after the fact, worth remembering:** `models.py`,
+`db.py`, and every router are the *actual* files the user's live dev
+server runs, not a copy - `uvicorn --reload` watches them directly, so
+saving this migration mid-development applied it to the user's real
+production database automatically, the moment the file changed, well
+before it had been reviewed or tested in isolation. It happened to be
+safe here (a purely additive relaxation can't corrupt data that already
+satisfied the stricter constraint), but it's a real gap in how this
+project's schema changes get validated: there's no separation between
+"editing the code" and "it's live on the real database" when the dev
+server has `--reload` watching the actual repo. Test a *risky* migration
+(a rename, a backfill, anything that touches existing data - see
+"Database migrations" above for why `2.1.0` needed exactly that
+distinction) against an isolated copy of the database first, not the
+live one, regardless of how confident the migration looks on paper.
+
+### Themes
+
+**Why this exists:** per the user, wanting to add more themes later
+(color changes, wallpaper, light/dark) - starting with converting the
+existing look into a real, named "Default" theme rather than just
+"whatever the CSS happens to say," so a future theme is a genuine
+alternative to switch to, not a rewrite of the only option that exists.
+
+**Per-account, not per-browser, and not site-wide.** Explicitly decided
+by the user over the two real alternatives: a per-browser preference
+(`localStorage`, no schema change needed) wouldn't follow someone to a
+different device, and the user wants it to "persist across logins";
+a single site-wide choice (one admin-set theme for everyone, like the
+shared printer this app is built around) was the other option, rejected
+in favor of letting each person - user or admin - pick their own.
+`User.theme`/`Admin.theme` (both nullable - `None` means "no preference
+set, use the default") are the real schema change this needs (`3.1.0`).
+
+**`base.html`'s existing styles, refactored into CSS custom properties
+under `:root` - "Default" + "Light" - with zero visible change.** A
+future theme/mode combination adds a `[data-theme="<id>"]` and/or
+`[data-theme="<id>"][data-mode="dark"]` block overriding just the tokens
+it wants different, not a full copy of every rule in the file.
+`themes.py` is the one list of selectable theme ids and mode ids ->
+display names, shared by both settings pages and used to validate a
+submitted choice, so a bad/stale value can never get saved and silently
+fail to match anything in the CSS.
+
+**Light/dark is its own axis, separate from theme, not folded into
+it** - `User.theme_mode`/`Admin.theme_mode` (schema `3.2.0`, added right
+after `theme` itself), so picking a theme and a mode are two independent
+choices; every theme is expected to define both a light and a dark
+palette, not just Default. This actually *superseded* an earlier design
+choice in this same section: the first version of this feature had
+`--bg`/`--text` default to the CSS Color 4 system keywords `Canvas`/
+`CanvasText` specifically so the page kept following the OS's own light/
+dark preference automatically. Once an explicit, saved, per-account mode
+toggle existed, that became the wrong behavior, not just an unrelated
+old decision to leave alone - a viewer who explicitly picks "Light"
+should get light even if their OS is set to dark, and `Canvas`/
+`CanvasText` can't do that; they just track the OS regardless of what
+was chosen. Replaced with real hardcoded colors for both modes, and
+`color-scheme` set explicitly to `light` or `dark` to match (not "light
+dark") so native form controls (checkboxes, scrollbars) follow the
+chosen mode too, not the OS.
+
+**`templates_env.current_theme(request)`** is a Jinja *global* function,
+not something threaded through every route's own context - `base.html`
+(which every page extends) needs a viewer's theme on every single
+render, and `request` is already available in every template regardless
+of what its own route passed in (Starlette's Jinja2Templates adds it
+automatically), so this only needs a global function reading
+`request.session`, not a bigger context-passing change touching every
+router. **Caught in testing before this shipped:** a settings page's own
+context happened to also use the name `current_theme` for the *selected
+theme string* being displayed in its dropdown - since Jinja resolves a
+page's own context over a same-named global, `base.html`'s
+`current_theme(request)` call ended up trying to call that *string*,
+crashing every settings page with `TypeError: 'str' object is not
+callable`. Fixed by renaming the per-page variable to `selected_theme` -
+worth remembering as a real trap: a Jinja global and a template context
+key sharing a name silently shadows the global, and only breaks whatever
+tries to call it as a function.
+
+**Everything self-hosted, no exceptions - this app runs with zero
+internet access (see "Deployment: zero internet access, by design"
+above)**: any future theme's fonts, wallpaper images, or anything else
+must ship as local static files, never a CDN or external URL.
+
+**A real bug from a legitimate, deliberate usage pattern: two roles,
+two tabs, one browser.** The user keeps a user session and an admin
+session open side by side in the same browser on purpose - and nothing
+about logging in as one role has ever cleared the other's session key
+(not new to this feature, just never mattered until something actually
+read both `admin_id` and `user_id` from the same session). The first
+version of `current_theme()`/`current_mode()` unconditionally preferred
+`admin_id` whenever it was present, so in a dual-session browser, the
+*admin's* theme silently applied to the user's own pages too - not a
+data bug (every account's stored preference was always correct going in
+and coming out), a resolution bug in which account's preference got
+looked at for a given page. Deliberately not fixed by clearing the other
+role's session key on login - that would have broken the exact dual-tab
+workflow that surfaced this - fixed instead in
+`templates_env._signed_in_account()` by checking which role's page a
+given request is actually for (`/admin/...` vs. everything else, the
+same split `require_admin`/`require_user` already use), so each tab
+resolves to its own role's preference regardless of what the other tab
+in the same browser is doing. Verified with the exact reported scenario
+in isolated testing: one shared cookie holding both a user session (mode
+`dark`) and an admin session (mode `light`) at once, confirming
+`/dashboard` and `/admin/dashboard` each independently resolved to the
+right one.
 
 ### Browsing finished jobs, and the audit log
 
@@ -561,10 +1186,52 @@ they agreed with each other. The only check that catches a systematic
 transform bug is comparing against an independent third source (here: the
 original STL's own dimensions) directly.
 
+## Security checks (CI)
+
+`.github/workflows/security.yml` runs on every push and pull request -
+automatic, per the README's To do list, rather than relying on remembering
+to check by hand. Three independent jobs, each answering a different
+question:
+
+- **`dependency-audit`** (`pip-audit -r app/requirements.txt`) - does
+  anything the app depends on have a known CVE. Run locally first before
+  writing the gate: clean, no known vulnerabilities, at the time this was
+  added.
+- **`static-analysis`** (`bandit -r app slicing test-print -ll`) - does the
+  code itself do anything bandit flags as risky. `-ll` fails the build on
+  medium/high severity only; low-severity informational findings (mostly
+  "you imported subprocess" - true, and necessary, since this app shells
+  out to OrcaSlicer/mbotmake by design) still print in the log but don't
+  block anything.
+- **`secret-scan`** (`gitleaks`, full history via `fetch-depth: 0`) - did a
+  credential/token/key almost get committed. This repo also has GitHub's
+  own native secret scanning enabled already (a free default for a public
+  repo) - gitleaks here makes the same check an explicit, visible part of
+  the pipeline itself, not just a separate alert somewhere else.
+
+**Known, reviewed findings are suppressed inline, not globally, and only
+the specific ones actually reviewed:** two `urllib.request.urlopen()`
+calls (`app/printer.py`, `test-print/pairing.py`) trip bandit's B310
+check, which generically flags urlopen as an SSRF-style risk - a
+reasonable default, but a false positive here specifically, since `host`
+in both cases is always the printer's own LAN address from local
+config/env vars (`QUEUE3D_PRINTER_HOST`), never web request input. Marked
+`# nosec B310` right at each call, with a comment explaining why - not a
+blanket exemption for B310 everywhere, so a *new* urlopen call elsewhere
+in the codebase still fails the build until it's reviewed the same way.
+
+`.github/dependabot.yml` complements the audit job: `pip-audit` catches a
+*known* vulnerability on every push; Dependabot proactively opens a PR to
+bump a dependency (the pip ones in `app/requirements.txt`, and the GitHub
+Actions themselves, e.g. `actions/checkout`) on a weekly schedule, before
+a scan even has to catch one.
+
 ## Layout
 
 - `main.py` - app setup: session middleware, static files, the
-  `AuthRedirect` -> real HTTP redirect exception handler, router mounting.
+  `AuthRedirect` -> real HTTP redirect exception handler, router mounting,
+  and closing the printer's persistent connection on shutdown (see
+  "Persistent printer connection" above).
 - `templates_env.py` - the one shared `Jinja2Templates` instance every
   router renders through (rather than each router making its own, as
   before), so a Jinja global set once - `APP_VERSION`, read from the
@@ -601,9 +1268,11 @@ original STL's own dimensions) directly.
   age threshold; see "Drafts and expiry" above. Same run-from-cron
   pattern as `backup.py` below.
 - `printer.py` - the printer's network protocol client (vendored from
-  `../test-print/`, see its docstring for why not imported) and
-  `send_print_job()`, the real hardware call behind `jobs.release()`.
-- `pair_printer.py` - CLI for the one-time printer pairing step.
+  `../test-print/`, see its docstring for why not imported),
+  `_PersistentConnection` (see "Persistent printer connection" above),
+  and `send_print_job()`, the real hardware call behind `jobs.release()`.
+- `pair_printer.py` - CLI for the printer pairing step - see "Persistent
+  printer connection" above for why this isn't actually one-time-ever.
 - `auth.py` - hashing (bcrypt, called directly - see note below) and the
   `require_user`/`require_admin` FastAPI dependencies that redirect to
   the right login page when not authenticated.

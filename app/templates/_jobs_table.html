@@ -28,12 +28,18 @@
               <progress></progress> slicing&hellip;
             {% elif job.status.value == 'sliced' %}
               sliced - not yet submitted to the queue
-              {% if job.duration_estimate_s %} - est. {{ (job.duration_estimate_s / 60) | round | int }} min print{% endif %}
+              {% if row.duration_estimate_s %} - est. {{ (row.duration_estimate_s / 60) | round | int }} min print{% endif %}
             {% elif job.status.value == 'queued' or job.status.value == 'approved' %}
               position {{ row.position }} in queue
-              {% if job.duration_estimate_s %} - est. {{ (job.duration_estimate_s / 60) | round | int }} min print{% endif %}
+              {% if row.duration_estimate_s %} - est. {{ (row.duration_estimate_s / 60) | round | int }} min print{% endif %}
             {% elif job.status.value == 'printing' %}
               printing now
+              {% include "_print_progress.html" %}
+              {% if row.eta %}
+                {# See admin_dashboard.html's identical span for why the
+                   trailing "Z" here is required, not decorative. #}
+                - <span data-countdown-eta="{{ row.eta.isoformat() }}Z"></span>
+              {% endif %}
             {% elif job.status.value == 'rejected' %}
               {{ job.admin_note or "no note given" }}
             {% elif job.status.value == 'slice_failed' %}
@@ -52,6 +58,9 @@
               <a href="/jobs/{{ job.id }}/edit">Edit</a>
             {% elif job.stl_path %}
               <a href="/jobs/{{ job.id }}/preview">View 3D</a>
+            {% endif %}
+            {% if job.photo_path %}
+              <a href="/jobs/{{ job.id }}/photo.jpg">Photo</a>
             {% endif %}
           </td>
           <td>

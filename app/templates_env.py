@@ -9,8 +9,78 @@ instance, one place to set it.
 """
 
 from fastapi.templating import Jinja2Templates
+from sqlmodel import Session
 
+from db import engine
+from models import Admin, User
+from themes import DEFAULT_MODE, DEFAULT_THEME
 from version import APP_VERSION
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["APP_VERSION"] = APP_VERSION
+
+
+def _signed_in_account(request):
+    """The signed-in User or Admin behind this request, or None for a
+    logged-out page - shared by current_theme()/current_mode() below,
+    both of which need it on every single render (base.html, which every
+    page extends, needs both to set <html data-theme=... data-mode=...>).
+
+    A real bug, caught live: nothing about logging in as one role clears
+    the other's session key - a deliberate choice, not an oversight, per
+    the user, who keeps a user tab and an admin tab open side by side in
+    the same browser on purpose. That means `admin_id` and `user_id` can
+    both legitimately be present in the same session at once, and picking
+    whichever one happened to be checked first (this used to always
+    prefer `admin_id`) meant the *admin's* theme silently applied to
+    every user's page too, in that browser - not a data bug (every
+    account's own stored preference was always correct), a resolution
+    bug in which account's preference this looked at. Fixed by asking
+    which role's page this specific request is actually for, via the URL
+    path (`/admin/...` vs. everything else) - matching exactly how
+    require_admin/require_user are already scoped per-router - so each
+    tab in a dual-session browser correctly resolves to its own role
+    regardless of what the other tab is doing.
+
+    A short-lived Session of its own, not the request's - by the time
+    base.html renders, most routes' own Session is already doing (or has
+    done) other things, and this is cheap enough (one indexed primary-key
+    lookup) that sharing one properly isn't worth the plumbing."""
+    admin_id = request.session.get("admin_id")
+    user_id = request.session.get("user_id")
+    is_admin_path = request.url.path.startswith("/admin")
+    with Session(engine) as session:
+        if is_admin_path and admin_id is not None:
+            return session.get(Admin, admin_id)
+        if not is_admin_path and user_id is not None:
+            return session.get(User, user_id)
+        # A shared, non-/admin page (e.g. /jobs/{id}/preview, reachable
+        # by either role) or a role/path mismatch - fall back to
+        # whichever id actually exists rather than assume neither does.
+        if admin_id is not None:
+            return session.get(Admin, admin_id)
+        if user_id is not None:
+            return session.get(User, user_id)
+    return None
+
+
+def current_theme(request) -> str:
+    """The signed-in viewer's own theme choice (see themes.py,
+    models.User.theme/Admin.theme), or themes.DEFAULT_THEME for a
+    logged-out page or an account that's never set one. Registered as a
+    Jinja global rather than something every route has to thread through
+    its own context - see _signed_in_account() above for why."""
+    account = _signed_in_account(request)
+    return account.theme if account and account.theme else DEFAULT_THEME
+
+
+def current_mode(request) -> str:
+    """Same as current_theme() above, but for the separate light/dark
+    axis (models.User.theme_mode/Admin.theme_mode) - per the user, mode
+    is independent of which theme is selected, not folded into it."""
+    account = _signed_in_account(request)
+    return account.theme_mode if account and account.theme_mode else DEFAULT_MODE
+
+
+templates.env.globals["current_theme"] = current_theme
+templates.env.globals["current_mode"] = current_mode

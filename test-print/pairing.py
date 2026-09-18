@@ -21,7 +21,11 @@ def _auth_get(host, **params):
     qs = urllib.parse.urlencode(params)
     url = f"http://{host}/auth?{qs}"
     try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
+        # host is always the printer's own LAN address, supplied by
+        # whoever runs this one-time CLI pairing step (pair_printer.py) -
+        # never web request input - so this isn't the SSRF-style risk
+        # bandit's urlopen check generically flags.
+        with urllib.request.urlopen(url, timeout=10) as resp:  # nosec B310
             return json.load(resp)
     except urllib.error.URLError as e:
         raise ConnectionError(f"Couldn't reach {url}: {e}") from e
