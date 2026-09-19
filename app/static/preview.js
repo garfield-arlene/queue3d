@@ -232,7 +232,24 @@ function renderGeometry(geometry) {
     const centroid = surfaceCentroidXY(geometry);
     geometry.translate(-centroid.x, -centroid.y, -box.min.z);
 
-    const overBuildVolume = size.x > BED_WIDTH_MM || size.y > BED_DEPTH_MM || size.z > BED_HEIGHT_MM;
+    // Whether it actually fits has to be checked against this final,
+    // already-centered placement - not the raw pre-translate size
+    // compared symmetrically against the bed. Centroid centering can be
+    // wildly asymmetric for a lopsided model (a real fighter-jet model
+    // hit this directly: one side sits ~127mm from the centroid, the
+    // other only ~68mm) - the *total* span can still be under the bed's
+    // own dimension while one side alone hangs off the edge. A naive
+    // "does the total span fit" check (what this used to do) can't catch
+    // that; recomputing the bounding box post-translate and checking
+    // each side against the bed's actual half-extent can.
+    geometry.computeBoundingBox();
+    const placedBox = geometry.boundingBox;
+    const halfWidth = BED_WIDTH_MM / 2;
+    const halfDepth = BED_DEPTH_MM / 2;
+    const overBuildVolume =
+        placedBox.min.x < -halfWidth || placedBox.max.x > halfWidth ||
+        placedBox.min.y < -halfDepth || placedBox.max.y > halfDepth ||
+        placedBox.max.z > BED_HEIGHT_MM;
 
     const material = new THREE.MeshPhongMaterial({
         color: overBuildVolume ? 0xcc4433 : 0x3a9ad9,
@@ -260,8 +277,11 @@ function renderGeometry(geometry) {
 
     if (infoEl) {
         const dims = `${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)} mm`;
+        // "doesn't fit," not "too large" - an asymmetric model can be
+        // small enough overall but still hang off one edge once centered
+        // on its actual surface centroid (see the comment above).
         infoEl.textContent = overBuildVolume
-            ? `${dims} - too large for the build plate (${BED_WIDTH_MM} x ${BED_DEPTH_MM} x ${BED_HEIGHT_MM} mm)`
+            ? `${dims} - doesn't fit the build plate (${BED_WIDTH_MM} x ${BED_DEPTH_MM} x ${BED_HEIGHT_MM} mm)`
             : dims;
         infoEl.classList.toggle("error", overBuildVolume);
     }
@@ -416,13 +436,30 @@ export function disableGizmo() {
 
 /**
  * The largest scale factor (capped at 1 - this only ever shrinks, never
- * grows a model that already fits) that would bring the model's
- * bounding box within the build plate on all three axes, *at the given
- * rotation* - rotating changes the footprint, so a model already
- * reoriented (by hand, or via "snap to surface") needs auto-fit
- * computed against that orientation's actual bounding box, not the
- * as-uploaded one. Returns 1 if nothing's loaded, or if it already
- * fits.
+ * grows a model that already fits) that would bring the model within
+ * the build plate on all three axes once actually placed the same way
+ * renderGeometry() places it, *at the given rotation* - rotating
+ * changes the footprint, so a model already reoriented (by hand, or via
+ * "snap to surface") needs auto-fit computed against that orientation's
+ * actual geometry, not the as-uploaded one. Returns 1 if nothing's
+ * loaded, or if it already fits.
+ *
+ * X/Y are NOT simply "does the bounding box span fit the bed" - the
+ * model gets centered on its area-weighted surface centroid at
+ * render/slice time (see renderGeometry() and
+ * slicing/stl_to_3mf.center_vertices()), which for a lopsided model can
+ * sit well off the bounding-box middle. A real fighter-jet model
+ * demonstrated exactly this failure: shrunk to fit its own total X/Y
+ * span, it still hung ~29mm off one edge of the bed once centered on its
+ * actual centroid, because that centroid put ~127mm of the model on one
+ * side and only ~68mm on the other - a span-based fit check has no way
+ * to see that asymmetry. The real per-axis constraint is the *larger*
+ * of the two centroid-relative half-extents (not half the total span),
+ * checked against each axis's own bed half-width - which is exactly
+ * what this computes. This reduces to the old, simpler span-based
+ * formula automatically for any roughly-symmetric model (where the
+ * centroid already sits at the bounding-box middle), so nothing changes
+ * for the common case - only the asymmetric one this was blind to.
  */
 export function autoFitScale(rotateX = 0, rotateY = 0, rotateZ = 0) {
     if (!rawGeometry) return 1;
@@ -431,10 +468,22 @@ export function autoFitScale(rotateX = 0, rotateY = 0, rotateZ = 0) {
     if (rotateY) geometry.rotateY(THREE.MathUtils.degToRad(rotateY));
     if (rotateZ) geometry.rotateZ(THREE.MathUtils.degToRad(rotateZ));
     geometry.computeBoundingBox();
+    const box = geometry.boundingBox;
     const size = new THREE.Vector3();
-    geometry.boundingBox.getSize(size);
+    box.getSize(size);
     if (![size.x, size.y, size.z].every(Number.isFinite)) return 1;
-    return Math.min(1, BED_WIDTH_MM / size.x, BED_DEPTH_MM / size.y, BED_HEIGHT_MM / size.z);
+
+    const centroid = surfaceCentroidXY(geometry);
+    const halfExtentX = Math.max(Math.abs(box.min.x - centroid.x), Math.abs(box.max.x - centroid.x));
+    const halfExtentY = Math.max(Math.abs(box.min.y - centroid.y), Math.abs(box.max.y - centroid.y));
+    if (![halfExtentX, halfExtentY].every(Number.isFinite)) return 1;
+
+    return Math.min(
+        1,
+        (BED_WIDTH_MM / 2) / halfExtentX,
+        (BED_DEPTH_MM / 2) / halfExtentY,
+        BED_HEIGHT_MM / size.z
+    );
 }
 
 /**

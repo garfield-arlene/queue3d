@@ -24,12 +24,29 @@
     <p><progress></progress> slicing&hellip;</p>
   {% elif job.status.value == 'slice_failed' %}
     <p class="error">Couldn't slice this file. Adjust settings and re-slice below, or re-export and re-upload from the dashboard.</p>
+    <p class="muted">
+      Many slicing failures come from a model's own shape or orientation,
+      not its size - this already automatically tried rotating it a
+      handful of likely ways (quarter/eighth turns, and standing it on
+      each of its other faces) before giving up, so if that didn't help,
+      a manual angle outside that set, or a support-style change, is more
+      likely to than trying the same rotations again by hand.
+    </p>
     {% if job.slice_error %}
       <details class="tech-detail">
         <summary>Show technical details</summary>
         <pre>{{ job.slice_error }}</pre>
       </details>
     {% endif %}
+  {% elif job.status.value == 'sliced' and job.slice_error %}
+    {# Not actually an error - slice_and_update() repurposes this same
+       field for a one-time note when the requested orientation failed
+       but an automatic rotation attempt fixed it, so the rotation
+       fields below showing something other than what was asked for
+       isn't a silent surprise. Cleared (back to None) the next time
+       this job slices successfully at whatever orientation is actually
+       requested at that point. #}
+    <p class="muted">{{ job.slice_error }}</p>
   {% endif %}
 
   <p class="muted">

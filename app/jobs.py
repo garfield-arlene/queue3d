@@ -530,6 +530,83 @@ def release(session: Session, job: Job, admin: Admin) -> Job:
     return job
 
 
+# A bounded, "what a person would reasonably try by hand" set of rotations
+# to attempt automatically after a slice fails at whatever orientation was
+# already requested - not exhaustive, and not a fine-grained search. Per
+# the user, after two separate real models (a Flexi_Seal gasket, an F-35
+# fighter jet model) were BOTH fixed by nothing more than rotating - one
+# needing 45 degrees about Z, the other 45 or 60 - with no smarter
+# centering/scaling logic able to fix either: quarter/eighth turns about Z
+# (where both real fixes observed so far actually landed) plus laying the
+# model on each of its other four faces via a 90-degree turn about X or Y.
+# Each entry costs one full OrcaSlicer+mbotmake run (real minutes for a
+# large/complex model) - kept to 11 candidates deliberately, not an
+# exhaustive multi-axis grid, which would multiply that cost combinatorially
+# for a search with no reason to believe it would find anything a simpler
+# sweep wouldn't.
+AUTO_ROTATE_CANDIDATES = [
+    (0.0, 0.0, 45.0), (0.0, 0.0, 90.0), (0.0, 0.0, 135.0), (0.0, 0.0, 180.0),
+    (0.0, 0.0, 225.0), (0.0, 0.0, 270.0), (0.0, 0.0, 315.0),
+    (90.0, 0.0, 0.0), (-90.0, 0.0, 0.0), (0.0, 90.0, 0.0), (0.0, -90.0, 0.0),
+]
+
+
+def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, support_style, scratch_supports, scale_factor, rotate_x, rotate_y, rotate_z):
+    """Tries the requested orientation first (whatever the job actually has
+    set - respecting an explicit user choice, not second-guessing it), then
+    - only if that fails - sweeps AUTO_ROTATE_CANDIDATES above, stopping at
+    the first success. Returns (success, detail, used_rotate_x, used_y,
+    used_z, auto_rotated) - auto_rotated is True only when a candidate other
+    than the originally-requested rotation is what actually worked, so the
+    caller can record what really got sliced and note that it wasn't what
+    was asked for.
+
+    Deliberately does NOT try to detect "is this the kind of failure
+    rotation could plausibly fix" from the error text first - per the
+    user, broad and simple ("attempt rotation... until all reasonable
+    rotations have been tried") rather than narrowly gated to one known
+    failure signature. A failure rotation genuinely can't fix (a corrupt
+    file, say) just burns through the same candidates and reports the
+    original failure back - wasted time, but not wrong, and no worse than
+    a user manually trying the same thing by hand."""
+    success, detail = run_slice(
+        stl_path,
+        scratch_makerbot,
+        enable_supports=enable_supports,
+        support_style=support_style,
+        supports_json_path=scratch_supports if enable_supports else None,
+        scale_factor=scale_factor,
+        rotate_x=rotate_x,
+        rotate_y=rotate_y,
+        rotate_z=rotate_z,
+    )
+    if success:
+        return success, detail, rotate_x, rotate_y, rotate_z, False
+
+    original_detail = detail
+    for rx, ry, rz in AUTO_ROTATE_CANDIDATES:
+        if (rx, ry, rz) == (rotate_x, rotate_y, rotate_z):
+            continue  # already tried above as the requested orientation
+        success, detail = run_slice(
+            stl_path,
+            scratch_makerbot,
+            enable_supports=enable_supports,
+            support_style=support_style,
+            supports_json_path=scratch_supports if enable_supports else None,
+            scale_factor=scale_factor,
+            rotate_x=rx,
+            rotate_y=ry,
+            rotate_z=rz,
+        )
+        if success:
+            return success, detail, rx, ry, rz, True
+
+    # Every candidate failed - report the ORIGINAL requested orientation's
+    # own failure back, not whichever candidate happened to run last; it's
+    # the one the user actually asked for and the most relevant to show.
+    return False, original_detail, rotate_x, rotate_y, rotate_z, False
+
+
 def slice_and_update(
     job_id: int,
     stl_path: Path,
@@ -561,6 +638,15 @@ def slice_and_update(
     'submitted' forever with no way for the user to tell it isn't still
     working - a background task's exceptions don't propagate anywhere a
     user would ever see them.
+
+    If slicing fails at the requested orientation, automatically sweeps
+    AUTO_ROTATE_CANDIDATES above before giving up - per the user, after
+    real models were repeatedly fixed by nothing more than rotating. If a
+    candidate other than the one requested is what actually worked,
+    job.rotate_x/y/z are updated to reflect what was *actually* sliced
+    (not silently left showing the orientation that failed), and a short
+    note is recorded so this isn't a silent surprise - see job_edit.html's
+    own handling of a 'sliced' job with a note still set.
     """
     with Session(engine) as session:
         job = session.get(Job, job_id)
@@ -569,19 +655,20 @@ def slice_and_update(
 
         _scratch_stl, scratch_makerbot, scratch_supports = scratch_paths(job.id)
         try:
-            success, detail = run_slice(
+            success, detail, used_rotate_x, used_rotate_y, used_rotate_z, auto_rotated = _slice_with_rotation_retry(
                 stl_path,
                 scratch_makerbot,
-                enable_supports=enable_supports,
-                support_style=support_style,
-                supports_json_path=scratch_supports if enable_supports else None,
-                scale_factor=scale_factor,
-                rotate_x=rotate_x,
-                rotate_y=rotate_y,
-                rotate_z=rotate_z,
+                enable_supports,
+                support_style,
+                scratch_supports,
+                scale_factor,
+                rotate_x,
+                rotate_y,
+                rotate_z,
             )
         except Exception as e:
-            success, detail = False, f"Unexpected error while slicing: {e}"
+            success, detail, auto_rotated = False, f"Unexpected error while slicing: {e}", False
+            used_rotate_x, used_rotate_y, used_rotate_z = rotate_x, rotate_y, rotate_z
 
         actor = _user_actor(session, job.user_id)
         if success:
@@ -591,9 +678,21 @@ def slice_and_update(
                 job.supports_path = str(scratch_supports)
             else:
                 job.supports_path = None  # clear a stale one from a previous re-slice attempt
-            job.slice_error = None  # clear a stale one from a previous failed attempt
             job.status = JobStatus.sliced
-            log_event(session, job.id, actor, "sliced")
+            if auto_rotated:
+                job.rotate_x, job.rotate_y, job.rotate_z = used_rotate_x, used_rotate_y, used_rotate_z
+                job.slice_error = (
+                    f"Note: the requested orientation (x={rotate_x:g}, y={rotate_y:g}, z={rotate_z:g}) "
+                    f"failed to slice, so this was automatically rotated to "
+                    f"x={used_rotate_x:g}, y={used_rotate_y:g}, z={used_rotate_z:g} to make it work."
+                )
+                log_event(
+                    session, job.id, actor, "sliced",
+                    detail=f"auto-rotated after the requested orientation failed (now x={used_rotate_x:g}, y={used_rotate_y:g}, z={used_rotate_z:g})",
+                )
+            else:
+                job.slice_error = None  # clear a stale one from a previous failed attempt
+                log_event(session, job.id, actor, "sliced")
         else:
             job.status = JobStatus.slice_failed
             job.slice_error = detail[-4000:]  # cap - slicer output can be long

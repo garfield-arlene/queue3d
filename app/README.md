@@ -2321,6 +2321,139 @@ max="1000"` on scale) are untouched, so out-of-range values are still
 caught the same way they always were, just no longer also silently
 blocking any in-range value with more than zero decimal places.
 
+### Auto-fit's blind spot: asymmetric models, and automatic rotation retry
+
+**Real report, using "Auto-resize to fit build plate" on an actual F-35
+fighter jet STL model, followed by a genuine slicing error:** OrcaSlicer
+refused to slice the auto-fit result at all. Investigated the real
+error directly rather than guessed at it - OrcaSlicer's own terse CLI
+output ("run found error, return -50, exit...") gives almost nothing to
+go on, but re-running it with `--debug 4 --logfile` produces a much more
+detailed internal log, which named the actual reason plainly: `"Plate 1:
+... Nothing to be sliced, Either the print is empty or no object is
+fully inside the print volume before apply."`
+
+**Root cause, confirmed by direct computation against the real mesh:**
+`autoFitScale()` and the "too large" warning both measured the model's
+raw bounding-box span against the bed dimensions, implicitly assuming
+the model would end up centered by that same bounding box once placed.
+It doesn't - `renderGeometry()` (and `stl_to_3mf.center_vertices()` on
+the server side) center on the area-weighted surface centroid instead
+(see "Rotate and snap to surface" above for why that centering exists
+at all), which for a strongly asymmetric shape can sit nowhere near the
+bounding-box middle. Computed directly for the real jet mesh: raw Y
+span was 2000.8mm, needing a ~9.75% shrink to fit the bed's 195mm depth
+by span alone - but the actual surface centroid sat at Y=297.9, while
+the bounding box's own middle would have been roughly Y=-1.4 - a ~299mm
+difference. At the auto-fit-computed 9.74% scale, the *span* fit
+(194.9mm, just under 195mm) but the *centered* placement didn't:
+Y ranged from -126.6mm to +68.3mm relative to the bed's own -97.5/+97.5
+half-depth - one side alone extended ~29mm past the edge, even though
+the total footprint was small enough to fit if it had been centered
+some other way.
+
+**Fixed by measuring the real constraint - not "does the span fit," but
+"does each side, measured from the centroid, fit its own half of the
+bed":** `autoFitScale()` now computes `halfExtentX/Y` as the larger of
+`|min - centroid|` and `|max - centroid|` per axis, and divides the
+bed's own half-width/half-depth by that instead of the old
+`bedDimension / span`. This is a strict generalization, not a special
+case bolted on: for any roughly-symmetric model (where the centroid
+already sits at the bounding-box middle), `halfExtentX` reduces to
+exactly `size.x / 2`, reproducing the old formula's result bit-for-bit
+- only a genuinely asymmetric model gets a different (correct) answer.
+`renderGeometry()`'s "does this fit" check (which drives the red/blue
+model color and the info-text warning) got the equivalent fix: instead
+of comparing the raw pre-centering span to the bed dimension, it now
+recomputes the bounding box *after* centering and checks each side
+against the bed's actual half-extent directly - the same shape of fix,
+applied to the check that runs on every render rather than only on an
+auto-fit click.
+
+Verified against the real file, not just the arithmetic: the corrected
+formula computes 7.50% for this model (not the old, wrong 9.74%), and
+re-centering the actual mesh at that scale through the real Python
+pipeline confirmed all three axes now genuinely fit (Y lands exactly on
+the boundary, -97.5, as expected for the axis that's the binding
+constraint). Re-ran the real OrcaSlicer CLI at the corrected scale and
+it no longer refuses to slice - confirmed via a real headless-browser
+test too: auto-fit on the actual model now reports 7.5% and clears the
+"doesn't fit" warning, with zero console errors.
+
+**A second, separate, already-known failure surfaced right underneath
+once the fit itself was fixed:** at the corrected scale, OrcaSlicer
+proceeded but `mbotmake`'s own bed-centering safety check
+(`assert -0.15 < yrel < 0.15` - see "A real stuck-slicing incident" and
+the Flexi_Seal investigation elsewhere in this file) still rejected it,
+with `yrel = -0.2995` - the same failure class as those two earlier
+investigations, on a third, independent real model. Swept a handful of
+Z rotations against the real file to check whether the same fix would
+apply again: 45° and 60° both produced a genuine `.makerbot`; 15° and
+30° did not. Confirmed general, not a one-off.
+
+**This is what prompted the automatic-rotation-retry feature, built the
+same session:** per the user, directly - "Rotating the object resolved
+the slicing error. When receiving slicing errors, suggest rotating the
+object," followed immediately by "Or, try rotating the object
+automatically when running into slicing errors," and, once asked how
+aggressive that should be: "I don't think it would hurt to attempt
+rotation and reslice until all reasonable rotations have been tried."
+
+`jobs.AUTO_ROTATE_CANDIDATES` is a fixed, bounded set of 11 rotations -
+quarter/eighth turns about Z (every real fix observed across all three
+investigated models landed here), plus the four ways to lay the model
+on one of its other faces (±90° about X or Y) - not an exhaustive
+multi-axis grid, which would multiply the real per-attempt cost
+(a full OrcaSlicer+`mbotmake` run each, genuinely minutes for a large
+model) combinatorially for a search with no particular reason to
+expect a better answer than a simpler sweep would find.
+`jobs._slice_with_rotation_retry()` tries the orientation actually
+requested first (never overriding an explicit choice), and only sweeps
+the candidates if that fails, stopping at the first success. If a
+candidate other than the requested one is what worked,
+`slice_and_update()` updates `Job.rotate_x/y/z` to what was *actually*
+sliced (not silently leaving the fields showing the orientation that
+failed) and repurposes `Job.slice_error` - normally error-only - as a
+one-time informational note on an otherwise-successful `sliced` job,
+explicitly saying what was requested and what was substituted;
+`job_edit.html` renders it as a plain note (not styled as an error) and
+it clears itself the next time a re-slice succeeds without needing to
+fall back to a candidate. If every candidate also fails, the *original*
+requested orientation's own failure is what gets reported (not
+whichever candidate happened to run last) - the one the user actually
+asked for is the most relevant thing to show - and the `slice_failed`
+page's own hint text was updated to say a broad rotation sweep was
+already tried automatically, so a user doesn't waste time manually
+retrying rotations the app already ruled out.
+
+Verified end-to-end against a real, previously-failing file, through
+the real pipeline: uploaded the Flexi_Seal model fresh (rotation
+defaulting to 0/0/0, deliberately not pre-rotated), let the real
+background slicing task run to completion, and confirmed it landed on
+`sliced` (not `slice_failed`) with `Job.rotate_z` automatically set to
+`45.0` and a clear note on the edit page explaining exactly what
+happened and why the rotation fields show a value nobody manually
+entered.
+
+**A related observation from the user, correctly identifying a real
+remaining gap: "The preview always shows the model in the center. If
+it's off center, that's not displayed visually."** True, and distinct
+from the calculation bug above (which is fixed - the red/blue color and
+info text are now numerically correct for exactly this case). The
+camera itself still frames around the *model's own* size and centroid
+(`camera.position.set(radius * 1.4, ...)`, `radius` derived from the
+model, not the bed), not the bed's fixed physical dimensions - so every
+model, whether it comfortably fits or genuinely hangs off one edge,
+gets framed to look similarly "centered in the picture," and the bed's
+true, fixed-size rectangle can be easy to miss as the actual frame of
+reference. The color/text warning is real and correct, but a viewer
+who's only glancing at the picture rather than reading the info line
+could still miss an overhang. Not addressed here - would need the
+camera (or at least the bed-plate rendering) to hold a consistent,
+recognizable scale/position across every model rather than re-framing
+per-model, which is a real design change to how the preview frames
+itself, not a quick follow-up to this fix.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on

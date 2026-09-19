@@ -244,6 +244,16 @@ Managing user accounts:
   user guess a percentage by hand. The read-only "View 3D" page for an
   already-submitted job shows it at whatever scale it was actually
   sliced at too, not just the original file size.
+- **Automatic rotation retry on a slicing failure** - if a model fails to
+  slice at whatever orientation was requested, the app automatically
+  tries a handful of likely rotations (quarter/eighth turns, and
+  standing the model on each of its other faces) before giving up,
+  since real models have repeatedly turned out to need nothing more
+  than a different rotation to slice successfully at all. If one of
+  those works, the job's rotation is updated to match and a clear note
+  says so (not silently applied without explanation); if none do, the
+  job fails as before, with a note that this was already tried so a
+  manual re-attempt at the same rotations won't help.
 - **Rotate and snap to surface** - free rotation on any axis (three
   degree fields, live preview as you type), plus a "Snap to surface"
   button: click it, then click any face on the model, and it reorients
@@ -254,8 +264,12 @@ Managing user accounts:
   bed-centering safety check slices successfully once rotated to a
   sensible printing orientation. Auto-fit accounts for whatever rotation
   is currently applied too, since reorienting changes the model's actual
-  footprint on the plate. On-canvas drag handles (rotate freely, or
-  uniform resize) are available too, alongside the number fields and
+  footprint on the plate - and, for an asymmetric model, accounts for
+  exactly how far off-center its actual centered placement will be, not
+  just its raw size, so a lopsided model can no longer pass this check
+  while still genuinely hanging off one edge of the bed. On-canvas drag
+  handles (rotate freely, or uniform resize) are available too,
+  alongside the number fields and
   snap-to-surface - three different ways to reach the same rotate/scale
   values, kept in sync with each other.
 - **Automated backups** - the database and finished-job archive back up
@@ -429,6 +443,43 @@ Managing user accounts:
   `approved` job (the "does editing an active job re-slice in place or
   count as a new submission" question two bullets up is still open, and
   out of scope for what's built so far).
+- **Real bug found using auto-fit on an actual model (an F-35 fighter
+  jet STL): "Auto-resize to fit build plate" could compute a scale that
+  still didn't actually fit.** Root cause: auto-fit and the "too large"
+  warning both measured the model's raw bounding-box span against the
+  bed, assuming it would be centered by that same bounding box - but the
+  model is actually centered on its area-weighted surface centroid (see
+  the Flexi_Seal fix above), which for a strongly lopsided shape can sit
+  nowhere near the bounding-box middle. This exact jet model, shrunk to
+  fit its own total span, still hung ~29mm off one edge of the bed once
+  centered on its real centroid. **Fixed** - both checks now measure the
+  actual centroid-relative distance to each side independently, which
+  is what genuinely determines whether it fits; unchanged for any
+  roughly-symmetric model, where the two calculations agree anyway.
+  Verified against the real file: auto-fit dropped from a wrong 9.74% to
+  a correct 7.50%, and OrcaSlicer's own placement check accepted the
+  result (previously refused with "no object is fully inside the print
+  volume").
+- ~~Automatic rotation retry on a slicing failure.~~ **Done** - see
+  Features above. Per the user, after this same fighter-jet model
+  (once correctly sized) still failed `mbotmake`'s own bed-centering
+  check exactly like the Flexi_Seal model did, and rotating it by hand
+  fixed it too: "I don't think it would hurt to attempt rotation and
+  reslice until all reasonable rotations have been tried." A bounded
+  sweep (not exhaustive) of 11 candidate rotations, tried automatically
+  after the requested orientation fails, stopping at the first success.
+- The 3D preview's camera always frames around the *model's own* size
+  and position, not the bed's fixed physical dimensions - correctly
+  identified by the user right after the auto-fit fix above: "The
+  preview always shows the model in the center. If it's off center,
+  that's not displayed visually." The numeric fit-check is now correct
+  (see above) and shows as a red model + text warning, but a viewer
+  only glancing at the picture rather than reading that line could
+  still miss an overhang, since every model - fitting or not - gets
+  framed to look similarly "centered in the picture." Would need the
+  camera (or at least the bed-plate rendering) to hold a consistent
+  scale/position across every model rather than re-framing per-model -
+  a real design change to the preview, not a quick follow-up.
 - ~~Let a user delete their own model from the queue (they may no longer
   want it) - with a clear warning first that this is permanent: it removes
   the job from the queue/list and deletes the model files, with no undo.
@@ -650,6 +701,16 @@ Managing user accounts:
   scratch/queue/archive + two backup-target USB drives mounted, and the
   backup cron job installed - all designed for, none yet done on real
   hardware.
+- A downloadable "support bundle" (a `.tar.gz`) an admin can generate
+  on demand, bundling whatever's needed for offline bugfixing after the
+  real deployment (Pi/network/printer in place, zero internet access,
+  per [[queue3d-deployment-network]]) without remote access to the
+  device itself - per the user: "After I setup the app/Pi, network, and
+  printer in place, I want to be able to show up and collect the
+  support files." Likely contents: recent job `slice_error`s (the exact
+  captured OrcaSlicer/mbotmake output already shown on a failed job's
+  own page), the specific model files involved, the activity log, and
+  relevant application/service logs - exact scope not yet decided.
 
 ## Project layout
 
