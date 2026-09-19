@@ -1746,6 +1746,86 @@ own event history while leaving exactly one `job_deleted` entry (actor
 `user:<name>`, just the filename) in the global log; and an unrelated
 job belonging to a different user is confirmed untouched throughout.
 
+### Resize and auto-fit (model controls, part one)
+
+**Why this exists:** the user's full "model controls" ask - rotate on
+any axis, "snap to surface," resize maintaining aspect ratio, and a
+one-click auto-fit - spelled out in full before pausing the OBJ feature
+mid-session to build this instead. Sequenced deliberately: resize/
+auto-fit first (a scale number, no new 3D interaction needed), rotation/
+snap-to-surface as a separate, materially bigger follow-up (real
+face-picking and rotation UI) - not attempted in the same pass.
+
+**`Job.scale_factor`** (schema `5.5.0`, defaults `1.0`, always uniform -
+never per-axis, so proportions can never distort, per the user
+explicitly: "maintaining the aspect ratio"). Applied in
+`slicing/stl_to_3mf.build_3mf()` by scaling every vertex *before*
+`center_vertices()` runs, not after - deliberate ordering: a uniform
+scale from the origin doesn't change where a mesh's area-weighted
+centroid sits relative to its own geometry, only its absolute size, so
+scale-then-center gives the same result centering-then-scaling would,
+but only if centering runs last against the already-final geometry.
+Threaded all the way through the existing subprocess chain (`slice.py`
+gains a `--scale` CLI flag, `pipeline.run_slice()` and
+`jobs.slice_and_update()`/`start_reslice()` each gain a `scale_factor`
+parameter) rather than becoming a second, parallel pipeline.
+
+**Bounded** (`MIN_SCALE_FACTOR`/`MAX_SCALE_FACTOR`, 1%-1000%) and
+validated in `start_reslice()` before anything about the job changes -
+an out-of-range value is rejected with a clear message and the job's
+previous state (status, scale) is left completely untouched, same
+"validate before mutating" shape every other job action here already
+uses.
+
+**Where this lives: the existing draft edit page (`job_edit.html`),
+not the upload form** - every one of the user's own motivating examples
+(a model that failed to slice, a model that doesn't fit) is about fixing
+something *already uploaded*, which is exactly what this page already
+exists for (re-slicing with new support settings). Scoped to
+`sliced`/`slice_failed` drafts only, matching `start_reslice()`'s
+existing status guard - not yet extended to an already-`queued`/
+`approved` job, which raises the still-open "re-slice in place or count
+as a new submission" question a different to-do item already flags.
+
+**Live, before-you-commit preview - no server round trip to see the
+effect of a scale change**, matching this app's existing "instant
+client-side preview" philosophy (see "Upload and slicing progress").
+`static/preview.js` now keeps the model exactly as loaded/parsed
+(`rawGeometry`, never mutated) separately from what's actually
+displayed, so a new exported `setPreviewScale(factor)` can always
+compute fresh from the true original size - repeated scale changes
+never compound - and a new `autoFitScale()` computes the largest factor
+(capped at 1, so this only ever shrinks an oversized model, never grows
+one that already fits) that would bring the *original* geometry within
+the build plate on all three axes at once. The one-click "Auto-resize
+to fit build plate" button in `job_edit.html` just calls that and
+applies the result; the scale number field re-renders live on every
+keystroke via the same function. The **read-only "View 3D" page for an
+already-submitted job** (`job_preview.html`) needed the identical
+treatment for a different reason: the stored model file is always the
+original, unscaled upload (scaling only ever happens transiently inside
+`build_3mf()`, never rewriting the file itself), so without reapplying
+`job.scale_factor` there too, that page would have silently shown the
+wrong size for anything actually sliced at a non-default scale.
+
+Verified against the real pipeline, not just the vertex math: re-slicing
+a real test model at 50% scale produced an actual `.makerbot` whose own
+recorded print height was exactly half the unscaled version's (a
+same-model X-axis comparison came out less clean-looking at first - a
+pre-existing skirt/purge-line artifact in the print profile inflating
+the smaller print's proportional footprint, already documented
+elsewhere in this project, not a scaling bug - confirmed by checking the
+input mesh's own vertex extents directly, which scaled to exactly 50%
+in both axes). End-to-end HTTP flow verified too: an out-of-bounds scale
+rejected with the job's prior state intact, a valid 50% re-slice
+persisting correctly and producing a correctly half-sized real output
+file. The interactive/browser half was verified with a real headless
+browser (not just read as correct): live info-text updates as the scale
+input changes, the "too large" error state appearing and clearing
+correctly, and auto-fit computing the exact right shrink factor for a
+genuinely oversized synthetic model (limited by whichever bed dimension
+was tightest) with zero console/page errors throughout.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on

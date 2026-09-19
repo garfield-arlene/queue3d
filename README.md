@@ -231,6 +231,16 @@ Managing user accounts:
   filename still displays as uploaded. One bad file in a zip (unreadable,
   too large) doesn't sink the rest - it's skipped and named in a
   message, the other valid ones still upload normally.
+- **Resize and auto-fit on the job edit page** - a draft's own edit page
+  now has a scale control (always uniform - proportions can never
+  distort) with a live, before-you-commit 3D preview as you change it,
+  and a one-click "Auto-resize to fit build plate" button for a model
+  that's too large, computing exactly the shrink needed rather than
+  making the user guess a percentage by hand. The first half of the
+  user's full "model controls" ask (rotate + snap-to-surface is next);
+  the read-only "View 3D" page for an already-submitted job shows it at
+  whatever scale it was actually sliced at too, not just the original
+  file size.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -335,36 +345,33 @@ Managing user accounts:
   end like a restored one does - those are different user expectations and
   worth deciding deliberately rather than defaulting to whichever is
   easier to build.
-- **Model orientation/sizing controls - up next, on hold mid-session per
-  the user ("Let's put this obj file feature on hold... When we resume,
-  let's work on adding the model controls").** Explicitly spelled out,
-  not just "resize controls" (superseding that bare bullet below and
-  folding it in here):
-  - **Rotate the model on the build plate, along any axis** - motivated
-    partly by fit (if a model is diagonal or doesn't fit some other way,
-    rotating it might let it fit the plate) and partly by print quality/
-    success (see snap-to-surface next).
-  - **"Snap to surface"** - pick a face on the model and reorient it so
-    that face becomes the new bottom, flat on the plate. The user's own
-    motivating example: the Christmas tree model that's been failing
-    `mbotmake`'s bed-centering check (see `app/README.md`'s "A real
-    stuck-slicing incident" section) might pass once stood upright on
-    its actual flat base, printing bottom-to-top toward the star, instead
-    of however it happened to be authored/oriented in the original file.
-    Directly ties into the still-open centroid/centering investigation
-    there - reorienting to a sensible print orientation may address some
-    of what centroid-based centering alone couldn't.
-  - **Resize, maintaining aspect ratio.**
-  - **A one-click "auto-resize to fit"** for a model too large for the
-    build plate - shrinks it down to fit rather than requiring the user
-    to guess at a scale factor by hand.
-  
-  All of this needs a real design pass before building (where these
-  controls live - the upload form, the job edit page, or both; how
-  rotation/resize interact with the existing supports overlay and
-  duration estimate; whether changing orientation/size on an
-  already-`queued`/`approved` job re-slices in place or counts as a new
-  submission, the same open question the bullet above already raises).
+- **Model orientation/sizing controls** - the user's full spec, spelled
+  out before pausing mid-session on the OBJ feature to build this
+  instead: rotate on any axis, "snap to surface," resize maintaining
+  aspect ratio, and one-click auto-fit. Built in two parts:
+  - ~~Resize, maintaining aspect ratio.~~ / ~~A one-click "auto-resize to
+    fit" for a model too large for the build plate.~~ **Done** - see
+    Features above ("Resize and auto-fit on the job edit page").
+  - **Rotate the model on the build plate, along any axis, and "snap to
+    surface" (pick a face, reorient it as the new bottom)** - not yet
+    built. Motivated partly by fit (a diagonal rotation might let an
+    oversized model fit the plate) and partly by print quality/success:
+    the user's own example is the Christmas tree model that's been
+    failing `mbotmake`'s bed-centering check (see `app/README.md`'s "A
+    real stuck-slicing incident" section) - standing it upright on its
+    actual flat base, printing bottom-to-top toward the star instead of
+    however it was originally authored/oriented, might succeed where
+    centroid-based centering alone couldn't. A materially bigger build
+    than resize was: needs real 3D interaction (face-picking via
+    raycasting, rotation gizmos or angle inputs, quaternion math), not
+    just a scale number - scoped out of the same pass that built resize
+    deliberately, not overlooked.
+
+  Scoped to draft (`sliced`/`slice_failed`) jobs only, on the existing
+  job-edit page - not the upload form, and not yet extended to an
+  already-`queued`/`approved` job (the "does editing an active job
+  re-slice in place or count as a new submission" question two bullets
+  up is still open, and out of scope for what's built so far).
 - ~~Let a user delete their own model from the queue (they may no longer
   want it) - with a clear warning first that this is permanent: it removes
   the job from the queue/list and deletes the model files, with no undo.

@@ -181,6 +181,17 @@ def _migrate_to_4_5_0(conn):
         )
 
 
+def _migrate_to_5_5_0(conn):
+    """New Job.scale_factor column - the first of the model
+    orientation/sizing controls (resize, maintaining aspect ratio - see
+    jobs.start_reslice). Defaults to 1.0 (unscaled), so an existing job
+    that's never touched this reads as "print at its original size,"
+    exactly what happened before this column existed. Purely additive."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "scale_factor" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN scale_factor FLOAT NOT NULL DEFAULT 1.0"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -201,6 +212,7 @@ MIGRATIONS = {
     "3.4.0": _migrate_to_3_4_0,
     "4.4.0": _migrate_to_4_4_0,
     "4.5.0": _migrate_to_4_5_0,
+    "5.5.0": _migrate_to_5_5_0,
 }
 
 

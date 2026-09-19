@@ -23,6 +23,7 @@ def run_slice(
     enable_supports: bool = False,
     support_style: str | None = None,
     supports_json_path: Path | None = None,
+    scale_factor: float = 1.0,
 ) -> tuple[bool, str]:
     """Returns (success, detail) - detail is the slicer's own output either
     way, useful as slice_error on failure.
@@ -32,6 +33,9 @@ def run_slice(
     it's converted to .makerbot) and extracts a simplified support-geometry
     preview from it - see supports.py for why that has to come from the
     gcode rather than the final print file.
+
+    scale_factor: uniform scale (1.0 = original size) - see
+    models.Job.scale_factor and stl_to_3mf.build_3mf's own docstring.
     """
     with tempfile.TemporaryDirectory(prefix="queue3d-pipeline-") as tmp:
         gcode_path = Path(tmp) / "intermediate.gcode"
@@ -42,6 +46,8 @@ def run_slice(
             cmd += ["--support-style", support_style]
         if supports_json_path is not None:
             cmd += ["--gcode-out", str(gcode_path)]
+        if scale_factor != 1.0:
+            cmd += ["--scale", str(scale_factor)]
 
         # stdin=DEVNULL - a real incident, not foresight: mbotmake (called
         # two subprocess layers down, see slicing/slice.py) has its own

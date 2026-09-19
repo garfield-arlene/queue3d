@@ -243,6 +243,12 @@ class Job(SQLModel, table=True):
     # app/supports.py) - present once slicing succeeds, even if empty
     # (supports enabled but the model didn't need any).
     supports_path: str | None = Field(default=None)
+    # A uniform scale factor (1.0 = original size) applied to the model
+    # before centering/slicing - see slicing/stl_to_3mf.build_3mf and
+    # routers/user.py's reslice(). Always uniform (never per-axis), per
+    # the user: "resize the object while maintaining the aspect ratio" -
+    # there's no control here that could distort it.
+    scale_factor: float = Field(default=1.0)
 
     # When this row was created (upload time) - NOT when it joined the
     # queue, which may be much later or never (see queued_at below). Used

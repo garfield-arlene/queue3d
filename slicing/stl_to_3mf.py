@@ -208,11 +208,24 @@ def build_model_xml(vertices, triangles):
     return MODEL_TEMPLATE.format(vertices=vlines, triangles=tlines)
 
 
-def build_3mf(stl_path, settings_path, output_path, overrides=None):
+def build_3mf(stl_path, settings_path, output_path, overrides=None, scale_factor=1.0):
     """overrides: optional dict of settings keys to override in the loaded
     profile before embedding it - e.g. {"enable_support": "1"} to turn
-    supports on for one job without needing a second profile file."""
+    supports on for one job without needing a second profile file.
+
+    scale_factor: uniform scale (1.0 = original size) applied before
+    centering - always uniform, never per-axis, so aspect ratio can never
+    distort (see models.Job.scale_factor). Scaling first, then centering,
+    is deliberate ordering, not incidental: a uniform scale from the
+    origin doesn't change *where* the model's area-weighted centroid sits
+    relative to its own geometry, only its absolute size, so scaling
+    before centering gives the identical result as centering then scaling
+    - but only if centering happens after, since center_vertices() itself
+    needs the final (already-scaled) triangle geometry to compute the
+    right centroid to shift by."""
     vertices, triangles = parse_stl(stl_path)
+    if scale_factor != 1.0:
+        vertices = [(x * scale_factor, y * scale_factor, z * scale_factor) for x, y, z in vertices]
     vertices = center_vertices(vertices, triangles)
     model_xml = build_model_xml(vertices, triangles)
 

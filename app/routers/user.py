@@ -422,6 +422,7 @@ def reslice(
     background_tasks: BackgroundTasks,
     enable_supports: bool = Form(False),
     support_style: str = Form("default"),
+    scale_percent: float = Form(100.0),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
@@ -430,13 +431,17 @@ def reslice(
     whole point of splitting slicing from submitting. Redirects back to
     that same edit page (not the dashboard) either way, so re-slicing
     repeatedly to try different settings stays a loop on one page, the
-    same as it would with a real slicer's own settings panel."""
+    same as it would with a real slicer's own settings panel.
+
+    scale_percent, not a raw factor, in the form itself - matches what
+    the edit page actually shows/lets someone type (see job_edit.html)."""
     job = _owned_job(session, user, job_id)
     if support_style not in SUPPORT_STYLES:
         support_style = "default"
+    scale_factor = scale_percent / 100
     try:
         stl_path = start_reslice(
-            session, job, enable_supports, support_style if enable_supports else None
+            session, job, enable_supports, support_style if enable_supports else None, scale_factor
         )
     except JobActionError as e:
         request.session["flash_error"] = str(e)
@@ -448,6 +453,7 @@ def reslice(
         stl_path,
         enable_supports,
         support_style if enable_supports else None,
+        scale_factor,
     )
     return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 

@@ -511,6 +511,7 @@ def slice_and_update(
     stl_path: Path,
     enable_supports: bool,
     support_style: str | None,
+    scale_factor: float = 1.0,
 ) -> None:
     """Runs slicing for a draft and records the outcome as 'sliced' (ready
     to preview and, if the user wants, submit) or 'slice_failed' - never
@@ -547,6 +548,7 @@ def slice_and_update(
                 enable_supports=enable_supports,
                 support_style=support_style,
                 supports_json_path=scratch_supports if enable_supports else None,
+                scale_factor=scale_factor,
             )
         except Exception as e:
             success, detail = False, f"Unexpected error while slicing: {e}"
@@ -571,21 +573,39 @@ def slice_and_update(
         session.commit()
 
 
+MIN_SCALE_FACTOR = 0.01  # 1% - below this, a model isn't meaningfully printable any more
+MAX_SCALE_FACTOR = 10.0  # 1000% - generous, but not unbounded
+
+
 def start_reslice(
-    session: Session, job: Job, enable_supports: bool, support_style: str | None
+    session: Session,
+    job: Job,
+    enable_supports: bool,
+    support_style: str | None,
+    scale_factor: float = 1.0,
 ) -> Path:
     """Resets a draft to re-slice the same already-uploaded file with new
     settings - the whole point of splitting slicing from submitting: a
-    user can freely iterate on support settings before ever deciding to
-    submit. Returns the STL path to hand to slice_and_update (via a
-    BackgroundTask, same as the initial slice - see routers/user.py)."""
+    user can freely iterate on support settings (or, now, scale - see
+    models.Job.scale_factor) before ever deciding to submit. Returns the
+    STL path to hand to slice_and_update (via a BackgroundTask, same as
+    the initial slice - see routers/user.py)."""
     _require_status(job, JobStatus.sliced, JobStatus.slice_failed)
+    if not (MIN_SCALE_FACTOR <= scale_factor <= MAX_SCALE_FACTOR):
+        raise JobActionError(
+            f"Scale must be between {MIN_SCALE_FACTOR * 100:.0f}% and {MAX_SCALE_FACTOR * 100:.0f}%."
+        )
     job.supports_enabled = enable_supports
     job.support_style = support_style
+    job.scale_factor = scale_factor
     job.status = JobStatus.submitted
     job.slice_error = None
     session.add(job)
-    style_detail = f"supports={enable_supports}" + (f" style={support_style}" if support_style else "")
+    style_detail = (
+        f"supports={enable_supports}"
+        + (f" style={support_style}" if support_style else "")
+        + (f" scale={scale_factor:.2f}" if scale_factor != 1.0 else "")
+    )
     log_event(session, job.id, _user_actor(session, job.user_id), "reslice_started", detail=style_detail)
     session.commit()
     return Path(job.stl_path)

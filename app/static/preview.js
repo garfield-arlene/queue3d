@@ -22,6 +22,12 @@ let scene, camera, renderer, controls, container, infoEl;
 let currentMesh = null;
 let currentSupports = null;
 let resizeObserver = null;
+// The model exactly as loaded/parsed, before any scaling - kept around so
+// setPreviewScale()/autoFitScale() below always compute from the true
+// original size, not whatever scale happened to be applied last. Cloned
+// fresh into renderGeometry() on every (re)scale rather than mutated in
+// place, so repeated scale changes never compound.
+let rawGeometry = null;
 
 function initScene(containerEl) {
     container = containerEl;
@@ -118,7 +124,13 @@ function surfaceCentroidXY(geometry) {
     return { x: weightedX / totalArea, y: weightedY / totalArea };
 }
 
-function showModel(geometry) {
+/**
+ * Renders `geometry` (already scaled by the caller, if at all) - the
+ * shared body behind both showModel() (a fresh load) and
+ * setPreviewScale() (re-rendering the same raw model at a new scale,
+ * with no re-fetch/re-parse needed).
+ */
+function renderGeometry(geometry) {
     if (currentMesh) {
         scene.remove(currentMesh);
         currentMesh.geometry.dispose();
@@ -192,6 +204,46 @@ function showModel(geometry) {
             : dims;
         infoEl.classList.toggle("error", overBuildVolume);
     }
+}
+
+function showModel(geometry) {
+    rawGeometry = geometry.clone();
+    renderGeometry(geometry);
+}
+
+/**
+ * Re-renders the already-loaded model at `scaleFactor` (1 = original
+ * size) - no re-fetch/re-parse, and always computed fresh from the true
+ * original geometry (see rawGeometry above), so repeated calls never
+ * compound. A no-op if nothing's loaded yet. Matches
+ * slicing/stl_to_3mf.build_3mf's own scale-then-center ordering exactly,
+ * so what this shows is what will actually get sliced at the same
+ * scale - uniform on all three axes always, per the user ("resize...
+ * while maintaining the aspect ratio"), never a per-axis distortion.
+ */
+export function setPreviewScale(scaleFactor) {
+    if (!rawGeometry) return;
+    const geometry = rawGeometry.clone();
+    if (scaleFactor !== 1) {
+        geometry.scale(scaleFactor, scaleFactor, scaleFactor);
+    }
+    renderGeometry(geometry);
+}
+
+/**
+ * The largest scale factor (capped at 1 - this only ever shrinks, never
+ * grows a model that already fits) that would bring the *original*
+ * model's bounding box within the build plate on all three axes - for
+ * the one-click "auto-resize to fit" button (job_edit.html). Returns 1
+ * if nothing's loaded, or if it already fits.
+ */
+export function autoFitScale() {
+    if (!rawGeometry) return 1;
+    rawGeometry.computeBoundingBox();
+    const size = new THREE.Vector3();
+    rawGeometry.boundingBox.getSize(size);
+    if (![size.x, size.y, size.z].every(Number.isFinite)) return 1;
+    return Math.min(1, BED_WIDTH_MM / size.x, BED_DEPTH_MM / size.y, BED_HEIGHT_MM / size.z);
 }
 
 const SUPPORT_TUBE_RADIUS = 0.3; // mm - roughly a support strand's width
