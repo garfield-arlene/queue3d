@@ -581,6 +581,58 @@ as the next concrete step on the "model repair"/centering to-do item,
 with the specific numbers this attempt got to, rather than restarting
 the investigation from scratch next time.
 
+**Second real occurrence: `Flexi_Seal.stl` - same failure class, and the
+volume-centroid follow-up actually tried, with a real answer.** Reported
+by the user, who'd already tried resizing it (no effect) and asked to
+find the cause. Confirmed mathematically first, before touching
+anything, why scaling specifically could never help: `mbotmake`'s check
+is a *ratio* - `(x_max + x_min) / (x_max - x_min)` - and a uniform scale
+multiplies both the numerator and denominator by the identical factor,
+leaving the ratio completely unchanged. Scaling this model was never
+going to work, for any scale factor.
+
+Checked the "next concrete step" noted above properly, now that a real
+failing case was in hand: this mesh's edges are 99.98% manifold (19
+non-manifold edges out of 78,779, a small, real but minor defect, not a
+disqualifying one) and its signed volume comes out positive (consistent
+winding overall), so a true volume centroid was actually computable, via
+the standard signed-tetrahedron-decomposition algorithm. Tried it -
+**and it made things worse, not better**, confirmed against the real
+pipeline: `xrel` moved from 0.251 (the deployed area-weighted-surface
+centering) to 0.311 with volume-centroid centering, in the wrong
+direction. Reported honestly rather than pretending the "obvious next
+step" panned out - it didn't.
+
+**Real, working answer found instead: rotating the model.** Reasoned
+through why the centroid shift made things worse rather than better:
+`mbotmake`'s check specifically measures where *infill* (not the whole
+model's surface or volume) ends up, and sparse infill only exists in a
+model's actual solid interior - concentrated wherever the shape happens
+to be thick, which a whole-mesh surface- or volume-centroid has no way
+to know about without slicing first. That pointed at reorientation, not
+a smarter static centering formula, as the real fix - directly the
+"model controls" rotation feature already on the to-do list, not a
+coincidence. Tested empirically rather than assumed: rotated the actual
+failing mesh (re-centered after each rotation, same as any real upload
+would be) at a sweep of angles about the vertical axis and re-sliced
+each one through the real pipeline. A pure 90° rotation flipped which
+axis failed (X started passing, Y started failing instead) rather than
+fixing both at once - genuinely informative on its own, since it
+confirms rotation *does* change the outcome, just not trivially. A 45°
+rotation passed both checks (`xrel` 0.09, `yrel` 0.11, both comfortably
+inside ±0.15) and produced a real, complete `.makerbot` file.
+
+**Immediate, real workaround exists today, before rotation controls are
+built:** rotating a model roughly 45° about its vertical axis in any
+external tool before uploading can resolve this exact failure class -
+told to the user directly for this specific file. The in-app "rotate on
+any axis" control (see README.md's model-controls to-do item) remains
+the real fix, and this investigation is now a second, independent, real
+data point motivating it - not just the Christmas tree's "stand it up
+on its base" case, but confirmed general-purpose: some rotation, found
+by testing rather than guessed, can resolve this class of failure when
+no amount of resizing or recentering-only ever could.
+
 ### What release does
 
 `jobs.release()` enforces the one-job-at-a-time rule, then calls
