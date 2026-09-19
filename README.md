@@ -271,6 +271,41 @@ Managing user accounts:
 - ~~Accept `.obj` files directly, and `.zip` files containing one or more
   `.stl`/`.obj` models (a common shape for a Thingiverse-style
   download).~~ **Done** - see Features above.
+- **Real report: uploading a real multi-model zip "did nothing" from the
+  user's own perspective, with "422 Unprocessable Content" in the app's
+  own console.** No job was created at all (confirmed directly in the
+  database - the request never reached `upload()`'s own code, since every
+  path through that function either creates a job or calls `fail()`,
+  which always sets a flash message), meaning this is a FastAPI/Starlette
+  request-validation failure happening before the route body ever runs -
+  not a bug in `storage.extract_model_files()`'s own splitting logic.
+  Ruled out so far by direct reproduction against the real production
+  server: Starlette's multipart size limits (a `MultiPartException` there
+  surfaces as 400, not 422, and only applies to non-file form fields
+  anyway, confirmed by reading `starlette/formparsers.py` directly); a
+  realistic multi-file zip with nested folders, a README, and a stray
+  non-model file (all uploaded successfully, correctly split into
+  separate jobs). Couldn't reproduce the actual 422 without the specific
+  file that triggered it. **A real, independent bug found and fixed
+  while investigating, regardless of the 422's root cause**: the
+  dashboard's own upload JS (`user_dashboard.html`) unconditionally
+  redirected to `/dashboard` on any completed request, on the (mostly
+  but not always true) assumption that the server always ends up
+  there - true for every error this app's own code controls (`fail()`
+  always redirects with a flash message set), but not for a request
+  that fails validation before the route runs at all, which never
+  redirects anywhere. That's exactly why this looked like "nothing
+  happened" instead of showing an error. Fixed: the JS now checks the
+  response status and shows its own error message for anything outside
+  2xx-after-redirect, or a network failure. Still open: finding the
+  actual cause of the 422 itself needs either the specific file that
+  triggered it, or a browser Network-tab capture of the real request
+  next time it happens.
+- Related gap noticed while investigating the above: a `slice_failed`
+  draft has no delete route at all (only `queued`/`approved` jobs can be
+  deleted, by a user or an admin) - it can only ever be re-sliced or
+  left to the existing draft-expiry cleanup. Minor, but worth closing
+  alongside "allow rejected jobs to be edited and requeued" below.
 - `.3mf` upload support - not yet built, and a meaningfully bigger lift
   than `.obj`/`.zip` turned out to be: unlike OBJ (a flat, transform-free
   mesh format converted to STL in a few dozen lines - see `app/mesh.py`),
