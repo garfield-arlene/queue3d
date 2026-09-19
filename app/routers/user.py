@@ -32,7 +32,7 @@ from jobs import (
 )
 from mesh import convert_obj_to_stl
 from models import DRAFT_STATUSES, Job, JobStatus, User
-from storage import MAX_UPLOAD_BYTES, scratch_stl_path
+from storage import MAX_UPLOAD_BYTES, MAX_ZIP_MODEL_FILES, scratch_stl_path
 from templates_env import templates
 from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
 
@@ -204,6 +204,7 @@ def _dashboard_context(session: Session, user: User, flash_error: str | None = N
         "rows": rows,
         "flash_error": flash_error,
         "support_styles": SUPPORT_STYLES,
+        "max_zip_models": MAX_ZIP_MODEL_FILES,
     }
 
 

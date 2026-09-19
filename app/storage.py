@@ -42,11 +42,20 @@ MODEL_EXTENSIONS = {".stl", ".obj"}
 # the user, each becomes its own job/draft, the same as uploading each
 # separately, rather than attempting a combined-plate arrangement (this
 # app's whole pipeline is built around one object per job - see
-# slicing/stl_to_3mf.py's --arrange 0). Capped, not unbounded: a
-# reasonable ceiling on how many simultaneous slicing background tasks
-# one upload can kick off at once (see app/README.md's "Uploading
-# zip/OBJ files" section for the concurrency consideration this raises).
-MAX_ZIP_MODEL_FILES = 10
+# slicing/stl_to_3mf.py's --arrange 0). Capped, not unbounded - but NOT
+# to bound concurrent slicing load, which this was originally (wrongly)
+# justified by: FastAPI's BackgroundTasks added within one request run
+# strictly sequentially (confirmed directly - never more than one real
+# OrcaSlicer/mbotmake process alive at a time, across many checks, for a
+# real 15-file upload), so there's no concurrency risk to bound here at
+# all. The original value of 10 was hit by a genuine real multi-part
+# functional print (a 15-file differential gear assembly) - a real,
+# legitimate use this was wrongly blocking. Raised with real headroom
+# above that; the remaining reasons for any cap at all are bounding one
+# upload's total *serial* slicing time and the memory
+# extract_model_files() holds for every matched file's bytes at once,
+# not concurrency.
+MAX_ZIP_MODEL_FILES = 25
 
 
 def extract_model_files(zip_bytes: bytes) -> list[tuple[str, bytes]]:

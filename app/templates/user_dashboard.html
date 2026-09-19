@@ -11,6 +11,11 @@
     <label>Upload a model (.stl, .obj, or a .zip of them)<br>
       <input type="file" id="stl-file" name="file" accept=".stl,.obj,.zip" required>
     </label>
+    <p class="muted">
+      A .zip with more than one model becomes one job per model (up to
+      {{ max_zip_models }} models per zip) - not a single combined-plate
+      print.
+    </p>
     <label><input type="checkbox" name="enable_supports"> Generate supports</label>
     <label>Support style<br>
       <select name="support_style">

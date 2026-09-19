@@ -218,24 +218,22 @@ Managing user accounts:
   `queued`/`approved`; once released and printing, an admin is already
   acting on it and the option disappears. Logged in the activity log
   like any other change.
-- **Upload `.obj` files directly, and `.zip` files containing a single
-  `.stl`/`.obj` model.** An `.obj` upload is converted to a real `.stl`
-  immediately (losslessly - same geometry, different container) so
-  nothing downstream (slicing, the 3D preview, re-slicing) needs to know
-  it was ever anything but one; the original filename still displays as
-  uploaded.
-- **Not actually working yet, despite being designed and tested that
-  way - see the To do list:** a `.zip` containing *multiple* models was
-  meant to split into one job/draft per model (a common Thingiverse
-  shape - several separate parts plus a README/photo that's just
-  ignored), confirmed as the right design with the user since this
-  app's pipeline is built around one object per job. Synthetic zips
-  built to test this passed cleanly against the real server; the user's
-  own real multi-model zip did not, and correctly flagged that the
-  earlier "verified working" claim here was wrong for that case
-  specifically - only a single-model zip is confirmed working right
-  now. See the To do list's 422 investigation, now narrowed to
-  specifically implicate multi-entry zips.
+- **Upload `.obj` files directly, and `.zip` files of one or more
+  `.stl`/`.obj` models** (a common Thingiverse shape - several separate
+  parts plus a README/photo that's just ignored). Each model in a zip
+  becomes its own separate job/draft, up to `MAX_ZIP_MODEL_FILES` (25) -
+  stated right on the upload form, not just in this README - rather
+  than a combined-plate print, confirmed as the right design with the
+  user since this app's whole pipeline is built around one object per
+  job. An `.obj` upload is converted to a real `.stl` immediately
+  (losslessly - same geometry, different container) so nothing
+  downstream (slicing, the 3D preview, re-slicing) needs to know it was
+  ever anything but one; the original filename still displays as
+  uploaded. A real multi-part functional-print kit (15 separate model
+  files) confirmed working end-to-end, including every part slicing
+  successfully - see `app/README.md`'s "Fixing a real multi-model zip
+  upload" for the earlier, narrower cap this exposed and the (wrong)
+  concurrency assumption it was based on.
 - **Resize and auto-fit on the job edit page** - a draft's own edit page
   has a scale control (always uniform - proportions can never distort)
   with a live, before-you-commit 3D preview as you change it, and a
@@ -291,36 +289,29 @@ Managing user accounts:
 
 **Upload**
 - ~~Accept `.obj` files directly~~ **Done** - see Features above.
-- **`.zip` files containing a *single* model: done and confirmed working
-  (see Features above). A `.zip` containing *multiple* models, splitting
-  into one job per model: designed, and passed every test built for it
-  at the time - but the user directly reported it does NOT work in real
-  use, and corrected the record here rather than let a wrong "verified"
-  claim stand.** No job was created at all for the user's real multi-model
-  zip (confirmed directly in the database - the request never reached
-  `upload()`'s own code at all, since every path through that function
-  either creates a job or calls `fail()`, which always sets a flash
-  message), with "422 Unprocessable Content" logged server-side -
-  meaning this is a FastAPI/Starlette request-validation failure
-  happening before the route body ever runs, not a bug in
-  `storage.extract_model_files()`'s own splitting logic (which never
-  got the chance to run). Ruled out by direct reproduction against the
-  real production server: Starlette's multipart size limits (a
-  `MultiPartException` there surfaces as 400, not 422, and only applies
-  to non-file form fields anyway - confirmed by reading
-  `starlette/formparsers.py` directly). **Narrowed, not solved:** every
-  synthetic zip built to test this (including realistic ones - nested
-  folders, a README, a stray non-model file) passed cleanly, but every
-  one of them was also a *multi-file* zip that worked, which the user's
-  real report says shouldn't be possible if multi-file zips are
-  categorically broken - so either something about the real file's
-  specific content/size/encoding triggers this that no synthetic test
-  has reproduced yet, or the failure is intermittent rather than
-  every-multi-file-zip. Needs either the specific file that triggered
-  it, or a browser Network-tab capture of the real failed request, to
-  pin down further. Until then: **only single-model zip upload should be
-  considered working - a multi-model zip should be treated as broken
-  even though it once tested clean.**
+- ~~`.zip` files containing multiple models, splitting into one job per
+  model.~~ **Done, confirmed against a real multi-part file** - a
+  real-world functional-print kit (15 separate `.STL` files) uploaded,
+  split into 15 jobs, and every one sliced successfully. This had
+  previously been marked broken after the user reported it not working
+  in real use following an earlier round of synthetic-only testing
+  (see `app/README.md`'s "Fixing a real multi-model zip upload" for the
+  full account) - the real cause turned out to be `MAX_ZIP_MODEL_FILES`
+  being set too low (10) for a legitimate multi-part kit, not a
+  FastAPI-level failure; raised to 25, and now stated directly on the
+  upload form per the user ("We need to note the limitation for the
+  users"), not just here.
+- **Separately, still open:** the *original* 422 report (a different
+  real multi-model zip, before the file above was available to test)
+  never got a confirmed root cause - that specific file was never
+  available to reproduce against directly, and every synthetic zip
+  built to investigate it tested clean. Whether it was the same
+  too-low-cap issue (plausible - a `ValueError` there produces a clean
+  flash-message redirect, not literally the "422 Unprocessable Content"
+  originally reported, so it may not be) or a genuinely separate
+  request-validation failure is unresolved. Needs either that original
+  file or a browser Network-tab capture of a future failed request to
+  pin down further.
 - A real, independent bug found and fixed while investigating the above,
   regardless of the 422's root cause: the dashboard's own upload JS
   (`user_dashboard.html`) unconditionally redirected to `/dashboard` on

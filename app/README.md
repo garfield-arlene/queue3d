@@ -407,14 +407,17 @@ look. The real preview (post-slice, always from the server's genuine
 uploaded, once slicing finishes - this only affects the very first,
 optional glance.
 
-**Known limitation, not addressed here:** a zip of several files kicks
-off that many concurrent background slicing tasks at once - up to
-`MAX_ZIP_MODEL_FILES` of them. Nothing before this already serialized
-concurrent slices either (multiple browser tabs, or multiple users,
-could always overlap), so this doesn't introduce a new failure mode -
-it just makes hitting real concurrency far more likely from a single
-click. A slicing queue/concurrency limit would be the real fix if this
-turns out to matter in practice; not built yet.
+**A theorized limitation here turned out to be wrong when actually
+checked, later in this project - see "Fixing a real multi-model zip
+upload" further down.** This originally claimed a zip of several files
+kicks off that many *concurrent* background slicing tasks - checked
+directly (real process monitoring during a real 15-file upload, not
+assumed) and that's false: FastAPI's `BackgroundTasks` added within one
+request run strictly sequentially, confirmed by never seeing more than
+one real OrcaSlicer/`mbotmake` process alive at a time across many
+checks. `MAX_ZIP_MODEL_FILES` was raised on the strength of that
+finding - it was never actually bounding concurrency risk, just
+turning away legitimate multi-part uploads for no real reason.
 
 Verified end-to-end: a plain `.stl` upload (regression check), a
 standalone `.obj` upload converting and slicing correctly, a zip with
@@ -555,6 +558,61 @@ end-to-end after the refactor (upload, submit to queue, delete, confirm
 the file leaves `queue/`) to make sure sharing the status list via a
 parameter rather than a hardcoded tuple didn't regress the original
 behavior.
+
+### Fixing a real multi-model zip upload
+
+**Real report, with a real file this time:** the earlier 422
+investigation (see "A real report, weeks later" above) never found a
+reproducible cause with synthetic test zips - the user later supplied
+an actual real-world multi-part download (`Functional Differential Gear
+System - 11836.zip`, a Thingiverse-style functional-print kit) and
+asked directly to find a fix. Inspected the real file's structure
+before touching any code: 15 real `.STL` model files, plus a nested
+`.zip` (a variant sub-download, correctly ignored - not a model
+extension), directory entries, images, a README, and a LICENSE file.
+
+**Found the real cause immediately: `MAX_ZIP_MODEL_FILES = 10`, and
+this legitimate file has 15.** Reproduced directly against a real
+isolated instance with the actual file: the upload cleanly redirects to
+`/dashboard` with a flash message, "Too many model files in this zip
+(max 10)." - a working, non-broken rejection, not a 422 or silent
+failure. This is a *different* bug from the still-unresolved 422 -
+confirmable because this exact file does NOT reproduce a 422 with the
+current code, only a clean, friendly-but-wrong-here rejection. Whether
+this was also involved in the original 422 report is unknown (that
+file was never available to test); what's certain is that this cap was
+too low for a real, legitimate functional-print kit.
+
+**Checked whether the cap's own stated justification actually held up,
+rather than just raising the number blindly:** the code comment claimed
+this bounds *concurrent* slicing background tasks a zip's worth of
+uploads could kick off at once. Checked this directly against a real
+15-file upload rather than trusting the comment: polled the process
+table repeatedly through the entire slicing run and never saw more than
+one real OrcaSlicer/`mbotmake` process alive at any moment - FastAPI's
+`BackgroundTasks` added within a single request run strictly
+sequentially (awaited one after another), not concurrently. The cap's
+original justification was wrong; it was never bounding concurrency
+risk at all, just serial total wait time and the memory
+`extract_model_files()` holds for every matched file's bytes at once -
+both real but much less restrictive concerns than "concurrency," so
+raised `MAX_ZIP_MODEL_FILES` to 25 (real headroom above the 15 that
+triggered this, not merely enough to pass) rather than a marginal bump.
+
+Verified end-to-end against the real file, twice - once in an isolated
+instance (all 15 parts uploaded, split into 15 independent jobs, and
+*all 15 sliced successfully* with no failures, running strictly one at
+a time exactly as predicted) and once against the real production
+server directly (same result: 15 jobs created, no rejection), cleaned
+up afterward through the real submit-then-delete routes rather than
+left as clutter.
+
+**Per the user, directly: "We need to note the limitation for the
+users."** The upload form itself (`user_dashboard.html`) now states the
+per-zip model limit right under the file picker, reading the same
+`MAX_ZIP_MODEL_FILES` constant the enforcement itself uses (threaded
+through `_dashboard_context()`) rather than a second, hand-typed number
+that could drift out of sync with the real limit.
 
 ### Upload and slicing progress
 
