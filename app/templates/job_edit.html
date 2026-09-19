@@ -194,7 +194,7 @@
       </select>
     </label>
     <label>Scale (%, keeps the model's proportions)<br>
-      <input type="number" id="scale-percent" name="scale_percent" min="1" max="1000" step="1"
+      <input type="number" id="scale-percent" name="scale_percent" min="1" max="1000" step="0.01"
              value="{{ (job.scale_factor * 100) | round(2) }}">
     </label>
     <button type="button" id="auto-fit-btn">Auto-resize to fit build plate</button>
@@ -205,9 +205,9 @@
       surface" below and then click a face on the model to stand it on
       that face.
     </p>
-    <label>Rotate X<br><input type="number" id="rotate-x" name="rotate_x" step="1" value="{{ job.rotate_x | round(2) }}"></label>
-    <label>Rotate Y<br><input type="number" id="rotate-y" name="rotate_y" step="1" value="{{ job.rotate_y | round(2) }}"></label>
-    <label>Rotate Z<br><input type="number" id="rotate-z" name="rotate_z" step="1" value="{{ job.rotate_z | round(2) }}"></label>
+    <label>Rotate X<br><input type="number" id="rotate-x" name="rotate_x" step="0.01" value="{{ job.rotate_x | round(2) }}"></label>
+    <label>Rotate Y<br><input type="number" id="rotate-y" name="rotate_y" step="0.01" value="{{ job.rotate_y | round(2) }}"></label>
+    <label>Rotate Z<br><input type="number" id="rotate-z" name="rotate_z" step="0.01" value="{{ job.rotate_z | round(2) }}"></label>
     <button type="button" id="rotate-gizmo-btn">Rotate (drag)</button>
     <button type="button" id="snap-btn">Snap to surface</button>
     <button type="submit">Re-slice</button>

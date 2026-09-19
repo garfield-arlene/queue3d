@@ -2277,6 +2277,50 @@ than producing an absurd number; turning on either drag mode correctly
 turns off "Snap to surface" (and vice versa, per the existing mutual-
 exclusivity code); and zero console/page errors throughout.
 
+### A real bug found using the feature for real: whole-number-only percent/degree fields
+
+**User report, using "Auto-resize to fit build plate" on a real model
+(a fighter jet): "The resize field accepts only whole number
+percentages, not float with a decimal."** All four of the scale/
+rotation `<input type="number">` fields (`scale-percent`, `rotate-x/y/
+z`) had `step="1"` - a leftover from when these fields were first added
+and always expected to be hand-typed in whole units, never revisited
+once `autoFitScale()`, `computeSnapRotation()`, and the drag gizmo's
+`commitGizmoTransform()` all started *computing* values to 2 decimal
+places (`Math.floor(factor * 100 * 100) / 100`, `Math.round(x * 100) /
+100`, etc.) and writing them straight into these same fields.
+
+**Confirmed the actual failure mode directly rather than assumed from
+the symptom description:** typing or programmatically setting a decimal
+value into a `step="1"` number input is allowed - the field displays it
+fine, and this app's own live-preview `"input"` listener fires and
+updates the 3D view correctly regardless, since `parseFloat()` doesn't
+care about `step` at all. The break is specifically at **submission**:
+a plain `<form method="post">` submit (this page uses one, unlike the
+upload form's manual XHR) runs the browser's native constraint
+validation first, and a `step="1"` field holding a non-integer value
+has `validity.stepMismatch === true` - the browser silently refuses to
+submit at all, showing only its own native tooltip instead of doing
+anything this app's code could catch or report. Reproduced directly:
+setting `63.47` into a `step="1"` copy of this field reported
+`checkValidity() === false` / `stepMismatch: true` and never reached
+the server at all; the identical value against a `step="0.01"` field
+reported valid and reached `/jobs/{id}/reslice` correctly.
+
+**Fixed, not documented as a limitation** - per the user's own
+framing ("if that's a limitation, then the page must state that"),
+the right call here was to check whether it actually needed to *be* a
+limitation first, and it didn't: the server side already accepted a
+plain `float` for every one of these fields with no integer
+requirement (`routers/user.py`'s `reslice()`, `jobs.start_reslice()`),
+so the `step="1"` attributes were a client-side-only restriction with
+no reason behind them once the auto-computed features existed.
+Changed all four to `step="0.01"`, matching the exact precision every
+value-producing feature already rounds to - min/max bounds (`min="1"
+max="1000"` on scale) are untouched, so out-of-range values are still
+caught the same way they always were, just no longer also silently
+blocking any in-range value with more than zero decimal places.
+
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on
