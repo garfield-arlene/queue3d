@@ -21,6 +21,7 @@ A .3mf is just a zip (the OPC/OOXML package format) with:
 
 import argparse
 import json
+import math
 import struct
 import sys
 import zipfile
@@ -198,6 +199,55 @@ def center_vertices(vertices, triangles):
     return [(x - cx, y - cy, z - z_min) for x, y, z in vertices]
 
 
+def rotate_vertices(vertices, x_deg, y_deg, z_deg):
+    """Rotates every vertex by x_deg about the (fixed, world) X axis, then
+    y_deg about the world Y axis, then z_deg about the world Z axis - in
+    that exact order, each applied to the result of the previous one, not
+    combined into a single "rotate by all three simultaneously" matrix.
+    This is deliberately the *same* operation as calling a Three.js
+    BufferGeometry's `.rotateX(x).rotateY(y).rotateZ(z)` in that order
+    (see app/static/preview.js's identical rotation for the live
+    preview) - has to stay in lockstep with that, the same invariant
+    center_vertices() and its own JS counterpart already maintain for
+    centering (see that function's docstring): this app slices
+    already-transformed geometry, and the preview has to show that exact
+    placement, or an approved job could print in a different orientation
+    than what anyone actually looked at and signed off on.
+
+    A no-op (returns `vertices` unchanged) when all three angles are 0 -
+    the overwhelmingly common case (most jobs are never rotated) skips
+    the trig entirely rather than multiplying every vertex by an
+    identity-equivalent matrix for no reason."""
+    if x_deg == 0 and y_deg == 0 and z_deg == 0:
+        return vertices
+
+    def rotate_x(pts, deg):
+        if deg == 0:
+            return pts
+        a = math.radians(deg)
+        cos_a, sin_a = math.cos(a), math.sin(a)
+        return [(x, y * cos_a - z * sin_a, y * sin_a + z * cos_a) for x, y, z in pts]
+
+    def rotate_y(pts, deg):
+        if deg == 0:
+            return pts
+        a = math.radians(deg)
+        cos_a, sin_a = math.cos(a), math.sin(a)
+        return [(z * sin_a + x * cos_a, y, z * cos_a - x * sin_a) for x, y, z in pts]
+
+    def rotate_z(pts, deg):
+        if deg == 0:
+            return pts
+        a = math.radians(deg)
+        cos_a, sin_a = math.cos(a), math.sin(a)
+        return [(x * cos_a - y * sin_a, x * sin_a + y * cos_a, z) for x, y, z in pts]
+
+    vertices = rotate_x(vertices, x_deg)
+    vertices = rotate_y(vertices, y_deg)
+    vertices = rotate_z(vertices, z_deg)
+    return vertices
+
+
 def build_model_xml(vertices, triangles):
     vlines = "\n".join(
         f'     <vertex x="{x:.6g}" y="{y:.6g}" z="{z:.6g}"/>' for x, y, z in vertices
@@ -208,22 +258,33 @@ def build_model_xml(vertices, triangles):
     return MODEL_TEMPLATE.format(vertices=vlines, triangles=tlines)
 
 
-def build_3mf(stl_path, settings_path, output_path, overrides=None, scale_factor=1.0):
+def build_3mf(
+    stl_path,
+    settings_path,
+    output_path,
+    overrides=None,
+    scale_factor=1.0,
+    rotate_x=0.0,
+    rotate_y=0.0,
+    rotate_z=0.0,
+):
     """overrides: optional dict of settings keys to override in the loaded
     profile before embedding it - e.g. {"enable_support": "1"} to turn
     supports on for one job without needing a second profile file.
 
-    scale_factor: uniform scale (1.0 = original size) applied before
-    centering - always uniform, never per-axis, so aspect ratio can never
-    distort (see models.Job.scale_factor). Scaling first, then centering,
-    is deliberate ordering, not incidental: a uniform scale from the
-    origin doesn't change *where* the model's area-weighted centroid sits
-    relative to its own geometry, only its absolute size, so scaling
-    before centering gives the identical result as centering then scaling
-    - but only if centering happens after, since center_vertices() itself
-    needs the final (already-scaled) triangle geometry to compute the
-    right centroid to shift by."""
+    scale_factor: uniform scale (1.0 = original size). rotate_x/y/z:
+    degrees, applied in that order (see rotate_vertices above). Order of
+    operations here is deliberate, not incidental: rotate first (so
+    scaling and centering both act on the model's actual print
+    orientation, not its as-authored one), then scale (uniform, so it
+    commutes with rotation anyway - order between these two specifically
+    wouldn't matter, but rotate-then-scale reads more naturally), then
+    center last of all - center_vertices() needs the final (already
+    rotated and scaled) triangle geometry to compute the right centroid
+    and the right new Z=0 floor, since rotating can change which point
+    is actually lowest."""
     vertices, triangles = parse_stl(stl_path)
+    vertices = rotate_vertices(vertices, rotate_x, rotate_y, rotate_z)
     if scale_factor != 1.0:
         vertices = [(x * scale_factor, y * scale_factor, z * scale_factor) for x, y, z in vertices]
     vertices = center_vertices(vertices, triangles)

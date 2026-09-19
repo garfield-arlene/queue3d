@@ -192,6 +192,19 @@ def _migrate_to_5_5_0(conn):
         conn.execute(text("ALTER TABLE job ADD COLUMN scale_factor FLOAT NOT NULL DEFAULT 1.0"))
 
 
+def _migrate_to_5_6_0(conn):
+    """New Job.rotate_x/rotate_y/rotate_z columns (degrees) - part two of
+    the model orientation/sizing controls (free rotation + "snap to
+    surface" - see jobs.start_reslice, slicing/stl_to_3mf.rotate_vertices).
+    Defaults to 0.0 (no rotation), so an existing job reads as "print at
+    its original orientation," exactly what happened before these
+    columns existed. Purely additive."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    for col in ("rotate_x", "rotate_y", "rotate_z"):
+        if col not in cols:
+            conn.execute(text(f"ALTER TABLE job ADD COLUMN {col} FLOAT NOT NULL DEFAULT 0.0"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -213,6 +226,7 @@ MIGRATIONS = {
     "4.4.0": _migrate_to_4_4_0,
     "4.5.0": _migrate_to_4_5_0,
     "5.5.0": _migrate_to_5_5_0,
+    "5.6.0": _migrate_to_5_6_0,
 }
 
 

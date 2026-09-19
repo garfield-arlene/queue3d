@@ -423,6 +423,9 @@ def reslice(
     enable_supports: bool = Form(False),
     support_style: str = Form("default"),
     scale_percent: float = Form(100.0),
+    rotate_x: float = Form(0.0),
+    rotate_y: float = Form(0.0),
+    rotate_z: float = Form(0.0),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
@@ -434,14 +437,23 @@ def reslice(
     same as it would with a real slicer's own settings panel.
 
     scale_percent, not a raw factor, in the form itself - matches what
-    the edit page actually shows/lets someone type (see job_edit.html)."""
+    the edit page actually shows/lets someone type (see job_edit.html).
+    rotate_x/y/z are already in degrees, applied in that order - see
+    models.Job.rotate_x's own docstring for why the order matters."""
     job = _owned_job(session, user, job_id)
     if support_style not in SUPPORT_STYLES:
         support_style = "default"
     scale_factor = scale_percent / 100
     try:
         stl_path = start_reslice(
-            session, job, enable_supports, support_style if enable_supports else None, scale_factor
+            session,
+            job,
+            enable_supports,
+            support_style if enable_supports else None,
+            scale_factor,
+            rotate_x,
+            rotate_y,
+            rotate_z,
         )
     except JobActionError as e:
         request.session["flash_error"] = str(e)
@@ -454,6 +466,9 @@ def reslice(
         enable_supports,
         support_style if enable_supports else None,
         scale_factor,
+        rotate_x,
+        rotate_y,
+        rotate_z,
     )
     return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 

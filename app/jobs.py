@@ -512,6 +512,9 @@ def slice_and_update(
     enable_supports: bool,
     support_style: str | None,
     scale_factor: float = 1.0,
+    rotate_x: float = 0.0,
+    rotate_y: float = 0.0,
+    rotate_z: float = 0.0,
 ) -> None:
     """Runs slicing for a draft and records the outcome as 'sliced' (ready
     to preview and, if the user wants, submit) or 'slice_failed' - never
@@ -549,6 +552,9 @@ def slice_and_update(
                 support_style=support_style,
                 supports_json_path=scratch_supports if enable_supports else None,
                 scale_factor=scale_factor,
+                rotate_x=rotate_x,
+                rotate_y=rotate_y,
+                rotate_z=rotate_z,
             )
         except Exception as e:
             success, detail = False, f"Unexpected error while slicing: {e}"
@@ -583,13 +589,20 @@ def start_reslice(
     enable_supports: bool,
     support_style: str | None,
     scale_factor: float = 1.0,
+    rotate_x: float = 0.0,
+    rotate_y: float = 0.0,
+    rotate_z: float = 0.0,
 ) -> Path:
     """Resets a draft to re-slice the same already-uploaded file with new
     settings - the whole point of splitting slicing from submitting: a
-    user can freely iterate on support settings (or, now, scale - see
-    models.Job.scale_factor) before ever deciding to submit. Returns the
-    STL path to hand to slice_and_update (via a BackgroundTask, same as
-    the initial slice - see routers/user.py)."""
+    user can freely iterate on support settings, scale, or now rotation
+    (see models.Job.rotate_x/y/z) before ever deciding to submit. Returns
+    the STL path to hand to slice_and_update (via a BackgroundTask, same
+    as the initial slice - see routers/user.py). No bounds check on the
+    rotation angles the way scale gets one - any float is a valid
+    rotation (sin/cos are periodic, so e.g. 370 degrees and 10 degrees
+    produce the identical result), there's no "too rotated" the way
+    there's a "too small/too large" for scale."""
     _require_status(job, JobStatus.sliced, JobStatus.slice_failed)
     if not (MIN_SCALE_FACTOR <= scale_factor <= MAX_SCALE_FACTOR):
         raise JobActionError(
@@ -598,6 +611,9 @@ def start_reslice(
     job.supports_enabled = enable_supports
     job.support_style = support_style
     job.scale_factor = scale_factor
+    job.rotate_x = rotate_x
+    job.rotate_y = rotate_y
+    job.rotate_z = rotate_z
     job.status = JobStatus.submitted
     job.slice_error = None
     session.add(job)
@@ -605,6 +621,11 @@ def start_reslice(
         f"supports={enable_supports}"
         + (f" style={support_style}" if support_style else "")
         + (f" scale={scale_factor:.2f}" if scale_factor != 1.0 else "")
+        + (
+            f" rotate=({rotate_x:.1f},{rotate_y:.1f},{rotate_z:.1f})"
+            if (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0)
+            else ""
+        )
     )
     log_event(session, job.id, _user_actor(session, job.user_id), "reslice_started", detail=style_detail)
     session.commit()

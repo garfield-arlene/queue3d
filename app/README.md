@@ -1844,9 +1844,11 @@ effect of a scale change**, matching this app's existing "instant
 client-side preview" philosophy (see "Upload and slicing progress").
 `static/preview.js` now keeps the model exactly as loaded/parsed
 (`rawGeometry`, never mutated) separately from what's actually
-displayed, so a new exported `setPreviewScale(factor)` can always
-compute fresh from the true original size - repeated scale changes
-never compound - and a new `autoFitScale()` computes the largest factor
+displayed, so a new exported function (originally `setPreviewScale(factor)`,
+later folded into the combined `applyTransform()` once rotation joined it
+- see "Rotate and snap to surface" below) can always compute fresh from
+the true original size - repeated scale changes never compound - and a
+new `autoFitScale()` computes the largest factor
 (capped at 1, so this only ever shrinks an oversized model, never grows
 one that already fits) that would bring the *original* geometry within
 the build plate on all three axes at once. The one-click "Auto-resize
@@ -1877,6 +1879,159 @@ input changes, the "too large" error state appearing and clearing
 correctly, and auto-fit computing the exact right shrink factor for a
 genuinely oversized synthetic model (limited by whichever bed dimension
 was tightest) with zero console/page errors throughout.
+
+### Rotate and snap to surface (model controls, part two)
+
+**Why this exists:** the second half of the user's "model controls" ask,
+resumed the same session after a real slicing failure (`Flexi_Seal.stl`,
+see "A real stuck-slicing incident" below) made it concrete: resizing a
+genuinely asymmetric model can never fix `mbotmake`'s bed-centering
+check (that check is a scale-invariant ratio), but *reorienting* it can
+- confirmed by testing the actual failing file at a sweep of rotation
+angles through the real pipeline before writing any UI for this at all.
+
+**The highest-stakes correctness question this raised, verified
+numerically before trusting any of it:** does `THREE.BufferGeometry`'s
+`.rotateX().rotateY().rotateZ()` (what the live preview already uses)
+compose the same way as a matching sequence of rotation matrices in
+Python (what has to run inside the actual slicing subprocess)? Confirmed
+yes, to float32 precision, across 6 test cases including large/negative
+angles - by actually loading this project's own vendored Three.js build
+in a real browser and comparing its output point-for-point against
+`slicing.stl_to_3mf.rotate_vertices()`, not by reasoning about
+conventions from documentation. That numeric parity is what
+`Job.rotate_x/y/z` (schema `5.6.0`, degrees, defaults `0.0`) and
+`rotate_vertices()` depend on being true - a silent mismatch here
+wouldn't just look wrong in the browser, it would mean an approved job
+prints in a different orientation than whatever anyone actually looked
+at and signed off on.
+
+**A second, separate correctness trap found the same way, this time by
+being *wrong* first and catching it before shipping:** "snap to
+surface" needs to compose an *additional* rotation on top of whatever's
+already dialed in, then express the combined result back as three
+angles a future re-slice can reproduce. The natural-looking approach -
+`new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z, "XYZ"))`
+to represent "the same rotation as calling `.rotateX(x).rotateY(y)
+.rotateZ(z)`" - is simply false; verified this directly (built both,
+compared results, they disagreed) before it ever reached working code.
+Three.js's `"XYZ"` Euler order is *intrinsic* (each axis is the model's
+own, already-tilted-by-the-previous-rotation axis); `rotateX/Y/Z` calls
+compose *extrinsically* (each axis is the fixed world axis, unaffected
+by earlier rotations) - two genuinely different rotations that happen
+to share a label. The actual equivalent, confirmed by a full compose-
+then-decompose-then-reapply round trip (not just a single-stage check)
+across three test cases including angles past 90°: Three.js's
+*intrinsic* `"ZYX"` order. `preview.js`'s `computeSnapRotation()` is
+built entirely on that confirmed equivalence, commented with the
+reasoning directly in the code so a future change to this can't
+casually reintroduce the mistake without at least reading why it's
+there.
+
+**Order of operations in `stl_to_3mf.build_3mf()`: rotate, then scale,
+then center** - rotate first so scaling and centering both act on the
+model's actual print orientation, not its as-authored one; rotate/scale
+order between those two specifically doesn't matter (uniform scale
+commutes with any rotation), but centering has to run last regardless,
+since it needs the final, already-transformed geometry to compute the
+right centroid and the right new Z-floor (rotating can change which
+point is actually lowest). Threaded through the same subprocess chain
+resize already established (`slice.py --rotate-x/-y/-z`,
+`pipeline.run_slice()`, `jobs.slice_and_update()`/`start_reslice()`) -
+no bounds check on the angles the way scale gets one, since sin/cos are
+periodic and there's no such thing as "too rotated" the way there's a
+"too small/too large" for scale.
+
+**The UI: three degree fields (live preview per keystroke, same
+`applyTransform()` resize already uses, now also taking `rotateX/Y/Z`)
+plus a "Snap to surface" mode** - click the button, then click a face on
+the model itself; a raycast against the currently-displayed mesh finds
+which face was clicked, and `computeSnapRotation()` returns the new
+total rotation that makes that face the new bottom. Click-vs-drag is
+distinguished by movement distance between pointer-down and pointer-up
+on the preview container (over ~5px counts as a drag, e.g. orbiting the
+camera via `OrbitControls`, and is ignored) rather than by which DOM
+element fired the event - the canvas is the same element either way.
+`autoFitScale()` (see "Resize and auto-fit" above) was made
+rotation-aware at the same time: reorienting a model changes its actual
+footprint on the plate, so fitting it has to account for whatever
+rotation is currently applied, not just the as-uploaded shape.
+
+Verified end-to-end, both halves: the actual `Flexi_Seal.stl` file, run
+through the real production `--rotate-z 45` code path (not a one-off
+script), reproduced the exact passing result found during the original
+investigation and produced a genuine `.makerbot`. In the browser (a
+real headless browser, not just read as correct): manual rotation
+inputs live-updating the preview and correctly changing reported
+dimensions; a miss-click in snap mode changing nothing and staying in
+snap mode; a genuine drag across the model also changing nothing
+(confirmed separately that the drag *did* orbit the camera, ruling out
+"nothing happened because the drag didn't register" as a false
+explanation); and a real click that hits the model updating all three
+rotation fields, exiting snap mode, and changing the reported
+dimensions to match the new orientation. Getting a *reliable* real click
+onto the model at all took its own debugging - dead-center of the
+preview canvas turned out to miss a hole in the middle of this
+particular shape, and a synthetic `page.mouse.click()` at fixed
+coordinates proved less trustworthy in this environment than Playwright's
+own locator-relative `click(position=...)` - worth remembering as a
+real, environment-specific quirk if this class of test needs writing
+again, not evidence the underlying feature was ever broken.
+
+### A real regression, found immediately after shipping the above: a canvas-sizing race condition
+
+**What happened, reported directly:** "This is a major regression
+failure" - the 3D preview rendered as a completely blank box, on pages
+that had nothing to do with rotation at all (a previously-and-still
+successfully-sliced plain `.stl`, viewed on the ordinary read-only
+"View 3D" page). Investigated the obvious suspects first, and ruled
+each out with real evidence rather than assumption: the real server was
+serving byte-identical, correct files (diffed directly against a known-
+good copy); the exact template rendered correctly server-side for the
+real job in question; and the identical code, driven through a real
+headless browser in an isolated test, produced a working preview with
+correct dimensions. All of that pointed away from the code being
+broken - until the user reported the actual fix that worked: switching
+their browser to fullscreen and back made the preview reappear.
+
+**That one detail was the real diagnosis.** `preview.js`'s scene setup
+already had exactly the right idea - call `resizeToContainer()` once
+immediately, so the canvas is sized correctly from the very first
+frame, rather than waiting on the asynchronous `ResizeObserver` callback
+that also keeps it sized correctly later. The bug was in the timing of
+that *immediate* call: it runs right after `container.innerHTML = ""`
+and appending a brand new `<canvas>`, reading `container.clientWidth`/
+`clientHeight` at that exact moment - which can occasionally race the
+browser's own layout pass and catch a transitional value before the
+container has actually taken on its real, CSS-computed size. Whatever
+wrong size that first call catches, the camera's aspect ratio and the
+renderer's pixel buffer get locked to it, and nothing was ever queued to
+correct it afterward - unless something else happened to trigger the
+`ResizeObserver` later, which is exactly what a manual window resize
+does. A live page that never gets resized by hand would have stayed
+blank indefinitely.
+
+**Fixed by scheduling one more, guaranteed-correctly-timed resize via
+`requestAnimationFrame`, right alongside the existing immediate call -
+not by replacing it.** `requestAnimationFrame` callbacks run after the
+browser's next layout/paint pass completes, so this second call is
+certain to see the container's real, settled size even on the rare
+occasion the immediate one didn't. Cheap enough to always do rather than
+trying to detect "was that first read actually wrong" from inside the
+function, which isn't reliably knowable at all from there. Verified the
+fix doesn't regress the ordinary, already-working case: loading a real
+model in a real headless browser still produces a canvas sized exactly
+to the container's CSS dimensions and a correctly-rendered preview.
+
+**Explicitly not claimed as a deterministically-reproduced fix** - this
+is a genuine browser layout timing race, not a logic bug with a fixed
+input/output to assert against, and automated headless testing (this
+project's main verification tool throughout) tends to run against an
+already-fully-laid-out page, which is exactly the condition under which
+this race doesn't occur - worth remembering as a real gap in what this
+project's testing approach can catch on its own; a live user's
+real-world page load remains the only way this particular class of bug
+actually surfaces.
 
 ### Browsing finished jobs, and the audit log
 

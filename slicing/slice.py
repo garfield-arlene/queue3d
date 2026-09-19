@@ -43,7 +43,17 @@ sys.path.insert(0, str(HERE))
 from stl_to_3mf import build_3mf  # noqa: E402
 
 
-def slice_stl(stl_path, output_makerbot_path, enable_supports=False, support_style=None, gcode_out_path=None, scale_factor=1.0):
+def slice_stl(
+    stl_path,
+    output_makerbot_path,
+    enable_supports=False,
+    support_style=None,
+    gcode_out_path=None,
+    scale_factor=1.0,
+    rotate_x=0.0,
+    rotate_y=0.0,
+    rotate_z=0.0,
+):
     """gcode_out_path: if given, the intermediate gcode (before mbotmake
     conversion) is copied there - it's otherwise thrown away with the temp
     dir. Needed by callers that want to derive anything from it themselves
@@ -57,9 +67,10 @@ def slice_stl(stl_path, output_makerbot_path, enable_supports=False, support_sty
     app/routers/user.py's SUPPORT_STYLES for the full list with labels).
     Only meaningful when enable_supports is true.
 
-    scale_factor: uniform scale (1.0 = original size) - see
-    stl_to_3mf.build_3mf's own docstring for why this is applied before
-    centering, not after."""
+    scale_factor: uniform scale (1.0 = original size). rotate_x/y/z:
+    degrees, applied in that order about the fixed world axes - see
+    stl_to_3mf.build_3mf's own docstring for the full ordering (rotate,
+    then scale, then center) and why it matters."""
     stl_path = Path(stl_path)
     output_makerbot_path = Path(output_makerbot_path)
     overrides = {"enable_support": "1" if enable_supports else "0"}
@@ -72,7 +83,14 @@ def slice_stl(stl_path, output_makerbot_path, enable_supports=False, support_sty
         tmp = Path(tmp)
         project_3mf = tmp / "project.3mf"
         n_verts, n_tris = build_3mf(
-            str(stl_path), str(PROFILE), str(project_3mf), overrides=overrides, scale_factor=scale_factor
+            str(stl_path),
+            str(PROFILE),
+            str(project_3mf),
+            overrides=overrides,
+            scale_factor=scale_factor,
+            rotate_x=rotate_x,
+            rotate_y=rotate_y,
+            rotate_z=rotate_z,
         )
         print(f"Wrapped {stl_path.name} into project.3mf ({n_verts} vertices, {n_tris} triangles)")
 
@@ -157,6 +175,9 @@ def main():
     parser.add_argument("--support-style", help="OrcaSlicer support_style override, e.g. grid/snug/organic/tree_hybrid/tree_slim")
     parser.add_argument("--gcode-out", help="Also save the intermediate gcode here")
     parser.add_argument("--scale", type=float, default=1.0, help="Uniform scale factor, 1.0 = original size")
+    parser.add_argument("--rotate-x", type=float, default=0.0, help="Degrees to rotate about the X axis, applied first")
+    parser.add_argument("--rotate-y", type=float, default=0.0, help="Degrees to rotate about the Y axis, applied second")
+    parser.add_argument("--rotate-z", type=float, default=0.0, help="Degrees to rotate about the Z axis, applied third")
     args = parser.parse_args()
     slice_stl(
         args.stl,
@@ -165,6 +186,9 @@ def main():
         support_style=args.support_style,
         gcode_out_path=args.gcode_out,
         scale_factor=args.scale,
+        rotate_x=args.rotate_x,
+        rotate_y=args.rotate_y,
+        rotate_z=args.rotate_z,
     )
 
 

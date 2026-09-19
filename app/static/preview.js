@@ -71,7 +71,25 @@ function initScene(containerEl) {
 
     resizeObserver = new ResizeObserver(() => resizeToContainer());
     resizeObserver.observe(container);
+    // Called both synchronously now *and* again next frame, deliberately -
+    // a real bug, not belt-and-suspenders for its own sake. Reading
+    // container.clientWidth/clientHeight right here can race the browser's
+    // own layout pass (this runs immediately after container.innerHTML=""
+    // and appending a brand new canvas above), occasionally landing before
+    // the container has actually taken on its real CSS-computed size -
+    // sizing the renderer/camera from whatever transitional value that
+    // read caught, with nothing ever correcting it afterward unless
+    // something else happens to trigger the ResizeObserver later (e.g. the
+    // user resizing their browser window - which is exactly how this was
+    // first noticed: a live page showing a totally blank preview until an
+    // unrelated window resize "fixed" it). requestAnimationFrame runs
+    // after the browser's next layout/paint, so this second call is
+    // guaranteed to see the real, settled size even when the immediate one
+    // didn't - cheap enough to always do, not just when something looks
+    // wrong, since there's no reliable way to detect "that first read was
+    // actually the wrong one" from in here.
     resizeToContainer();
+    requestAnimationFrame(() => resizeToContainer());
 
     animate();
 }
@@ -212,38 +230,133 @@ function showModel(geometry) {
 }
 
 /**
- * Re-renders the already-loaded model at `scaleFactor` (1 = original
- * size) - no re-fetch/re-parse, and always computed fresh from the true
- * original geometry (see rawGeometry above), so repeated calls never
- * compound. A no-op if nothing's loaded yet. Matches
- * slicing/stl_to_3mf.build_3mf's own scale-then-center ordering exactly,
- * so what this shows is what will actually get sliced at the same
- * scale - uniform on all three axes always, per the user ("resize...
- * while maintaining the aspect ratio"), never a per-axis distortion.
+ * Applies `rotateX`/`rotateY`/`rotateZ` (degrees, about the fixed world
+ * axes, in that exact order) and then `scale` (uniform) to the raw
+ * model, then re-renders - no re-fetch/re-parse, and always computed
+ * fresh from the true original geometry (see rawGeometry above), so
+ * repeated calls never compound. A no-op if nothing's loaded yet.
+ *
+ * Matches slicing/stl_to_3mf.build_3mf's own rotate-then-scale-then-
+ * center ordering exactly (see that function's docstring), so what this
+ * shows is what will actually get sliced. The rotation order (X, then
+ * Y, then Z, each about the *world* axis, not the model's own
+ * progressively-tilted local axes) is the one BufferGeometry.rotateX/Y/Z
+ * already implement natively - deliberately not Three.js's Euler/
+ * Quaternion "XYZ" order, which is a *different*, intrinsic-axis
+ * convention that does NOT reproduce this (confirmed by direct
+ * comparison while building this - see computeSnapRotation below for
+ * where that distinction actually matters). Scale is always uniform, so
+ * proportions can never distort, per the user ("resize... while
+ * maintaining the aspect ratio").
  */
-export function setPreviewScale(scaleFactor) {
+export function applyTransform({ scale = 1, rotateX = 0, rotateY = 0, rotateZ = 0 } = {}) {
     if (!rawGeometry) return;
     const geometry = rawGeometry.clone();
-    if (scaleFactor !== 1) {
-        geometry.scale(scaleFactor, scaleFactor, scaleFactor);
-    }
+    if (rotateX) geometry.rotateX(THREE.MathUtils.degToRad(rotateX));
+    if (rotateY) geometry.rotateY(THREE.MathUtils.degToRad(rotateY));
+    if (rotateZ) geometry.rotateZ(THREE.MathUtils.degToRad(rotateZ));
+    if (scale !== 1) geometry.scale(scale, scale, scale);
     renderGeometry(geometry);
 }
 
 /**
  * The largest scale factor (capped at 1 - this only ever shrinks, never
- * grows a model that already fits) that would bring the *original*
- * model's bounding box within the build plate on all three axes - for
- * the one-click "auto-resize to fit" button (job_edit.html). Returns 1
- * if nothing's loaded, or if it already fits.
+ * grows a model that already fits) that would bring the model's
+ * bounding box within the build plate on all three axes, *at the given
+ * rotation* - rotating changes the footprint, so a model already
+ * reoriented (by hand, or via "snap to surface") needs auto-fit
+ * computed against that orientation's actual bounding box, not the
+ * as-uploaded one. Returns 1 if nothing's loaded, or if it already
+ * fits.
  */
-export function autoFitScale() {
+export function autoFitScale(rotateX = 0, rotateY = 0, rotateZ = 0) {
     if (!rawGeometry) return 1;
-    rawGeometry.computeBoundingBox();
+    const geometry = rawGeometry.clone();
+    if (rotateX) geometry.rotateX(THREE.MathUtils.degToRad(rotateX));
+    if (rotateY) geometry.rotateY(THREE.MathUtils.degToRad(rotateY));
+    if (rotateZ) geometry.rotateZ(THREE.MathUtils.degToRad(rotateZ));
+    geometry.computeBoundingBox();
     const size = new THREE.Vector3();
-    rawGeometry.boundingBox.getSize(size);
+    geometry.boundingBox.getSize(size);
     if (![size.x, size.y, size.z].every(Number.isFinite)) return 1;
     return Math.min(1, BED_WIDTH_MM / size.x, BED_DEPTH_MM / size.y, BED_HEIGHT_MM / size.z);
+}
+
+/**
+ * "Snap to surface": given the currently-applied rotation (degrees,
+ * same X/Y/Z-in-that-order convention as applyTransform above) and
+ * where the user clicked on the preview canvas (`clientX`/`clientY`,
+ * straight from a MouseEvent), raycasts against the displayed model; if
+ * a face was actually hit, returns the new {x, y, z} rotation (degrees)
+ * that would make that face the new bottom, flat on the plate. Returns
+ * null if nothing was hit (a click that missed the model) or nothing's
+ * loaded yet - the caller should leave the current rotation alone in
+ * that case, not treat it as "reset to zero."
+ *
+ * The math this needs - composing an *additional* rotation on top of
+ * whatever's already applied, then expressing the combined result back
+ * as three sequential X/Y/Z angles - cannot use Three.js's Euler/
+ * Quaternion conversions with the "XYZ" order string some documentation
+ * suggests: that order is intrinsic (each axis is the model's own,
+ * already-tilted-by-the-previous-rotation axis), while
+ * BufferGeometry.rotateX/Y/Z composes extrinsically (each axis is the
+ * fixed world axis, unaffected by earlier rotations) - confirmed these
+ * two conventions actually disagree by direct comparison before writing
+ * this, not assumed from documentation. The extrinsic X-then-Y-then-Z
+ * composition this app uses everywhere else is equivalent to Three.js's
+ * *intrinsic* "ZYX" order instead (a standard, general equivalence
+ * between intrinsic and extrinsic Euler angles in reverse order) -
+ * confirmed correct via a real round-trip test (compose two rotations
+ * as quaternions using Euler "ZYX", decompose back to angles the same
+ * way, and verify applying those angles sequentially reproduces the
+ * directly-composed quaternion's result) before relying on it here.
+ */
+export function computeSnapRotation(currentRotateX, currentRotateY, currentRotateZ, clientX, clientY) {
+    if (!rawGeometry || !currentMesh || !renderer || !camera) return null;
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(ndc, camera);
+    const hits = raycaster.intersectObject(currentMesh, false);
+    if (hits.length === 0 || !hits[0].face) return null;
+
+    // currentMesh's own Object3D transform is always identity (every
+    // rotation/scale/centering is baked directly into its geometry's
+    // vertex data - see renderGeometry above) - so the hit face's normal
+    // is already in the same space the rest of this function works in,
+    // no extra transform needed.
+    const clickedNormal = hits[0].face.normal.clone().normalize();
+
+    const eulerToQuat = (xDeg, yDeg, zDeg) =>
+        new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(
+                THREE.MathUtils.degToRad(xDeg),
+                THREE.MathUtils.degToRad(yDeg),
+                THREE.MathUtils.degToRad(zDeg),
+                "ZYX"
+            )
+        );
+
+    const currentQuat = eulerToQuat(currentRotateX, currentRotateY, currentRotateZ);
+    // The rotation that takes the clicked face's normal to "straight
+    // down" (0,0,-1) - the definition of "this face is now the bottom,
+    // resting flat on the plate."
+    const snapQuat = new THREE.Quaternion().setFromUnitVectors(clickedNormal, new THREE.Vector3(0, 0, -1));
+    // Apply the existing rotation first, then the snap correction on
+    // top of that (not the other way around) - the snap is computed
+    // from the *currently displayed* orientation, so it has to compose
+    // after it, not before.
+    const combined = snapQuat.clone().multiply(currentQuat);
+    const result = new THREE.Euler().setFromQuaternion(combined, "ZYX");
+    return {
+        x: THREE.MathUtils.radToDeg(result.x),
+        y: THREE.MathUtils.radToDeg(result.y),
+        z: THREE.MathUtils.radToDeg(result.z),
+    };
 }
 
 const SUPPORT_TUBE_RADIUS = 0.3; // mm - roughly a support strand's width
