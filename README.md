@@ -249,7 +249,10 @@ Managing user accounts:
   bed-centering safety check slices successfully once rotated to a
   sensible printing orientation. Auto-fit accounts for whatever rotation
   is currently applied too, since reorienting changes the model's actual
-  footprint on the plate.
+  footprint on the plate. On-canvas drag handles (rotate freely, or
+  uniform resize) are available too, alongside the number fields and
+  snap-to-surface - three different ways to reach the same rotate/scale
+  values, kept in sync with each other.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.

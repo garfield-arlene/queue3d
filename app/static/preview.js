@@ -12,6 +12,7 @@
 import * as THREE from "three";
 import { STLLoader } from "./vendor/three/addons/loaders/STLLoader.js";
 import { OrbitControls } from "./vendor/three/addons/controls/OrbitControls.js";
+import { TransformControls } from "./vendor/three/addons/controls/TransformControls.js";
 
 const BED_WIDTH_MM = 295;
 const BED_DEPTH_MM = 195;
@@ -28,6 +29,20 @@ let resizeObserver = null;
 // fresh into renderGeometry() on every (re)scale rather than mutated in
 // place, so repeated scale changes never compound.
 let rawGeometry = null;
+
+// On-canvas rotate/resize handles (Three.js's own TransformControls addon -
+// the "handles" a user drags directly, as opposed to typing into the
+// rotate/scale number fields or clicking a face in "snap to surface" mode).
+// Created once in initScene() and reused across model (re)loads, same as
+// `controls` (OrbitControls) above - only its `object`/`mode`/`visible`
+// change per use. `gizmoBaseline` is the transform the gizmo's *own*
+// object3D delta composes on top of (see commitGizmoTransform below); kept
+// here rather than re-derived from the DOM, since preview.js has no access
+// to job_edit.html's input fields - the caller hands it in via
+// enableGizmo() and reads the result back out via the onCommit callback.
+let transformControls = null;
+let gizmoBaseline = { rotateX: 0, rotateY: 0, rotateZ: 0, scale: 1 };
+let gizmoOnCommit = null;
 
 function initScene(containerEl) {
     container = containerEl;
@@ -48,6 +63,34 @@ function initScene(containerEl) {
     controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(0, 0, BED_HEIGHT_MM * 0.15);
     controls.enableDamping = true;
+
+    // Starts detached/invisible - only turned on by enableGizmo() below,
+    // when the caller (job_edit.html) puts a rotate/resize gizmo button
+    // into "active" state. dragging-changed is the documented way to stop
+    // OrbitControls from also trying to orbit the camera while a handle is
+    // being dragged - both listen on the same canvas, and without this an
+    // attempted drag on a handle would instead (or also) spin the camera.
+    transformControls = new TransformControls(camera, renderer.domElement);
+    transformControls.enabled = false;
+    transformControls.visible = false;
+    scene.add(transformControls);
+    transformControls.addEventListener("dragging-changed", (e) => {
+        controls.enabled = !e.value;
+    });
+    transformControls.addEventListener("objectChange", () => {
+        // "Resize... while maintaining the aspect ratio" is a hard product
+        // requirement (see applyTransform's own comment) - forcing this on
+        // every change event, regardless of which individual scale handle
+        // was actually grabbed, means every drag in scale mode behaves as
+        // a single uniform resize rather than needing three handles that
+        // each only sort-of do the right thing.
+        if (transformControls.mode === "scale" && transformControls.object) {
+            const s = transformControls.object.scale;
+            s.y = s.x;
+            s.z = s.x;
+        }
+    });
+    transformControls.addEventListener("mouseUp", () => commitGizmoTransform());
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.6));
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
@@ -257,6 +300,118 @@ export function applyTransform({ scale = 1, rotateX = 0, rotateY = 0, rotateZ = 
     if (rotateZ) geometry.rotateZ(THREE.MathUtils.degToRad(rotateZ));
     if (scale !== 1) geometry.scale(scale, scale, scale);
     renderGeometry(geometry);
+}
+
+/**
+ * Finishes one gizmo drag (called on TransformControls' own "mouseUp"
+ * event, i.e. the handle was released - not fired for a mere hover/click
+ * that never actually dragged anything). `transformControls.object` is
+ * whatever Mesh enableGizmo() last attached to; because that mesh's own
+ * Object3D transform always starts at identity (see renderGeometry - every
+ * (re)render creates a fresh Mesh with default position/quaternion/scale,
+ * all real transform baked directly into vertex data instead), its
+ * quaternion/scale *after* a drag session is exactly that session's delta,
+ * not an absolute value - the same "delta composes onto a running
+ * baseline" shape as computeSnapRotation above, and reusing the exact same
+ * confirmed 'ZYX' intrinsic-Euler equivalence for the rotation half of it.
+ *
+ * Re-bakes the result via applyTransform() (replacing currentMesh with a
+ * fresh, identity-transform one, same as every other transform change in
+ * this file) and re-attaches the gizmo to that new mesh - without this,
+ * the gizmo would keep pointing at a mesh renderGeometry has already
+ * disposed, and the next drag would silently do nothing.
+ */
+function commitGizmoTransform() {
+    if (!transformControls || !transformControls.object) return;
+    const obj = transformControls.object;
+
+    const eulerToQuat = (xDeg, yDeg, zDeg) =>
+        new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(
+                THREE.MathUtils.degToRad(xDeg),
+                THREE.MathUtils.degToRad(yDeg),
+                THREE.MathUtils.degToRad(zDeg),
+                "ZYX"
+            )
+        );
+    const baseQuat = eulerToQuat(gizmoBaseline.rotateX, gizmoBaseline.rotateY, gizmoBaseline.rotateZ);
+    // This drag's delta, composed on top of the baseline it started from -
+    // same order as computeSnapRotation's own snapQuat.multiply(currentQuat).
+    const combined = obj.quaternion.clone().multiply(baseQuat);
+    const resultEuler = new THREE.Euler().setFromQuaternion(combined, "ZYX");
+
+    // obj.scale.x is this drag's *relative* factor (forced uniform by the
+    // objectChange listener above) on top of whatever scale the model was
+    // already displayed at - not an absolute value either.
+    let scale = gizmoBaseline.scale * obj.scale.x;
+    // TransformControls' own free-scale ("XYZ" handle) math computes its
+    // factor as pointEnd.length()/pointStart.length() in an invisible
+    // helper plane - if a drag happens to start very close to the
+    // object's own origin in that plane (pointStart.length() near zero),
+    // the result can come out wildly large, or even negative if the drag
+    // crossed the origin (a real, known characteristic of the underlying
+    // library's free-scale handle, confirmed by hitting it directly while
+    // testing this - not something specific to this app's own code).
+    // Clamped to the exact bounds jobs.py's start_reslice() enforces
+    // server-side (MIN_SCALE_FACTOR/MAX_SCALE_FACTOR) - a negative or
+    // astronomical scale is never something "resize while keeping
+    // proportions" should show, let alone let through to a re-slice.
+    const MIN_SCALE = 0.01;
+    const MAX_SCALE = 10.0;
+    if (!Number.isFinite(scale) || scale <= 0) scale = gizmoBaseline.scale;
+    scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
+
+    const newTransform = {
+        rotateX: THREE.MathUtils.radToDeg(resultEuler.x),
+        rotateY: THREE.MathUtils.radToDeg(resultEuler.y),
+        rotateZ: THREE.MathUtils.radToDeg(resultEuler.z),
+        scale,
+    };
+    gizmoBaseline = newTransform;
+    applyTransform(newTransform);
+    transformControls.attach(currentMesh);
+
+    if (gizmoOnCommit) gizmoOnCommit(newTransform);
+}
+
+/**
+ * Turns on the on-canvas rotate/resize handles in `mode` ('rotate' or
+ * 'scale'), starting from `baseline` (the transform the model is
+ * currently displayed at - typically the caller's own number-field
+ * values) and calling `onCommit(newTransform)` once per completed drag
+ * with the new absolute {rotateX, rotateY, rotateZ, scale}. The caller
+ * (job_edit.html) is expected to write those straight back into its own
+ * number fields - the gizmo and the fields are two views onto the same
+ * state, kept in sync through this callback rather than the gizmo owning
+ * its own separate notion of the model's orientation/size.
+ *
+ * Safe to call again while already enabled (e.g. after the caller's own
+ * number fields changed and replaced currentMesh via applyTransform) -
+ * re-attaches to whatever the current mesh is and refreshes the baseline
+ * a fresh drag should compose onto. A no-op if nothing's loaded yet.
+ */
+export function enableGizmo(mode, baseline, onCommit) {
+    if (!transformControls || !currentMesh) return;
+    gizmoBaseline = {
+        rotateX: baseline.rotateX || 0,
+        rotateY: baseline.rotateY || 0,
+        rotateZ: baseline.rotateZ || 0,
+        scale: baseline.scale || 1,
+    };
+    gizmoOnCommit = onCommit || null;
+    transformControls.attach(currentMesh);
+    transformControls.mode = mode;
+    transformControls.enabled = true;
+    transformControls.visible = true;
+}
+
+/** Turns the on-canvas handles off entirely (plain orbit/zoom resumes). */
+export function disableGizmo() {
+    if (!transformControls) return;
+    transformControls.detach();
+    transformControls.enabled = false;
+    transformControls.visible = false;
+    gizmoOnCommit = null;
 }
 
 /**

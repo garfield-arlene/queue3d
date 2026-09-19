@@ -427,6 +427,56 @@ uploading the good one while clearly naming the skipped one - all
 through the real HTTP routes and the real OrcaSlicer/`mbotmake`
 pipeline, not just the parsing functions in isolation.
 
+**A real report, weeks later: uploading a real multi-model zip "did
+nothing," with "422 Unprocessable Content" logged server-side.**
+Checked the real database directly before guessing at a cause: no job
+row existed at all from the failed attempt - meaningful, because every
+path through `upload()`'s own code either creates a job or calls its
+local `fail()` helper, which always sets a flash message and redirects.
+A 422 that never reaches either means the request failed FastAPI's own
+validation *before* the route body ever ran at all - not a bug in
+`storage.extract_model_files()`'s splitting logic, which never got the
+chance to run.
+
+Ruled out directly against the real production server, not guessed:
+Starlette's own multipart size limits (`formparsers.py`'s
+`max_part_size`, 1MB) only apply to non-file form fields - confirmed by
+reading the actual installed library source - and even when it does
+trip, a `MultiPartException` there surfaces as a 400, not a 422, so
+this can't be that regardless. A realistic zip built to resemble a real
+Thingiverse download (nested folders, a README, a stray non-model file)
+uploaded and split into separate jobs correctly against the real
+production server. Couldn't reproduce the actual 422 without the
+specific file that triggered it - recorded as an open README to-do
+item; the next occurrence needs either that file or a browser
+Network-tab capture of the failed request to pin down further.
+
+**A real, independent bug found and fixed while investigating this,
+regardless of whatever the 422's root cause turns out to be:** the
+dashboard's own upload JS sent the form via a manual `XMLHttpRequest`
+(for genuine upload-byte progress - see "Upload and slicing progress"
+below) and unconditionally navigated to `/dashboard` the instant the
+request completed, on the reasoning (accurate for every error path this
+app's own code controls, since `fail()` always redirects with a flash
+message set) that "the server always ends up there anyway." That
+reasoning silently breaks for exactly this class of failure - a request
+that fails before the route runs never redirects anywhere at all - which
+is precisely why the user saw nothing: the JS still just navigated to a
+perfectly ordinary dashboard, with no job and no error text, indistin-
+guishable from the upload having done nothing. Fixed: the JS now checks
+`xhr.status` (same-origin redirects are followed transparently by the
+browser, so a genuine success *or* an in-app `fail()` both still read
+as a final 2xx by the time `"load"` fires - only a failure that never
+got redirected surfaces as non-2xx here) and shows its own error text
+for anything outside that, or a network failure via the `"error"`
+event. Verified the normal path still works unchanged (a real upload
+still redirects to the dashboard with no error text shown) before
+considering this done.
+
+Also noticed in passing while investigating: a `slice_failed` draft has
+no delete route at all (only `queued`/`approved` jobs can be deleted,
+by either a user or an admin) - recorded as its own README to-do item.
+
 ### Upload and slicing progress
 
 Slicing (OrcaSlicer + `mbotmake`, both real subprocesses) can take minutes
@@ -2032,6 +2082,121 @@ this race doesn't occur - worth remembering as a real gap in what this
 project's testing approach can catch on its own; a live user's
 real-world page load remains the only way this particular class of bug
 actually surfaces.
+
+### On-canvas drag handles (model controls, part three)
+
+**Why this exists:** immediately after the rotation feature above
+shipped, the user asked directly: "Is it possible to have handles for
+the object in the preview to resize and rotate visually instead of only
+by numbers in the fields?" - the number fields plus click-to-snap cover
+precision and one specific reorientation, but not general-purpose
+"grab it and turn/resize it by eye," which is how most 3D editors work.
+
+**Built on Three.js's own `TransformControls` addon** (vendored at the
+exact same r160 revision as the rest of this project's Three.js build,
+per [[queue3d-deployment-network]]'s no-CDN rule - fetched once,
+unmodified, and committed verbatim rather than hand-rolled, since
+reimplementing a drag-gizmo's picking/highlighting/screen-space-sizing
+logic from scratch would just be reproducing a well-tested library
+worse). Two buttons, "Rotate (drag)" and "Resize (drag)", each toggling
+the gizmo on in that mode - mutually exclusive with each other and with
+"Snap to surface" (all three would otherwise fight over pointer events
+on the same canvas), same pattern the existing snap-mode toggle already
+used.
+
+**The integration challenge, and how it resolves cleanly with this
+app's existing architecture:** `TransformControls` expects to freely
+manipulate an attached Object3D's own position/quaternion/scale - but
+every other transform in this file is deliberately baked directly into
+vertex data instead, with the displayed mesh's own Object3D transform
+always kept at identity (see "Rotate and snap to surface" above, and
+`computeSnapRotation`'s own comment on why). Rather than fight that
+invariant, the gizmo is allowed to freely manipulate the mesh's
+Object3D transform *during* a drag (cheap, and exactly what the library
+expects), and only on release (`TransformControls`' own `"mouseUp"`
+event - fired once a handle is actually let go, not on a mere hover)
+does `commitGizmoTransform()` read the resulting delta back out,
+compose it onto a running baseline, re-bake the combined result via the
+same `applyTransform()` every other control uses, and re-attach the
+gizmo to the freshly-created mesh `applyTransform` always produces -
+restoring the identity-transform invariant before the next drag ever
+starts. `dragging-changed` (a `TransformControls` event fired the
+instant a drag actually starts/ends) disables `OrbitControls` for the
+duration, so grabbing a handle can't also spin the camera - both listen
+on the same canvas element.
+
+**Reused, not reinvented, the rotation math this session had already
+verified numerically:** the mesh's own quaternion after a drag session
+(starting from identity, since it's always freshly rebaked before each
+drag) *is* that drag's rotation delta - composing it onto the running
+baseline via the confirmed intrinsic-`"ZYX"`-Euler equivalence is
+exactly `computeSnapRotation`'s own `snapQuat.multiply(currentQuat)`
+pattern, reused rather than re-derived.
+
+**A hard product requirement needed its own small fix, not a
+work-around avoided:** "resize... while maintaining the aspect ratio"
+- but `TransformControls`' scale mode ships with three independent
+per-axis handles plus one uniform corner handle, matching a general-
+purpose 3D editor's needs, not this app's specific one. Rather than try
+to hide the individual X/Y/Z handles (their visibility logic is bound
+up with the same flags used for rotate/translate axes too, and there's
+no clean way to keep only the uniform corner visible), every drag in
+scale mode is forced uniform directly: a listener on `TransformControls`'
+own `"objectChange"` event (fired continuously *during* a drag, not
+just at the end) copies whichever axis actually changed into the other
+two, every frame - so which handle was grabbed stops mattering at all;
+every scale drag behaves as one single resize.
+
+**A real, numerically wild bug found by testing the actual drag
+interaction, not just reading the code as correct:** `TransformControls`'
+own free/uniform ("XYZ" corner) scale handle computes its factor as
+`pointEnd.length() / pointStart.length()` - the ratio of distances from
+the object's origin to where the drag's start/end points intersect an
+invisible helper plane. A drag that happens to *start* very close to
+that origin makes `pointStart.length()` near zero, and the resulting
+ratio can come out wildly large, or even negative (dividing by a value
+that crossed zero) - reproduced directly while testing this feature: a
+single drag turned a 100% scale into `-558084917.9%`. This is a real,
+known characteristic of the underlying library's own math (not a bug
+introduced here, and not something hiding the handle would fix, since
+any sufficiently-central click has the same issue) - but "resize while
+keeping proportions" should never actually show a negative or
+astronomical result regardless of what the widget's own math allows.
+Fixed by clamping the committed result in `commitGizmoTransform()` to
+the exact same `MIN_SCALE_FACTOR`/`MAX_SCALE_FACTOR` bounds
+`jobs.start_reslice()` already enforces server-side (1%-1000%),
+falling back to the pre-drag scale entirely for a non-finite or
+non-positive result rather than clamping a meaningless number into
+range. Verified directly: the same degenerate near-origin drag that
+previously produced the billion-percent result now lands safely inside
+bounds every time, while an ordinary, well-clear-of-center drag still
+produces its genuine, unclamped ratio.
+
+**A real test-harness bug worth remembering the shape of, caught while
+verifying this rather than shipped as a false "it works":** an
+automated click on the "Rotate (drag)"/"Resize (drag)" buttons -
+sitting further down the settings form than the preview canvas -
+scrolled that button into view, which pushed the canvas (much higher up
+the page) entirely out of the viewport; screen coordinates computed
+*before* that click were then stale, silently producing "hits" at
+off-screen coordinates that a real drag can never reach. The actual
+raycasting/projection math was correct throughout - the bug was in
+trusting a canvas position computed before an intervening action that
+could move it, the same general lesson this session's snap-to-surface
+testing already hit once (a stale click position computed before a
+drag had orbited the camera). Fixed in the test by re-fetching the
+canvas's position (scrolling it back into view first) immediately
+before every interaction, never reusing a position computed earlier in
+the run.
+
+Verified end-to-end in a real headless browser: a real drag on the
+free-rotate handle changes all three rotation fields and exits nothing
+else's mode; a real drag on the free-scale handle (from a well-clear-of-
+center starting point) changes the scale field to a sane, positive
+value; the same degenerate near-origin drag is safely clamped rather
+than producing an absurd number; turning on either drag mode correctly
+turns off "Snap to surface" (and vice versa, per the existing mutual-
+exclusivity code); and zero console/page errors throughout.
 
 ### Browsing finished jobs, and the audit log
 

@@ -39,6 +39,9 @@
   <p class="muted" id="snap-hint" hidden>
     Click a surface on the model above to stand it on that face.
   </p>
+  <p class="muted" id="gizmo-hint" hidden>
+    Drag a handle on the model above.
+  </p>
   <div id="preview-container" class="preview-container"></div>
   <p id="preview-info" class="preview-info"></p>
 
@@ -46,7 +49,7 @@
     { "imports": { "three": "/static/vendor/three/three.module.min.js" } }
   </script>
   <script type="module">
-    import { previewUrl, applyTransform, autoFitScale, computeSnapRotation } from "/static/preview.js";
+    import { previewUrl, applyTransform, autoFitScale, computeSnapRotation, enableGizmo, disableGizmo } from "/static/preview.js";
     const container = document.getElementById("preview-container");
     const info = document.getElementById("preview-info");
     const supportsUrl = {% if job.supports_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
@@ -56,6 +59,9 @@
     const rotateZInput = document.getElementById("rotate-z");
     const snapBtn = document.getElementById("snap-btn");
     const snapHint = document.getElementById("snap-hint");
+    const rotateGizmoBtn = document.getElementById("rotate-gizmo-btn");
+    const scaleGizmoBtn = document.getElementById("scale-gizmo-btn");
+    const gizmoHint = document.getElementById("gizmo-hint");
 
     // The single source of truth for "what should the preview show right
     // now" - every control below reads/writes these four fields, then
@@ -72,7 +78,45 @@
     }
     function applyPreview() {
       applyTransform(currentTransform());
+      // applyTransform() just replaced the displayed mesh with a fresh one
+      // (see preview.js) - if the on-canvas handles are currently active,
+      // they'd otherwise be left pointing at a disposed mesh. Re-enabling
+      // both re-attaches them and refreshes the baseline a fresh drag
+      // should compose onto, from whatever the fields say right now.
+      if (gizmoMode) enableGizmo(gizmoMode, currentTransform(), onGizmoCommit);
     }
+
+    // On-canvas rotate/resize handles - two more ways to change the same
+    // four fields, alongside typing numbers and (for rotation) clicking a
+    // face in "snap to surface" mode. Mutually exclusive with snap mode
+    // (both would otherwise fight over pointer events on the same canvas)
+    // and with each other (one handle set at a time, like most 3D editors).
+    let gizmoMode = null; // null | "rotate" | "scale"
+
+    function onGizmoCommit(t) {
+      rotateXInput.value = Math.round(t.rotateX * 100) / 100;
+      rotateYInput.value = Math.round(t.rotateY * 100) / 100;
+      rotateZInput.value = Math.round(t.rotateZ * 100) / 100;
+      scaleInput.value = Math.round(t.scale * 100 * 100) / 100; // percent, 2dp
+    }
+
+    function setGizmoMode(mode) {
+      gizmoMode = mode;
+      rotateGizmoBtn.textContent = gizmoMode === "rotate" ? "Stop rotating (drag)" : "Rotate (drag)";
+      scaleGizmoBtn.textContent = gizmoMode === "scale" ? "Stop resizing (drag)" : "Resize (drag)";
+      gizmoHint.hidden = !gizmoMode;
+      if (gizmoMode) {
+        snapMode = false;
+        snapBtn.textContent = "Snap to surface";
+        snapHint.hidden = true;
+        enableGizmo(gizmoMode, currentTransform(), onGizmoCommit);
+      } else {
+        disableGizmo();
+      }
+    }
+
+    rotateGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "rotate" ? null : "rotate"));
+    scaleGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "scale" ? null : "scale"));
 
     // The preview loads at the model's true original size/orientation
     // first - once that finishes, apply whatever's already saved on this
@@ -110,6 +154,7 @@
       snapMode = !snapMode;
       snapBtn.textContent = snapMode ? "Cancel snap to surface" : "Snap to surface";
       snapHint.hidden = !snapMode;
+      if (snapMode && gizmoMode) setGizmoMode(null); // mutually exclusive, see setGizmoMode above
     });
 
     container.addEventListener("pointerdown", (e) => {
@@ -153,14 +198,17 @@
              value="{{ (job.scale_factor * 100) | round(2) }}">
     </label>
     <button type="button" id="auto-fit-btn">Auto-resize to fit build plate</button>
+    <button type="button" id="scale-gizmo-btn">Resize (drag)</button>
     <p class="muted">
-      Rotation (degrees, applied X then Y then Z) - rotate freely, or
-      click "Snap to surface" below and then click a face on the model
-      above to stand it on that face.
+      Rotation (degrees, applied X then Y then Z) - rotate freely, drag the
+      handles on the model above ("Rotate (drag)"), or click "Snap to
+      surface" below and then click a face on the model to stand it on
+      that face.
     </p>
     <label>Rotate X<br><input type="number" id="rotate-x" name="rotate_x" step="1" value="{{ job.rotate_x | round(2) }}"></label>
     <label>Rotate Y<br><input type="number" id="rotate-y" name="rotate_y" step="1" value="{{ job.rotate_y | round(2) }}"></label>
     <label>Rotate Z<br><input type="number" id="rotate-z" name="rotate_z" step="1" value="{{ job.rotate_z | round(2) }}"></label>
+    <button type="button" id="rotate-gizmo-btn">Rotate (drag)</button>
     <button type="button" id="snap-btn">Snap to surface</button>
     <button type="submit">Re-slice</button>
   </form>
