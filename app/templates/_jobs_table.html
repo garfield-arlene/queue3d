@@ -69,7 +69,7 @@
               <form method="post" action="/jobs/{{ job.id }}/submit" style="display:inline">
                 <button type="submit">Submit to queue</button>
               </form>
-            {% elif job.status.value in ('queued', 'approved') %}
+            {% elif job.status.value in ('queued', 'approved', 'slice_failed') %}
               <form method="post" action="/jobs/{{ job.id }}/delete" style="display:inline"
                     onsubmit="return confirm('Permanently delete {{ job.original_filename }}? This cannot be undone.')">
                 <button type="submit">Delete</button>

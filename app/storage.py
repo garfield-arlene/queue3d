@@ -21,6 +21,7 @@ import zipfile
 from pathlib import Path
 
 from db import DATA_DIR
+from models import DRAFT_STATUSES
 
 SCRATCH_DIR = DATA_DIR / "scratch"
 QUEUE_DIR = DATA_DIR / "queue"
@@ -171,16 +172,26 @@ def move_draft_to_archive(job) -> None:
 
 
 def delete_job_files(job) -> None:
-    """Permanently removes a job's own files from queue/ - used only by
-    jobs.delete_old_job, the one place this app actually deletes files
-    outright rather than archiving them (contrast move_job_to_archive/
-    move_draft_to_archive above, and "nothing this app finishes with
-    just disappears" everywhere else) - per the user, this specific
-    delete is meant to have "no undo," unlike every other terminal
-    outcome. Tolerant of any file being absent, same as the archive
-    functions - an approved-but-not-yet-sliced-again job could be
-    missing its makerbot/supports files in some edge cases."""
-    stl_path, makerbot_path, supports_path = queue_paths(job.id)
+    """Permanently removes a job's own files - used only by
+    jobs.delete_old_job/delete_own_job, the one place this app actually
+    deletes files outright rather than archiving them (contrast
+    move_job_to_archive/move_draft_to_archive above, and "nothing this
+    app finishes with just disappears" everywhere else) - per the user,
+    this specific delete is meant to have "no undo," unlike every other
+    terminal outcome. Tolerant of any file being absent, same as the
+    archive functions - an approved-but-not-yet-sliced-again job could be
+    missing its makerbot/supports files in some edge cases, and a
+    slice_failed draft never had any to begin with.
+
+    Which directory to look in depends on the job's own status, not a
+    parameter the caller has to get right: DRAFT_STATUSES (originally
+    just slice_failed, per the user - see jobs.py's own allowed-statuses
+    comment) still live in scratch/, never having been submitted;
+    everything else this is ever called for is QUEUE_STATUSES, already
+    moved to queue/ by submit_draft."""
+    stl_path, makerbot_path, supports_path = (
+        scratch_paths(job.id) if job.status in DRAFT_STATUSES else queue_paths(job.id)
+    )
     for path in (stl_path, makerbot_path, supports_path):
         if path.exists():
             path.unlink()

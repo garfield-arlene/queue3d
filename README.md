@@ -218,19 +218,24 @@ Managing user accounts:
   `queued`/`approved`; once released and printing, an admin is already
   acting on it and the option disappears. Logged in the activity log
   like any other change.
-- **Upload `.obj` files directly, and `.zip` files of one or more
-  `.stl`/`.obj` models** - a common shape for a Thingiverse-style
-  download (a zip of several separate parts, plus a README/photo that's
-  just ignored). Each model in a zip becomes its own separate job/draft
-  - not a combined build-plate print like PrusaSlicer's own multi-object
-  loading - confirmed with the user, since this app's whole slicing
-  pipeline is built around one object per job. An `.obj` upload is
-  converted to a real `.stl` immediately (losslessly - same geometry,
-  different container) so nothing downstream (slicing, the 3D preview,
-  re-slicing) needs to know it was ever anything but one; the original
-  filename still displays as uploaded. One bad file in a zip (unreadable,
-  too large) doesn't sink the rest - it's skipped and named in a
-  message, the other valid ones still upload normally.
+- **Upload `.obj` files directly, and `.zip` files containing a single
+  `.stl`/`.obj` model.** An `.obj` upload is converted to a real `.stl`
+  immediately (losslessly - same geometry, different container) so
+  nothing downstream (slicing, the 3D preview, re-slicing) needs to know
+  it was ever anything but one; the original filename still displays as
+  uploaded.
+- **Not actually working yet, despite being designed and tested that
+  way - see the To do list:** a `.zip` containing *multiple* models was
+  meant to split into one job/draft per model (a common Thingiverse
+  shape - several separate parts plus a README/photo that's just
+  ignored), confirmed as the right design with the user since this
+  app's pipeline is built around one object per job. Synthetic zips
+  built to test this passed cleanly against the real server; the user's
+  own real multi-model zip did not, and correctly flagged that the
+  earlier "verified working" claim here was wrong for that case
+  specifically - only a single-model zip is confirmed working right
+  now. See the To do list's 422 investigation, now narrowed to
+  specifically implicate multi-entry zips.
 - **Resize and auto-fit on the job edit page** - a draft's own edit page
   has a scale control (always uniform - proportions can never distort)
   with a live, before-you-commit 3D preview as you change it, and a
@@ -271,44 +276,62 @@ Managing user accounts:
 ## To do
 
 **Upload**
-- ~~Accept `.obj` files directly, and `.zip` files containing one or more
-  `.stl`/`.obj` models (a common shape for a Thingiverse-style
-  download).~~ **Done** - see Features above.
-- **Real report: uploading a real multi-model zip "did nothing" from the
-  user's own perspective, with "422 Unprocessable Content" in the app's
-  own console.** No job was created at all (confirmed directly in the
-  database - the request never reached `upload()`'s own code, since every
-  path through that function either creates a job or calls `fail()`,
-  which always sets a flash message), meaning this is a FastAPI/Starlette
-  request-validation failure happening before the route body ever runs -
-  not a bug in `storage.extract_model_files()`'s own splitting logic.
-  Ruled out so far by direct reproduction against the real production
-  server: Starlette's multipart size limits (a `MultiPartException` there
-  surfaces as 400, not 422, and only applies to non-file form fields
-  anyway, confirmed by reading `starlette/formparsers.py` directly); a
-  realistic multi-file zip with nested folders, a README, and a stray
-  non-model file (all uploaded successfully, correctly split into
-  separate jobs). Couldn't reproduce the actual 422 without the specific
-  file that triggered it. **A real, independent bug found and fixed
-  while investigating, regardless of the 422's root cause**: the
-  dashboard's own upload JS (`user_dashboard.html`) unconditionally
-  redirected to `/dashboard` on any completed request, on the (mostly
-  but not always true) assumption that the server always ends up
-  there - true for every error this app's own code controls (`fail()`
-  always redirects with a flash message set), but not for a request
-  that fails validation before the route runs at all, which never
-  redirects anywhere. That's exactly why this looked like "nothing
-  happened" instead of showing an error. Fixed: the JS now checks the
-  response status and shows its own error message for anything outside
-  2xx-after-redirect, or a network failure. Still open: finding the
-  actual cause of the 422 itself needs either the specific file that
-  triggered it, or a browser Network-tab capture of the real request
-  next time it happens.
-- Related gap noticed while investigating the above: a `slice_failed`
-  draft has no delete route at all (only `queued`/`approved` jobs can be
-  deleted, by a user or an admin) - it can only ever be re-sliced or
-  left to the existing draft-expiry cleanup. Minor, but worth closing
-  alongside "allow rejected jobs to be edited and requeued" below.
+- ~~Accept `.obj` files directly~~ **Done** - see Features above.
+- **`.zip` files containing a *single* model: done and confirmed working
+  (see Features above). A `.zip` containing *multiple* models, splitting
+  into one job per model: designed, and passed every test built for it
+  at the time - but the user directly reported it does NOT work in real
+  use, and corrected the record here rather than let a wrong "verified"
+  claim stand.** No job was created at all for the user's real multi-model
+  zip (confirmed directly in the database - the request never reached
+  `upload()`'s own code at all, since every path through that function
+  either creates a job or calls `fail()`, which always sets a flash
+  message), with "422 Unprocessable Content" logged server-side -
+  meaning this is a FastAPI/Starlette request-validation failure
+  happening before the route body ever runs, not a bug in
+  `storage.extract_model_files()`'s own splitting logic (which never
+  got the chance to run). Ruled out by direct reproduction against the
+  real production server: Starlette's multipart size limits (a
+  `MultiPartException` there surfaces as 400, not 422, and only applies
+  to non-file form fields anyway - confirmed by reading
+  `starlette/formparsers.py` directly). **Narrowed, not solved:** every
+  synthetic zip built to test this (including realistic ones - nested
+  folders, a README, a stray non-model file) passed cleanly, but every
+  one of them was also a *multi-file* zip that worked, which the user's
+  real report says shouldn't be possible if multi-file zips are
+  categorically broken - so either something about the real file's
+  specific content/size/encoding triggers this that no synthetic test
+  has reproduced yet, or the failure is intermittent rather than
+  every-multi-file-zip. Needs either the specific file that triggered
+  it, or a browser Network-tab capture of the real failed request, to
+  pin down further. Until then: **only single-model zip upload should be
+  considered working - a multi-model zip should be treated as broken
+  even though it once tested clean.**
+- A real, independent bug found and fixed while investigating the above,
+  regardless of the 422's root cause: the dashboard's own upload JS
+  (`user_dashboard.html`) unconditionally redirected to `/dashboard` on
+  any completed request, on the (mostly but not always true) assumption
+  that the server always ends up there - true for every error this
+  app's own code controls (`fail()` always redirects with a flash
+  message set), but not for a request that fails validation before the
+  route runs at all, which never redirects anywhere. That's exactly why
+  a failure like this looked like "nothing happened" instead of showing
+  an error. **Done** - the JS now checks the response status and shows
+  its own error message for anything outside 2xx-after-redirect, or a
+  network failure.
+- ~~Related gap noticed while investigating the above: a `slice_failed`
+  draft has no delete route at all (only `queued`/`approved` jobs could
+  be deleted, by a user or an admin) - it could only ever be re-sliced
+  or left to the existing draft-expiry cleanup.~~ **Done** - a
+  `slice_failed` draft now shows the same Delete button/confirmation a
+  queued/approved job does (`jobs.delete_own_job`'s allowed statuses
+  extended; `storage.delete_job_files` now looks in `scratch/` rather
+  than `queue/` for anything still in `models.DRAFT_STATUSES`).
+  Deliberately NOT extended to a plain `sliced` draft (successfully
+  sliced, not yet submitted) - not part of this ask, and it already has
+  a path forward (submit it, or keep adjusting settings). Still open,
+  cross-referenced below: "allow rejected jobs to be edited and
+  requeued" is the same underlying gap for a different terminal status.
 - `.3mf` upload support - not yet built, and a meaningfully bigger lift
   than `.obj`/`.zip` turned out to be: unlike OBJ (a flat, transform-free
   mesh format converted to STL in a few dozen lines - see `app/mesh.py`),

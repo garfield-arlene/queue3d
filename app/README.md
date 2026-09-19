@@ -451,6 +451,26 @@ specific file that triggered it - recorded as an open README to-do
 item; the next occurrence needs either that file or a browser
 Network-tab capture of the failed request to pin down further.
 
+**Immediate correction from the user, worth recording plainly rather
+than quietly editing away: the "split into separate jobs" claim above
+was wrong for real multi-model zips.** "Don't count the zip split yet
+b/c that isn't working. What is working is a zip with 1 model file."
+Every synthetic zip built to investigate the 422 (including the
+realistic multi-file one just described) tested clean against the real
+server - which means either something about the specific real file
+(content, size, encoding) triggers the 422 that no synthetic test has
+reproduced, or the real failure is intermittent rather than affecting
+every multi-file zip categorically. Both README.md's Features list and
+its To do item were corrected to state plainly that only a single-model
+zip is confirmed working right now - a multi-model zip should be
+treated as broken in practice despite once testing clean, until the
+real cause is found. Lesson worth remembering generically: a synthetic
+test passing is evidence the *general mechanism* isn't broken, not
+proof the *specific real-world case* works - when a user directly
+reports the opposite of what testing showed, the user's real-world
+report is the one to trust and correct the record around, not the one
+to explain away.
+
 **A real, independent bug found and fixed while investigating this,
 regardless of whatever the 422's root cause turns out to be:** the
 dashboard's own upload JS sent the form via a manual `XMLHttpRequest`
@@ -475,7 +495,66 @@ considering this done.
 
 Also noticed in passing while investigating: a `slice_failed` draft has
 no delete route at all (only `queued`/`approved` jobs can be deleted,
-by either a user or an admin) - recorded as its own README to-do item.
+by either a user or an admin) - recorded as its own README to-do item,
+then built the same day, see below.
+
+### Deleting a `slice_failed` draft
+
+**Why this was its own small gap, not just an oversight:** a draft that
+never successfully sliced has no "submit" option (nothing to submit)
+and, until this, no delete option either - the only ways out were
+re-slicing with different settings (which might not help - some models
+genuinely can't slice, see the bed-centering investigations elsewhere
+in this file) or waiting out the existing draft-expiry cleanup, which
+exists for abandoned drafts in general, not as a real "I want this
+gone now" action.
+
+**The actual code gap, once looked at directly:** `jobs.py`'s shared
+`_delete_job_genuinely()` (used by both the admin's `delete_old_job()`
+and a user's own `delete_own_job()`) gated on `queued`/`approved` only.
+Widening that for `delete_own_job()` alone (not the admin path, which
+never needs it - a draft is never admin-visible in the first place, per
+`models.QUEUE_STATUSES` excluding it entirely) meant refactoring the
+hardcoded status check into a parameter each caller passes explicitly,
+rather than loosening one shared constant both callers relied on.
+
+**A second, less obvious gap the same change surfaced: `storage.
+delete_job_files()` only ever looked in `queue/`.** That was never
+wrong before, because the only jobs ever passed to it were `queued`/
+`approved` - both already moved out of `scratch/` by `submit_draft`. A
+`slice_failed` draft's files, per `storage.py`'s own three-directory
+lifecycle (`scratch/` for anything in `models.DRAFT_STATUSES`, `queue/`
+for `models.QUEUE_STATUSES`), are still sitting in `scratch/` - deleting
+by looking in `queue/` would have silently done nothing to the actual
+files (no error, since the function is already tolerant of a missing
+path - a real "looks like it worked but didn't" trap). Fixed by making
+`delete_job_files()` itself check the job's own status and pick
+`scratch_paths()` vs `queue_paths()` accordingly, rather than pushing
+that decision up into `jobs.py` - the file-location logic already lived
+in `storage.py` for every other lifecycle transition, so this keeps it
+there rather than splitting it across two modules.
+
+**Deliberately scoped to exactly what was asked, not generalized to
+every draft status:** a plain `sliced` draft (successfully sliced, not
+yet submitted) still has no delete route - it wasn't part of this ask,
+and already has two ways forward (submit it, or keep adjusting
+settings before submitting). Widening this further would be a natural
+follow-up but wasn't assumed.
+
+Verified end-to-end against a real isolated instance, not just read as
+correct: uploaded a deliberately-too-small (1mm) test cube (a shape
+already known from earlier in this file to trip `mbotmake`'s
+bed-centering assertion) to get a genuine `slice_failed` status through
+the real pipeline, confirmed its `.stl` sat in `scratch/`, deleted it
+through the real HTTP route, and confirmed all three afterward: the
+file gone from `scratch/`, the job row gone from the database, and its
+prior event history purged down to a single new `job_deleted` entry -
+the same pattern every other genuine delete in this app already uses.
+Also re-verified the existing `queued`/`approved` delete path
+end-to-end after the refactor (upload, submit to queue, delete, confirm
+the file leaves `queue/`) to make sure sharing the status list via a
+parameter rather than a hardcoded tuple didn't regress the original
+behavior.
 
 ### Upload and slicing progress
 

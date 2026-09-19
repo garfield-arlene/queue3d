@@ -381,13 +381,16 @@ def reject(session: Session, job: Job, admin: Admin, note: str) -> Job:
     return job
 
 
-def _delete_job_genuinely(session: Session, job: Job, actor: str, detail: str) -> None:
+def _delete_job_genuinely(
+    session: Session, job: Job, actor: str, detail: str, *allowed: JobStatus
+) -> None:
     """The actual delete both delete_old_job() and delete_own_job() below
     share - a genuine, unrecoverable delete, not another terminal status
     like reject() (which deliberately keeps the job and archives its
-    files as a permanent record). Only the actor label and detail
-    wording differ between "an admin clearing a stale job" and "a user
-    removing their own" - the mechanics are identical.
+    files as a permanent record). Only the actor label, detail wording,
+    and *allowed* statuses differ between "an admin clearing a stale
+    job" and "a user removing their own" - the delete mechanics
+    themselves are identical.
 
     The job's own prior event history (submit, slice, queue-submission,
     etc.) is deleted along with it rather than left behind as orphaned
@@ -397,7 +400,7 @@ def _delete_job_genuinely(session: Session, job: Job, actor: str, detail: str) -
     job_id=None event recording the deletion itself - the exact same
     pattern user_deleted already uses for a User that's gone by the
     time anyone reads that log entry back."""
-    _require_status(job, JobStatus.queued, JobStatus.approved)
+    _require_status(job, *allowed)
     for event in session.exec(select(JobEvent).where(JobEvent.job_id == job.id)).all():
         session.delete(event)
     delete_job_files(job)
@@ -414,11 +417,18 @@ def delete_old_job(session: Session, job: Job, admin: Admin) -> None:
     _delete_job_genuinely() above for the shared mechanics with
     delete_own_job() below, this branch's admin-side equivalent for a
     job that's gone stale rather than one its own submitter no longer
-    wants."""
+    wants. queued/approved only - a draft is never admin-visible in the
+    first place (see models.QUEUE_STATUSES), so this never needs to
+    reach one."""
     user = session.get(User, job.user_id)
     submitter = user.name if user else "?"
     _delete_job_genuinely(
-        session, job, _admin_actor(admin), f"{job.original_filename} (submitted by {submitter})"
+        session,
+        job,
+        _admin_actor(admin),
+        f"{job.original_filename} (submitted by {submitter})",
+        JobStatus.queued,
+        JobStatus.approved,
     )
 
 
@@ -426,15 +436,29 @@ def delete_own_job(session: Session, job: Job, user: User) -> None:
     """A user deleting their own still-undecided job - per README.md's
     to-do list, "they may no longer want it," with the same genuine,
     no-undo delete semantics as delete_old_job() above (see
-    _delete_job_genuinely() for the shared mechanics). Deliberately the
-    same queued/approved-only restriction, not just "any job the user
-    owns" - once released and printing, the job is being acted on by an
-    admin already; deleting out from under that would be a different,
-    much riskier action this to-do item never asked for. No "submitted
-    by" clause in the log detail unlike delete_old_job()'s - the actor
-    label (user:<name>) already says who, since here the actor and the
-    submitter are always the same person."""
-    _delete_job_genuinely(session, job, f"user:{user.name}", job.original_filename)
+    _delete_job_genuinely() for the shared mechanics). queued/approved,
+    same as the admin path (once released and printing, an admin is
+    already acting on it; deleting out from under that would be a
+    different, much riskier action never asked for) - plus
+    slice_failed, per the user's own follow-up ask: a draft that never
+    successfully sliced has nothing worth keeping around and no "submit"
+    option either, so re-slicing or waiting out the existing draft-expiry
+    cleanup were the only ways to get rid of one before this. Deliberately
+    NOT extended to a plain sliced draft (successfully sliced, not yet
+    submitted) - that one wasn't part of this ask, and already has its
+    own path forward (submit it, or keep iterating on settings).
+    No "submitted by" clause in the log detail unlike delete_old_job()'s -
+    the actor label (user:<name>) already says who, since here the actor
+    and the submitter are always the same person."""
+    _delete_job_genuinely(
+        session,
+        job,
+        f"user:{user.name}",
+        job.original_filename,
+        JobStatus.queued,
+        JobStatus.approved,
+        JobStatus.slice_failed,
+    )
 
 
 def requeue_job(session: Session, job: Job, admin: Admin) -> Job:

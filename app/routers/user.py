@@ -502,11 +502,11 @@ def delete_job(
 ):
     """A user removing their own still-undecided model - see
     jobs.delete_own_job. Genuinely deletes the job and its files, no
-    undo - only reachable while still queued/approved; once released
-    and printing, an admin is already acting on it, so this button
-    doesn't show any more (see _jobs_table.html) and a request that
-    somehow arrives anyway is rejected the same way any other
-    already-moved-on action is."""
+    undo - reachable while queued/approved, or a slice_failed draft with
+    nowhere else to go; once released and printing, an admin is already
+    acting on it, so this button doesn't show any more (see
+    _jobs_table.html) and a request that somehow arrives anyway is
+    rejected the same way any other already-moved-on action is."""
     job = _owned_job(session, user, job_id)
     try:
         delete_own_job(session, job, user)
