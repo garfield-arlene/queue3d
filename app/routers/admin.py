@@ -5,9 +5,10 @@ position of trust over many users' shared printer time; open
 admin signup would defeat the whole point of the review gate."""
 
 import zoneinfo
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlmodel import Session, select
 
 from auth import (
@@ -46,6 +47,7 @@ from jobs import (
 )
 from models import Admin, Job, Settings, User
 from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
+from support_bundle import build_support_bundle
 from templates_env import is_valid_timezone, set_display_timezone, templates
 from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
 
@@ -711,3 +713,22 @@ def activity_log_page(
         "admin_log.html",
         {"admin": admin, "rows": rows, "limit": ACTIVITY_LOG_LIMIT},
     )
+
+
+@router.get("/support-bundle")
+def download_support_bundle(
+    background_tasks: BackgroundTasks,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """On-demand diagnostic bundle for offline bugfixing with zero
+    internet access - see support_bundle.py's own docstring for exactly
+    what's in it and why. Written to a temp file (support_bundle.build_
+    support_bundle already needs one internally for the safe DB copy, so
+    this just reuses the same shape) and deleted via a BackgroundTask
+    once the response has actually gone out - not before, or the
+    download would be truncated."""
+    bundle_path = build_support_bundle(session)
+    background_tasks.add_task(bundle_path.unlink, missing_ok=True)
+    filename = f"queue3d-support-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.tar.gz"
+    return FileResponse(bundle_path, media_type="application/gzip", filename=filename)

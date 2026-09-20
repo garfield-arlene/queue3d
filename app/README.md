@@ -695,6 +695,73 @@ status cleanly (reprinting a `rejected` job, say) with a clear flash
 message via the same `JobActionError` pattern every other job action
 already uses, rather than a raw error or silent no-op.
 
+### Downloadable support bundle
+
+**Why this exists:** asked directly "what's next most important," this
+was recommended and built the same session - per the user's own earlier
+ask, "create a 'tar.gz' file that contains errors, model files, logs,
+etc. that would be helpful for offline bugfixes... After I setup the
+app/Pi, network, and printer in place, I want to be able to show up and
+collect the support files." This deployment has zero internet access at
+all (see project memory `queue3d-deployment-network`) - there's no way
+to relay a live problem back for help the normal way, so the plan is
+physical: generate the bundle on the spot, carry it out.
+
+**Contents chosen from what every real bug investigated this project
+has actually needed, not guessed at:** a safe, consistent copy of the
+whole database (`backup.py`'s own `backup_database()` - the exact same
+online-backup-API copy the automated backup feature already uses, not
+a raw file read that could grab a half-written page mid-write, reused
+rather than reimplemented), the original model file for every job that
+ever recorded a `slice_error` (whether it ultimately failed outright or
+an automatic rotation retry fixed it - kept either way, since a
+"fixed by auto-rotation" job's file is exactly the kind of thing worth
+double-checking later), and the full activity log as plain text. The
+database alone is genuinely the single most useful thing here - every
+investigation this session actually ran (the fighter jet, Flexi_Seal,
+the zip upload cap) started from knowing a job's exact settings/status/
+history, and without the real model file alongside it, none of those
+could have been reproduced or diagnosed at all.
+
+**Deliberately not included, and documented plainly rather than
+silently left out: a persistent application log file.** This app's own
+progress output goes straight to whatever terminal `uvicorn` happens to
+be running in, not a file - there's nothing on disk to collect yet. If
+the real deployment eventually runs this under systemd, its journal
+would be the natural next thing to add here; not attempted now since
+that setup doesn't exist yet to test against.
+
+**A real design question resolved rather than glossed over: this
+bundle contains real user names, job filenames, and the database's
+stored (hashed, not plaintext) PIN/password secrets.** Not a new
+exposure - an admin generating this already has that same access on the
+live server - but worth being explicit about in both the bundle's own
+`manifest.txt` and here, rather than assumed harmless without saying so,
+since the file is meant to leave the device once generated.
+
+`GET /admin/support-bundle` builds the bundle into a fresh temp file
+and streams it back as a real file download (`Content-Disposition:
+attachment`, a timestamped filename), then deletes the temp file via a
+`BackgroundTask` once the response has actually gone out - the same
+"clean up after the response is sent, not before" shape used wherever
+this app hands back a generated file. Reachable from a plain link on
+the admin dashboard, right next to the existing backup-status line -
+the same place an admin would already be looking when something needs
+investigating.
+
+Verified end-to-end against a real isolated instance: seeded one normal
+job and one that genuinely fails to slice (reusing the same tiny-cube
+shape that reliably trips `mbotmake`'s bed-centering assertion
+elsewhere in this file), downloaded the actual bundle through the real
+route, and confirmed all four pieces are correct - the manifest's own
+counts match, the activity log reads back the real event sequence, the
+database copy contains the exact captured `slice_error` text, and the
+failing job's own `.stl` is present under `models/` while the
+successful job's is correctly not. Also confirmed the temp file is
+genuinely gone from disk immediately after the download completes, and
+that a non-admin hitting the route is redirected rather than handed the
+file.
+
 ### Upload and slicing progress
 
 Slicing (OrcaSlicer + `mbotmake`, both real subprocesses) can take minutes

@@ -284,6 +284,11 @@ Managing user accounts:
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
+- **Downloadable support bundle** - an admin can generate a `.tar.gz`
+  on demand (a safe copy of the database, the full activity log, and
+  every model that ever hit a slicing error) for offline bugfixing at
+  this app's zero-internet-access deployment, with no need for remote
+  access to the device itself.
 - **Built for offline deployment** - runs entirely on a local network with
   no internet access required; no CDN dependencies.
 - **App version number** shown as a footer on every page, read from
@@ -724,16 +729,20 @@ Managing user accounts:
   scratch/queue/archive + two backup-target USB drives mounted, and the
   backup cron job installed - all designed for, none yet done on real
   hardware.
-- A downloadable "support bundle" (a `.tar.gz`) an admin can generate
+- ~~A downloadable "support bundle" (a `.tar.gz`) an admin can generate
   on demand, bundling whatever's needed for offline bugfixing after the
-  real deployment (Pi/network/printer in place, zero internet access,
-  per [[queue3d-deployment-network]]) without remote access to the
-  device itself - per the user: "After I setup the app/Pi, network, and
-  printer in place, I want to be able to show up and collect the
-  support files." Likely contents: recent job `slice_error`s (the exact
-  captured OrcaSlicer/mbotmake output already shown on a failed job's
-  own page), the specific model files involved, the activity log, and
-  relevant application/service logs - exact scope not yet decided.
+  real deployment (Pi/network/printer in place, zero internet access) -
+  per the user: "After I setup the app/Pi, network, and printer in
+  place, I want to be able to show up and collect the support files."~~
+  **Done** - "Download support bundle" on the admin dashboard. Contents:
+  a safe, consistent copy of the whole database (every job/user/setting/
+  event - the single most useful thing for offline diagnosis, and what
+  every real investigation this project has done actually started
+  from), the original model file for every job that ever recorded a
+  slice error (without the real geometry a slicing failure can't be
+  reproduced at all), and the full activity log as plain text. Not
+  included: a persistent application log file, since this app doesn't
+  currently write one - see `app/README.md` for what that would take.
 
 ## Project layout
 
