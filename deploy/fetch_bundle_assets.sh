@@ -15,6 +15,24 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Deliberately NOT this project's own app/.venv - this script has to run
+# on whatever machine you actually have internet on when you need it
+# (this dev machine, or a fresh clone on a Mac with nothing else set up
+# yet), not only a machine that happens to already have that venv built.
+# pip's cross-platform --platform/--python-version/--abi flags below work
+# from any reasonably modern pip3 - the *target* wheels fetched are for
+# the Pi's architecture and Python version, never this machine's own, so
+# there's no real requirement on which Python actually runs pip itself.
+if command -v python3 >/dev/null 2>&1; then
+  PIP="python3 -m pip"
+elif command -v pip3 >/dev/null 2>&1; then
+  PIP="pip3"
+else
+  echo "No python3/pip3 found on this machine - install Python 3 first" >&2
+  echo "(on a Mac: https://www.python.org/downloads/macos/ or 'brew install python3')." >&2
+  exit 1
+fi
+
 # The real target Pi (confirmed directly via `python3 --version` over SSH,
 # not assumed): Raspberry Pi OS Lite 64-bit is now based on Debian 13
 # "Trixie", shipping Python 3.13.5 - Raspberry Pi OS moved past the
@@ -30,7 +48,7 @@ ORCASLICER_VERSION=2.4.2
 mkdir -p cache/wheels
 
 echo "Fetching pip wheels for linux aarch64 / Python $PY_VERSION (not this machine's own architecture)..."
-../app/.venv/bin/pip download \
+$PIP download \
   --platform manylinux2014_aarch64 \
   --platform manylinux_2_17_aarch64 \
   --platform manylinux_2_24_aarch64 \
