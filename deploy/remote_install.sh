@@ -10,7 +10,7 @@
 set -euo pipefail
 
 APP_DIR=/opt/queue3d
-STAGING_DIR=/opt/queue3d-deploy-staging
+STAGING_DIR=/tmp/queue3d-deploy-staging  # must match deploy.sh's own STAGING_DIR
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Must run as root (deploy.sh invokes this via sudo)." >&2

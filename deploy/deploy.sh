@@ -20,7 +20,14 @@ if [ $# -ne 1 ]; then
   exit 1
 fi
 TARGET="$1"
-STAGING_DIR=/opt/queue3d-deploy-staging
+# /tmp, not /opt - this is only ever temporary staging (deleted at the end
+# of this script), and critically, every step that populates it (mkdir,
+# rsync below) runs as your plain SSH user, before sudo ever comes into
+# it - /opt normally requires root to write to at all, which would fail
+# here with nothing yet to escalate privilege. Only remote_install.sh
+# itself (invoked via sudo further down) needs root, to write the real,
+# permanent install to /opt/queue3d.
+STAGING_DIR=/tmp/queue3d-deploy-staging
 
 if [ ! -d cache/wheels ] || [ -z "$(ls -A cache/wheels 2>/dev/null)" ]; then
   echo "deploy/cache/wheels is empty - run ./fetch_bundle_assets.sh on a machine with internet first." >&2
