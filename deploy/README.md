@@ -91,12 +91,17 @@ cd deploy
 Populates `deploy/cache/` with aarch64 Python wheels for every
 dependency in `app/requirements.txt` and the matching aarch64 OrcaSlicer
 AppImage - both verified for real while building this, not assumed: a
-real cross-platform `pip download` targeting linux aarch64 + Python 3.11
-resolved every single dependency with a genuine prebuilt wheel (no
-source builds needed, ~13MB total), and the aarch64 OrcaSlicer AppImage
-was downloaded and extracted cleanly (confirmed `ARM aarch64` ELF,
-correct `AppRun`/`bin`/`lib` layout matching the x86_64 build). Neither
-could be executed to confirm full runtime behavior from this x86_64
+real cross-platform `pip download` targeting linux aarch64 + Python
+3.13 (confirmed via `python3 --version` on the real Pi - Raspberry Pi OS
+Lite had moved to a Debian 13 "Trixie" base, Python 3.13.5, by the time
+it was actually imaged, one major version past the Debian 12/Python
+3.11 this was first built against; re-verified cleanly against 3.13
+rather than assumed to still work) resolved every single dependency
+with a genuine prebuilt wheel (no source builds needed, ~13MB total),
+and the aarch64 OrcaSlicer AppImage was downloaded and extracted
+cleanly (confirmed `ARM aarch64` ELF, correct `AppRun`/`bin`/`lib`
+layout matching the x86_64 build). Neither could be executed to confirm
+full runtime behavior from this x86_64
 machine - that still needs the real Pi. Re-run this whenever
 `requirements.txt` or the pinned OrcaSlicer version changes; otherwise
 the cache persists between

@@ -15,12 +15,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Raspberry Pi OS Lite 64-bit (Debian 12 "Bookworm") ships Python 3.11 by
-# default - change PY_VERSION/PY_ABI together if the real Pi ends up with a
-# different version (check with `python3 --version` on the Pi itself once
-# it's imaged, before assuming this still matches).
-PY_VERSION=311
-PY_ABI=cp311
+# The real target Pi (confirmed directly via `python3 --version` over SSH,
+# not assumed): Raspberry Pi OS Lite 64-bit is now based on Debian 13
+# "Trixie", shipping Python 3.13.5 - Raspberry Pi OS moved past the
+# Debian 12 "Bookworm" (Python 3.11) this was first built against between
+# when that assumption was made and when the real Pi was actually imaged.
+# Change PY_VERSION/PY_ABI together if a future re-image ends up on yet
+# another version - re-check with `python3 --version` on the Pi itself
+# rather than assuming this still matches.
+PY_VERSION=313
+PY_ABI=cp313
 ORCASLICER_VERSION=2.4.2
 
 mkdir -p cache/wheels
