@@ -243,6 +243,25 @@ class Job(SQLModel, table=True):
     # app/supports.py) - present once slicing succeeds, even if empty
     # (supports enabled but the model didn't need any).
     supports_path: str | None = Field(default=None)
+    # A uniform scale factor (1.0 = original size) applied to the model
+    # before centering/slicing - see slicing/stl_to_3mf.build_3mf and
+    # routers/user.py's reslice(). Always uniform (never per-axis), per
+    # the user: "resize the object while maintaining the aspect ratio" -
+    # there's no control here that could distort it.
+    scale_factor: float = Field(default=1.0)
+    # Rotation in degrees, applied in this exact order (X, then Y, then
+    # Z, each about the fixed world axis - matching Three.js's own
+    # BufferGeometry.rotateX/Y/Z, called in that order, on the client
+    # preview side) - see slicing/stl_to_3mf.rotate_vertices, whose
+    # matrix math has to stay in lockstep with the browser's, the same
+    # invariant center_vertices()/showModel() already maintain for
+    # centering. Set either by hand (free rotation on any axis) or
+    # computed by "snap to surface" (pick a face, reorient it as the new
+    # bottom) - either way, the result always ends up expressed as these
+    # three angles, never a separately-stored quaternion.
+    rotate_x: float = Field(default=0.0)
+    rotate_y: float = Field(default=0.0)
+    rotate_z: float = Field(default=0.0)
 
     # When this row was created (upload time) - NOT when it joined the
     # queue, which may be much later or never (see queued_at below). Used

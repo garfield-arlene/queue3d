@@ -331,6 +331,370 @@ submitting from the edit page ends on the dashboard with the job queued;
 and visiting a queued job's edit URL directly redirects to the dashboard
 instead of showing a stale form.
 
+### Uploading `.obj` and `.zip` files
+
+**Why this exists:** per the user - many real-world downloads (a
+Thingiverse-style "thing" in particular) come as a zip of several
+separate `.stl`/`.obj` files (variants, accessories, a multi-part
+model), not one bare `.stl`. Only `.stl` was ever accepted before this.
+
+**The one real design question, asked and confirmed before writing any
+code:** what happens when a zip has more than one model file? PrusaSlicer
+loads all of them together onto one build plate. This app's entire
+slicing pipeline is built around **one object per job** on purpose
+(`slicing/stl_to_3mf.py` explicitly disables auto-arrange - `--arrange
+0` - specifically because "every profile here is one plate/one object");
+matching PrusaSlicer's actual combined-plate behavior would mean building
+real bin-packing/arrangement logic from scratch, a multi-object 3D
+preview, and re-verifying supports still line up correctly across
+multiple objects at once. Confirmed with the user instead: **each model
+file in a zip becomes its own separate job/draft** - the exact same
+upload→slice→draft flow every plain `.stl` upload already goes through,
+just run once per file found. Zero changes needed to slicing, the 3D
+preview, or support generation - the entire feature is upload-time
+extraction plus a loop.
+
+**`.obj` is converted to a real `.stl` immediately on upload, not taught
+to the rest of the pipeline as a second format** - `app/mesh.py`'s
+`parse_obj()`/`write_stl_binary()` (no third-party mesh library, matching
+`slicing/stl_to_3mf.py`'s own from-scratch STL parser - OBJ is a
+comparably small, dependency-free format not worth a new pip dependency
+for). This keeps every downstream piece - `storage.py`'s job-id-based
+`.stl` paths, `stl_to_3mf.py`'s parser, the client-side STL preview,
+re-slicing - working completely unchanged: there is exactly one on-disk
+model format past the moment of upload, same as there always has been.
+`Job.original_filename` still shows the true "vase.obj" for display;
+what's actually stored and sliced (`Job.stl_path`, still named that) is
+a losslessly-converted `.stl` holding the identical geometry. Verified
+against the real pipeline, not just our own parser's round-trip: an
+OBJ-derived cube was sliced all the way through OrcaSlicer and
+`mbotmake` into a genuine `.makerbot`, and the resulting job's
+`/jobs/{id}/model.stl` serves real STL bytes with no route changes at
+all.
+
+**`storage.extract_model_files()`** pulls every `.stl`/`.obj` entry out
+of an uploaded zip (case-insensitive, at any folder depth - a zip is
+often wrapped in one containing folder) and ignores everything else
+(a README, a photo, a license file) rather than erroring on it. Capped
+at `MAX_ZIP_MODEL_FILES` (10) - a sane ceiling on how many simultaneous
+slicing background tasks one upload can kick off at once (see the
+concurrency note below) - and each entry checked against the existing
+`MAX_UPLOAD_BYTES` from its *recorded* uncompressed size, before ever
+decompressing it, a real defense against a small zip expanding into
+something much bigger, not just a courtesy. Deliberately never calls
+`extractall()` or builds a filesystem path from an entry's own name (the
+classic "zip slip" path-traversal footgun - an entry literally named
+`../../etc/cron.d/x`) - only `zf.read()` into memory, and only an
+entry's basename is ever kept, for display, never for path construction.
+Confirmed directly: a deliberately path-traversal-shaped entry name in a
+test zip came back with its directory components stripped, not honored.
+
+**One bad file in a zip doesn't sink the rest** - `routers/user.py`'s
+`upload()` processes every extracted entry independently (validating/
+converting each via the same `_stl_bytes_from_upload()` a plain upload
+uses), skipping one that fails (unreadable OBJ, individually too large)
+and naming it in the flash message rather than rejecting the whole zip
+over one bad part. A zip with zero usable model files, or an outright
+invalid zip, is rejected outright with a clear message.
+
+**Client-side instant preview (parsing the chosen file in-browser before
+upload, no round-trip - see "3D preview" below) still only understands
+`.stl`,** the one loader already vendored - an `.obj` or `.zip` selection
+skips it with a plain "Preview available after upload" note instead of
+adding a second vendored loader just for that instant, before-upload
+look. The real preview (post-slice, always from the server's genuine
+`.stl` copy) works identically regardless of what was originally
+uploaded, once slicing finishes - this only affects the very first,
+optional glance.
+
+**A theorized limitation here turned out to be wrong when actually
+checked, later in this project - see "Fixing a real multi-model zip
+upload" further down.** This originally claimed a zip of several files
+kicks off that many *concurrent* background slicing tasks - checked
+directly (real process monitoring during a real 15-file upload, not
+assumed) and that's false: FastAPI's `BackgroundTasks` added within one
+request run strictly sequentially, confirmed by never seeing more than
+one real OrcaSlicer/`mbotmake` process alive at a time across many
+checks. `MAX_ZIP_MODEL_FILES` was raised on the strength of that
+finding - it was never actually bounding concurrency risk, just
+turning away legitimate multi-part uploads for no real reason.
+
+Verified end-to-end: a plain `.stl` upload (regression check), a
+standalone `.obj` upload converting and slicing correctly, a zip with
+two real `.stl` files producing two independent jobs (both sliced
+successfully), a zip mixing `.stl`/`.obj`/an ignored `.txt` file
+extracting only the two real models, a wrong extension rejected, a
+malformed standalone `.obj` rejected with a clear message, an all-bad
+zip rejected, and a zip with one good file and one malformed `.obj`
+uploading the good one while clearly naming the skipped one - all
+through the real HTTP routes and the real OrcaSlicer/`mbotmake`
+pipeline, not just the parsing functions in isolation.
+
+**A real report, weeks later: uploading a real multi-model zip "did
+nothing," with "422 Unprocessable Content" logged server-side.**
+Checked the real database directly before guessing at a cause: no job
+row existed at all from the failed attempt - meaningful, because every
+path through `upload()`'s own code either creates a job or calls its
+local `fail()` helper, which always sets a flash message and redirects.
+A 422 that never reaches either means the request failed FastAPI's own
+validation *before* the route body ever ran at all - not a bug in
+`storage.extract_model_files()`'s splitting logic, which never got the
+chance to run.
+
+Ruled out directly against the real production server, not guessed:
+Starlette's own multipart size limits (`formparsers.py`'s
+`max_part_size`, 1MB) only apply to non-file form fields - confirmed by
+reading the actual installed library source - and even when it does
+trip, a `MultiPartException` there surfaces as a 400, not a 422, so
+this can't be that regardless. A realistic zip built to resemble a real
+Thingiverse download (nested folders, a README, a stray non-model file)
+uploaded and split into separate jobs correctly against the real
+production server. Couldn't reproduce the actual 422 without the
+specific file that triggered it - recorded as an open README to-do
+item; the next occurrence needs either that file or a browser
+Network-tab capture of the failed request to pin down further.
+
+**Immediate correction from the user, worth recording plainly rather
+than quietly editing away: the "split into separate jobs" claim above
+was wrong for real multi-model zips.** "Don't count the zip split yet
+b/c that isn't working. What is working is a zip with 1 model file."
+Every synthetic zip built to investigate the 422 (including the
+realistic multi-file one just described) tested clean against the real
+server - which means either something about the specific real file
+(content, size, encoding) triggers the 422 that no synthetic test has
+reproduced, or the real failure is intermittent rather than affecting
+every multi-file zip categorically. Both README.md's Features list and
+its To do item were corrected to state plainly that only a single-model
+zip is confirmed working right now - a multi-model zip should be
+treated as broken in practice despite once testing clean, until the
+real cause is found. Lesson worth remembering generically: a synthetic
+test passing is evidence the *general mechanism* isn't broken, not
+proof the *specific real-world case* works - when a user directly
+reports the opposite of what testing showed, the user's real-world
+report is the one to trust and correct the record around, not the one
+to explain away.
+
+**A real, independent bug found and fixed while investigating this,
+regardless of whatever the 422's root cause turns out to be:** the
+dashboard's own upload JS sent the form via a manual `XMLHttpRequest`
+(for genuine upload-byte progress - see "Upload and slicing progress"
+below) and unconditionally navigated to `/dashboard` the instant the
+request completed, on the reasoning (accurate for every error path this
+app's own code controls, since `fail()` always redirects with a flash
+message set) that "the server always ends up there anyway." That
+reasoning silently breaks for exactly this class of failure - a request
+that fails before the route runs never redirects anywhere at all - which
+is precisely why the user saw nothing: the JS still just navigated to a
+perfectly ordinary dashboard, with no job and no error text, indistin-
+guishable from the upload having done nothing. Fixed: the JS now checks
+`xhr.status` (same-origin redirects are followed transparently by the
+browser, so a genuine success *or* an in-app `fail()` both still read
+as a final 2xx by the time `"load"` fires - only a failure that never
+got redirected surfaces as non-2xx here) and shows its own error text
+for anything outside that, or a network failure via the `"error"`
+event. Verified the normal path still works unchanged (a real upload
+still redirects to the dashboard with no error text shown) before
+considering this done.
+
+Also noticed in passing while investigating: a `slice_failed` draft has
+no delete route at all (only `queued`/`approved` jobs can be deleted,
+by either a user or an admin) - recorded as its own README to-do item,
+then built the same day, see below.
+
+### Deleting a `slice_failed` draft
+
+**Why this was its own small gap, not just an oversight:** a draft that
+never successfully sliced has no "submit" option (nothing to submit)
+and, until this, no delete option either - the only ways out were
+re-slicing with different settings (which might not help - some models
+genuinely can't slice, see the bed-centering investigations elsewhere
+in this file) or waiting out the existing draft-expiry cleanup, which
+exists for abandoned drafts in general, not as a real "I want this
+gone now" action.
+
+**The actual code gap, once looked at directly:** `jobs.py`'s shared
+`_delete_job_genuinely()` (used by both the admin's `delete_old_job()`
+and a user's own `delete_own_job()`) gated on `queued`/`approved` only.
+Widening that for `delete_own_job()` alone (not the admin path, which
+never needs it - a draft is never admin-visible in the first place, per
+`models.QUEUE_STATUSES` excluding it entirely) meant refactoring the
+hardcoded status check into a parameter each caller passes explicitly,
+rather than loosening one shared constant both callers relied on.
+
+**A second, less obvious gap the same change surfaced: `storage.
+delete_job_files()` only ever looked in `queue/`.** That was never
+wrong before, because the only jobs ever passed to it were `queued`/
+`approved` - both already moved out of `scratch/` by `submit_draft`. A
+`slice_failed` draft's files, per `storage.py`'s own three-directory
+lifecycle (`scratch/` for anything in `models.DRAFT_STATUSES`, `queue/`
+for `models.QUEUE_STATUSES`), are still sitting in `scratch/` - deleting
+by looking in `queue/` would have silently done nothing to the actual
+files (no error, since the function is already tolerant of a missing
+path - a real "looks like it worked but didn't" trap). Fixed by making
+`delete_job_files()` itself check the job's own status and pick
+`scratch_paths()` vs `queue_paths()` accordingly, rather than pushing
+that decision up into `jobs.py` - the file-location logic already lived
+in `storage.py` for every other lifecycle transition, so this keeps it
+there rather than splitting it across two modules.
+
+**Deliberately scoped to exactly what was asked, not generalized to
+every draft status:** a plain `sliced` draft (successfully sliced, not
+yet submitted) still has no delete route - it wasn't part of this ask,
+and already has two ways forward (submit it, or keep adjusting
+settings before submitting). Widening this further would be a natural
+follow-up but wasn't assumed.
+
+Verified end-to-end against a real isolated instance, not just read as
+correct: uploaded a deliberately-too-small (1mm) test cube (a shape
+already known from earlier in this file to trip `mbotmake`'s
+bed-centering assertion) to get a genuine `slice_failed` status through
+the real pipeline, confirmed its `.stl` sat in `scratch/`, deleted it
+through the real HTTP route, and confirmed all three afterward: the
+file gone from `scratch/`, the job row gone from the database, and its
+prior event history purged down to a single new `job_deleted` entry -
+the same pattern every other genuine delete in this app already uses.
+Also re-verified the existing `queued`/`approved` delete path
+end-to-end after the refactor (upload, submit to queue, delete, confirm
+the file leaves `queue/`) to make sure sharing the status list via a
+parameter rather than a hardcoded tuple didn't regress the original
+behavior.
+
+### Fixing a real multi-model zip upload
+
+**Real report, with a real file this time:** the earlier 422
+investigation (see "A real report, weeks later" above) never found a
+reproducible cause with synthetic test zips - the user later supplied
+an actual real-world multi-part download (`Functional Differential Gear
+System - 11836.zip`, a Thingiverse-style functional-print kit) and
+asked directly to find a fix. Inspected the real file's structure
+before touching any code: 15 real `.STL` model files, plus a nested
+`.zip` (a variant sub-download, correctly ignored - not a model
+extension), directory entries, images, a README, and a LICENSE file.
+
+**Found the real cause immediately: `MAX_ZIP_MODEL_FILES = 10`, and
+this legitimate file has 15.** Reproduced directly against a real
+isolated instance with the actual file: the upload cleanly redirects to
+`/dashboard` with a flash message, "Too many model files in this zip
+(max 10)." - a working, non-broken rejection, not a 422 or silent
+failure. This is a *different* bug from the still-unresolved 422 -
+confirmable because this exact file does NOT reproduce a 422 with the
+current code, only a clean, friendly-but-wrong-here rejection. Whether
+this was also involved in the original 422 report is unknown (that
+file was never available to test); what's certain is that this cap was
+too low for a real, legitimate functional-print kit.
+
+**Checked whether the cap's own stated justification actually held up,
+rather than just raising the number blindly:** the code comment claimed
+this bounds *concurrent* slicing background tasks a zip's worth of
+uploads could kick off at once. Checked this directly against a real
+15-file upload rather than trusting the comment: polled the process
+table repeatedly through the entire slicing run and never saw more than
+one real OrcaSlicer/`mbotmake` process alive at any moment - FastAPI's
+`BackgroundTasks` added within a single request run strictly
+sequentially (awaited one after another), not concurrently. The cap's
+original justification was wrong; it was never bounding concurrency
+risk at all, just serial total wait time and the memory
+`extract_model_files()` holds for every matched file's bytes at once -
+both real but much less restrictive concerns than "concurrency," so
+raised `MAX_ZIP_MODEL_FILES` to 25 (real headroom above the 15 that
+triggered this, not merely enough to pass) rather than a marginal bump.
+
+Verified end-to-end against the real file, twice - once in an isolated
+instance (all 15 parts uploaded, split into 15 independent jobs, and
+*all 15 sliced successfully* with no failures, running strictly one at
+a time exactly as predicted) and once against the real production
+server directly (same result: 15 jobs created, no rejection), cleaned
+up afterward through the real submit-then-delete routes rather than
+left as clutter.
+
+**Per the user, directly: "We need to note the limitation for the
+users."** The upload form itself (`user_dashboard.html`) now states the
+per-zip model limit right under the file picker, reading the same
+`MAX_ZIP_MODEL_FILES` constant the enforcement itself uses (threaded
+through `_dashboard_context()`) rather than a second, hand-typed number
+that could drift out of sync with the real limit.
+
+### Restoring an archived job, and one-click reprint
+
+**Why this exists:** asked directly, "what's next most important" -
+recommended this since a `rejected`/`failed`/`done`/`expired` job had
+no way back except a completely fresh upload, discarding any tuning
+(a specific rotation that fixed a real slicing failure, an auto-fit
+scale) it took real investigation to find earlier this same session.
+The user agreed and asked to build it, then immediately extended the
+ask mid-build: "Also, add a reprint option to print another as it was
+queued" - a deliberately different, narrower action from restore,
+covered second below.
+
+**"Restore & edit" (`jobs.restore_job()`, any `rejected`/`failed`/
+`done`/`expired` job) copies the archived `.stl` into a brand-new,
+independent draft - never moves it, so the original archived job and
+its own event history are completely untouched, exactly per the
+original to-do item's own requirement.** The new draft starts
+pre-filled with the archived job's own `scale_factor`/`rotate_x/y/z`/
+`supports_enabled`/`support_style` rather than plain defaults - the
+whole point is reusing a previous submission including whatever tuning
+it took to get there, not resetting to 100%/0°/0°/0° and risking the
+exact same slicing failure all over again. Immediately schedules the
+same `slice_and_update()` background task a fresh upload triggers
+(seeded with those carried-over settings as the *first* attempt, not
+defaults), and redirects straight to the new draft's own edit page -
+unlike a fresh upload's redirect to the dashboard, there's always
+exactly one resulting job here, never a zip's worth of several, so
+there's no ambiguity about where to send the user.
+
+**Correcting a real error in how this was originally scoped, caught
+while actually building it, not left to ship wrong:** the original to-do
+item's own wording listed `slice_failed` alongside `rejected`/`failed`/
+`done` as something to "restore" - but a `slice_failed` job is a
+*draft* (`models.DRAFT_STATUSES`), not an archived one at all; its files
+still live in `scratch/` and it already has a complete edit/re-slice/
+delete path on the exact same edit page every draft uses (including the
+delete route built earlier this same session). Restore is scoped to
+exactly `models.TERMINAL_STATUSES` (`rejected`/`done`/`failed`/
+`expired`) - the actual jobs whose files genuinely moved to `archive/`
+and have no path back otherwise.
+
+**"Reprint" (`jobs.reprint_job()`, `done` only) is a different action
+entirely, not restore-with-an-extra-step: it skips slicing altogether.**
+A job that already finished printing successfully doesn't need to prove
+itself again - reusing the exact archived `.makerbot` byte-for-byte is
+both faster and more certain to reproduce the same result than
+re-running OrcaSlicer/`mbotmake` against identical geometry and settings
+a second time. Copies the archived `.stl`/`.makerbot`/`.supports.json`
+straight into `queue/` (not `scratch/` - there's no draft stage at all
+here) with a fresh `queued_at` (matching `submit_draft()`'s own
+convention - genuinely joins the back of the line, not the original's
+old position), reads the reused `.makerbot`'s own duration estimate the
+same way a real slice would, and lands back on the dashboard already
+`queued`.
+
+**Deliberately narrower than restore, and why each excluded status
+stays excluded:** not `rejected` (an admin turned it away for a reason
+that reprinting the identical file unchanged doesn't address - "Restore
+& edit" is the right tool there, letting an actual change happen before
+resubmitting); not `expired` (a draft that never actually printed at
+all has nothing proven to reprint); not `failed` (a failed *print* -
+distinct from a failed *slice* - might have failed for a physical
+reason, like this very session's own bed-adhesion incident, worth
+checking or fixing before blindly retrying the identical file rather
+than assuming the file itself was ever the problem).
+
+Verified end-to-end in a real isolated instance for every path, not
+assumed from reading the code: staged a real `done` job (release()
+itself needs the actual printer hardware, unavailable here - staged the
+status transition directly the same way this project's own screenshot
+generation already does for hard-to-reach states) and confirmed Reprint
+produces an immediately-`queued` job with the exact reused `.makerbot`
+file, correct carried-over duration estimate, and a clean audit-log
+entry; confirmed a real `rejected` job's "Restore & edit" produces a
+new draft that automatically re-slices to `sliced` with its own correct
+audit trail, while the original rejected job's own status and archived
+files are completely unaffected; confirmed both routes reject the wrong
+status cleanly (reprinting a `rejected` job, say) with a clear flash
+message via the same `JobActionError` pattern every other job action
+already uses, rather than a raw error or silent no-op.
+
 ### Upload and slicing progress
 
 Slicing (OrcaSlicer + `mbotmake`, both real subprocesses) can take minutes
@@ -385,6 +749,157 @@ stay flat several seconds afterward. (This predates the slice/submit
 split below, which is why the end state here is `sliced` rather than the
 `queued` this was originally verified against - re-confirmed after that
 change, not just assumed still true.)
+
+### A real stuck-slicing incident: subprocess stdin inheritance
+
+**What happened, reported directly by the user:** "I uploaded an obj
+file and started the slicing process. The status shows submitted, but
+the progress bar is showing that it's still working... is it stuck?"
+Checked the real running process, not just the database: both `slice.py`
+and its own child `mbotmake` were genuinely still alive, several minutes
+in, but at essentially zero CPU time - not computing, blocked. `mbotmake`
+has an internal `input()` call (line 929) on certain errors of its own -
+here, a bed-centering sanity check (`assert -0.15 < xrel < 0.15`,
+comparing the printed toolpath's actual bounding-box center to zero,
+relative to its own width) failing for this particular model's geometry.
+None of the three `subprocess.run()` calls in this pipeline
+(`pipeline.run_slice`'s own, plus `slice.py`'s two - OrcaSlicer and
+mbotmake) ever set `stdin` explicitly, so all three inherit whatever
+stdin the app's own process has - a real terminal in normal dev/
+deployment use, confirmed directly (`/proc/<pid>/fd/0` pointed at a real
+`/dev/pts/0`). That `input()` call was blocking forever waiting for a
+keystroke nobody would ever type, rather than raising `EOFError`
+immediately the way it does when stdin is already closed - which is
+exactly what happened when this got reproduced from a context with no
+real terminal attached, initially making it look like a one-off that
+couldn't be reproduced until stdin was deliberately checked and
+controlled for.
+
+**Fixed with `stdin=subprocess.DEVNULL` on all three calls** - a job
+that hits this now fails in well under a second with a clean error
+instead of hanging for however long it takes the outer 600-second
+`subprocess.run` timeout to fire (and even then, only the direct child
+gets killed by that timeout - the blocked grandchild `mbotmake` would
+otherwise leak indefinitely as an orphaned process, never actually
+cleaned up). Confirmed both ways on the real failing model: with stdin
+left alone, it reproduces the exact hang; with `stdin=subprocess.DEVNULL`
+in place, the identical input fails fast (well under a second) with a
+clean `RuntimeError` instead. Also re-verified a normal successful slice
+still works unchanged with the fix in place - this only changes what an
+*already-failing* run does, not the success path.
+
+**The Christmas-tree model's own slicing failure is real and separate,
+not something patched over** - an asymmetric shape whose naive
+bounding-box centering (`stl_to_3mf.center_vertices`, based on the raw
+mesh's min/max) doesn't line up closely enough with where the actual
+print material ends up once sliced, and `mbotmake` refuses to proceed
+rather than risk a mispositioned print. Deliberately not "fixed" by
+loosening that assertion - it's third-party vendored code whose exact
+tolerance reasoning isn't fully understood here, and weakening an
+unfamiliar safety check to make one model pass risks silently producing
+bad real-world prints for others instead of a clean, honest failure.
+
+**Follow-up, same day: actually tried the centroid-based centering
+angle, rather than leaving it as a filed idea, once the user reported a
+second upload failing too** ("Now both obj files that were uploaded
+failed... I still don't have working support for uploading and slicing
+obj files"). Investigated properly before touching anything: confirmed
+`center_vertices()` itself was working exactly as designed (the raw
+mesh's bounding box really did land at X/Y = 0,0 after it ran) - the
+mismatch was that the model's bounding-box center and its actual
+*surface* aren't in the same place for this shape. Computed three
+candidate reference points for the real failing mesh directly: the
+bounding-box center (what shipped originally), a plain vertex average
+(tessellation-dependent - biased toward wherever the mesh happens to
+have more/smaller triangles, not a sound choice), and an area-weighted
+triangle centroid (tessellation-independent - a large triangle counts
+the same as many small ones covering the same real area). The
+area-weighted centroid came out meaningfully closer to zero than the
+bounding-box center in the direction that mattered.
+
+**`center_vertices()`/`surface_centroid_xy()` (`slicing/stl_to_3mf.py`)
+switched from bounding-box to area-weighted-centroid centering**, and
+`static/preview.js`'s `showModel()` updated with an identical
+`surfaceCentroidXY()` calculation to match - the two have to stay in
+lockstep (see either's own comment) or this reintroduces the exact
+"preview and slice disagree on where an off-center model actually
+sits" bug `center_vertices()` was originally built to prevent. Verified
+directly on the real failing model before believing any of this helped:
+re-slicing the identical mesh moved `yrel` from -0.232 (its original,
+clearly-failing value) to -0.162 - a real, measured improvement in the
+right direction, using the actual OrcaSlicer + `mbotmake` pipeline, not
+just reasoning about the vertex math. Also re-verified two previously-
+working models (a plain STL, and the overhang-supports test model with
+supports enabled) still slice successfully and still produce correct
+support-preview geometry with the new centering - a real regression
+check, not assumed safe just because the failing case improved.
+
+**Fully honest about the actual, incomplete result: this specific model
+is asymmetric enough that -0.162 still narrowly misses the ±0.15
+tolerance** - the fix is a genuine, verified improvement (it will
+likely resolve moderately-asymmetric models that would have failed
+under pure bounding-box centering), not a claim that this particular
+Christmas tree model now slices. A full volume-centroid calculation
+(where the material really *is* in 3D, not just projected surface area)
+might close the remaining gap, but needs a watertight, consistently-
+wound mesh to compute correctly - a real risk for a mesh converted from
+an arbitrary user-supplied OBJ that hasn't been validated as clean, and
+not attempted here without first checking that precondition. Recorded
+as the next concrete step on the "model repair"/centering to-do item,
+with the specific numbers this attempt got to, rather than restarting
+the investigation from scratch next time.
+
+**Second real occurrence: `Flexi_Seal.stl` - same failure class, and the
+volume-centroid follow-up actually tried, with a real answer.** Reported
+by the user, who'd already tried resizing it (no effect) and asked to
+find the cause. Confirmed mathematically first, before touching
+anything, why scaling specifically could never help: `mbotmake`'s check
+is a *ratio* - `(x_max + x_min) / (x_max - x_min)` - and a uniform scale
+multiplies both the numerator and denominator by the identical factor,
+leaving the ratio completely unchanged. Scaling this model was never
+going to work, for any scale factor.
+
+Checked the "next concrete step" noted above properly, now that a real
+failing case was in hand: this mesh's edges are 99.98% manifold (19
+non-manifold edges out of 78,779, a small, real but minor defect, not a
+disqualifying one) and its signed volume comes out positive (consistent
+winding overall), so a true volume centroid was actually computable, via
+the standard signed-tetrahedron-decomposition algorithm. Tried it -
+**and it made things worse, not better**, confirmed against the real
+pipeline: `xrel` moved from 0.251 (the deployed area-weighted-surface
+centering) to 0.311 with volume-centroid centering, in the wrong
+direction. Reported honestly rather than pretending the "obvious next
+step" panned out - it didn't.
+
+**Real, working answer found instead: rotating the model.** Reasoned
+through why the centroid shift made things worse rather than better:
+`mbotmake`'s check specifically measures where *infill* (not the whole
+model's surface or volume) ends up, and sparse infill only exists in a
+model's actual solid interior - concentrated wherever the shape happens
+to be thick, which a whole-mesh surface- or volume-centroid has no way
+to know about without slicing first. That pointed at reorientation, not
+a smarter static centering formula, as the real fix - directly the
+"model controls" rotation feature already on the to-do list, not a
+coincidence. Tested empirically rather than assumed: rotated the actual
+failing mesh (re-centered after each rotation, same as any real upload
+would be) at a sweep of angles about the vertical axis and re-sliced
+each one through the real pipeline. A pure 90° rotation flipped which
+axis failed (X started passing, Y started failing instead) rather than
+fixing both at once - genuinely informative on its own, since it
+confirms rotation *does* change the outcome, just not trivially. A 45°
+rotation passed both checks (`xrel` 0.09, `yrel` 0.11, both comfortably
+inside ±0.15) and produced a real, complete `.makerbot` file.
+
+**Immediate, real workaround exists today, before rotation controls are
+built:** rotating a model roughly 45° about its vertical axis in any
+external tool before uploading can resolve this exact failure class -
+told to the user directly for this specific file. The in-app "rotate on
+any axis" control (see README.md's model-controls to-do item) remains
+the real fix, and this investigation is now a second, independent, real
+data point motivating it - not just the Christmas tree's "stand it up
+on its base" case, but confirmed general-purpose: some rotation, found
+by testing rather than guessed, can resolve this class of failure when
+no amount of resizing or recentering-only ever could.
 
 ### What release does
 
@@ -1503,6 +2018,580 @@ timestamp, move the job back onto the main dashboard, and log a
 `requeued` event; and "delete all" confirmed to remove every currently-
 old job in one request while correctly sparing a job that was never old
 to begin with.
+
+### Delete your own queued job
+
+**Why this exists:** per README.md's to-do list - a user submitting a
+model they've since changed their mind about had no way to remove it
+short of asking an admin. Directly completes the "Audit log" to-do item
+about logging a delete, alongside the admin-side equivalent above.
+
+**Genuinely shares its delete mechanics with `delete_old_job()`** (see
+"Old jobs" just above) via a new private `_delete_job_genuinely()`
+helper both now call - a real, unrecoverable delete (own event history
+purged, files unlinked via `storage.delete_job_files()`, one new
+`job_id=None` "job_deleted" event persisting), not another terminal
+status like `reject()`. Only the actor and the log detail's wording
+differ: `jobs.delete_own_job(session, job, user)` logs actor
+`user:<name>` with just the filename in the detail (no "submitted by"
+clause - the actor already says who, since here the actor and the
+submitter are always the same person), while `delete_old_job()` logs
+the admin's own actor plus who originally submitted it.
+
+**Scoped identically to the admin version - `queued`/`approved` only,
+not "any job the user owns."** Once released and `printing`, an admin
+is already acting on that job; deleting it out from under that would be
+a materially different, riskier action the to-do item never asked for -
+`_delete_job_genuinely()`'s shared `_require_status()` check enforces
+this the same way for both callers.
+
+**`routers/user.py`'s `_owned_draft()` helper got renamed to
+`_owned_job()`** - it was always a plain ownership check with no actual
+draft-specific logic in its body (the draft-status check itself always
+lived in each *caller*, e.g. `edit_draft()`), and this route needed the
+identical ownership check for a job that's very much not a draft
+(`queued`/`approved`). Renaming the one shared helper to match what it
+actually does, rather than adding a near-duplicate under a
+draft-specific name, keeps `edit`/`reslice`/`submit`/`delete` sharing
+one ownership check.
+
+Verified end-to-end against an isolated instance through the real HTTP
+routes: the delete button renders only for a `queued`/`approved` row and
+not for a `printing` one; attempting to delete another user's job
+returns a 404 (ownership enforced); attempting to delete one's own
+`printing` job is rejected with the same inline flash-error pattern
+every other job action already uses, leaving the job untouched;
+deleting an owned `queued` job removes the DB row, its files, and its
+own event history while leaving exactly one `job_deleted` entry (actor
+`user:<name>`, just the filename) in the global log; and an unrelated
+job belonging to a different user is confirmed untouched throughout.
+
+### Resize and auto-fit (model controls, part one)
+
+**Why this exists:** the user's full "model controls" ask - rotate on
+any axis, "snap to surface," resize maintaining aspect ratio, and a
+one-click auto-fit - spelled out in full before pausing the OBJ feature
+mid-session to build this instead. Sequenced deliberately: resize/
+auto-fit first (a scale number, no new 3D interaction needed), rotation/
+snap-to-surface as a separate, materially bigger follow-up (real
+face-picking and rotation UI) - not attempted in the same pass.
+
+**`Job.scale_factor`** (schema `5.5.0`, defaults `1.0`, always uniform -
+never per-axis, so proportions can never distort, per the user
+explicitly: "maintaining the aspect ratio"). Applied in
+`slicing/stl_to_3mf.build_3mf()` by scaling every vertex *before*
+`center_vertices()` runs, not after - deliberate ordering: a uniform
+scale from the origin doesn't change where a mesh's area-weighted
+centroid sits relative to its own geometry, only its absolute size, so
+scale-then-center gives the same result centering-then-scaling would,
+but only if centering runs last against the already-final geometry.
+Threaded all the way through the existing subprocess chain (`slice.py`
+gains a `--scale` CLI flag, `pipeline.run_slice()` and
+`jobs.slice_and_update()`/`start_reslice()` each gain a `scale_factor`
+parameter) rather than becoming a second, parallel pipeline.
+
+**Bounded** (`MIN_SCALE_FACTOR`/`MAX_SCALE_FACTOR`, 1%-1000%) and
+validated in `start_reslice()` before anything about the job changes -
+an out-of-range value is rejected with a clear message and the job's
+previous state (status, scale) is left completely untouched, same
+"validate before mutating" shape every other job action here already
+uses.
+
+**Where this lives: the existing draft edit page (`job_edit.html`),
+not the upload form** - every one of the user's own motivating examples
+(a model that failed to slice, a model that doesn't fit) is about fixing
+something *already uploaded*, which is exactly what this page already
+exists for (re-slicing with new support settings). Scoped to
+`sliced`/`slice_failed` drafts only, matching `start_reslice()`'s
+existing status guard - not yet extended to an already-`queued`/
+`approved` job, which raises the still-open "re-slice in place or count
+as a new submission" question a different to-do item already flags.
+
+**Live, before-you-commit preview - no server round trip to see the
+effect of a scale change**, matching this app's existing "instant
+client-side preview" philosophy (see "Upload and slicing progress").
+`static/preview.js` now keeps the model exactly as loaded/parsed
+(`rawGeometry`, never mutated) separately from what's actually
+displayed, so a new exported function (originally `setPreviewScale(factor)`,
+later folded into the combined `applyTransform()` once rotation joined it
+- see "Rotate and snap to surface" below) can always compute fresh from
+the true original size - repeated scale changes never compound - and a
+new `autoFitScale()` computes the largest factor
+(capped at 1, so this only ever shrinks an oversized model, never grows
+one that already fits) that would bring the *original* geometry within
+the build plate on all three axes at once. The one-click "Auto-resize
+to fit build plate" button in `job_edit.html` just calls that and
+applies the result; the scale number field re-renders live on every
+keystroke via the same function. The **read-only "View 3D" page for an
+already-submitted job** (`job_preview.html`) needed the identical
+treatment for a different reason: the stored model file is always the
+original, unscaled upload (scaling only ever happens transiently inside
+`build_3mf()`, never rewriting the file itself), so without reapplying
+`job.scale_factor` there too, that page would have silently shown the
+wrong size for anything actually sliced at a non-default scale.
+
+Verified against the real pipeline, not just the vertex math: re-slicing
+a real test model at 50% scale produced an actual `.makerbot` whose own
+recorded print height was exactly half the unscaled version's (a
+same-model X-axis comparison came out less clean-looking at first - a
+pre-existing skirt/purge-line artifact in the print profile inflating
+the smaller print's proportional footprint, already documented
+elsewhere in this project, not a scaling bug - confirmed by checking the
+input mesh's own vertex extents directly, which scaled to exactly 50%
+in both axes). End-to-end HTTP flow verified too: an out-of-bounds scale
+rejected with the job's prior state intact, a valid 50% re-slice
+persisting correctly and producing a correctly half-sized real output
+file. The interactive/browser half was verified with a real headless
+browser (not just read as correct): live info-text updates as the scale
+input changes, the "too large" error state appearing and clearing
+correctly, and auto-fit computing the exact right shrink factor for a
+genuinely oversized synthetic model (limited by whichever bed dimension
+was tightest) with zero console/page errors throughout.
+
+### Rotate and snap to surface (model controls, part two)
+
+**Why this exists:** the second half of the user's "model controls" ask,
+resumed the same session after a real slicing failure (`Flexi_Seal.stl`,
+see "A real stuck-slicing incident" below) made it concrete: resizing a
+genuinely asymmetric model can never fix `mbotmake`'s bed-centering
+check (that check is a scale-invariant ratio), but *reorienting* it can
+- confirmed by testing the actual failing file at a sweep of rotation
+angles through the real pipeline before writing any UI for this at all.
+
+**The highest-stakes correctness question this raised, verified
+numerically before trusting any of it:** does `THREE.BufferGeometry`'s
+`.rotateX().rotateY().rotateZ()` (what the live preview already uses)
+compose the same way as a matching sequence of rotation matrices in
+Python (what has to run inside the actual slicing subprocess)? Confirmed
+yes, to float32 precision, across 6 test cases including large/negative
+angles - by actually loading this project's own vendored Three.js build
+in a real browser and comparing its output point-for-point against
+`slicing.stl_to_3mf.rotate_vertices()`, not by reasoning about
+conventions from documentation. That numeric parity is what
+`Job.rotate_x/y/z` (schema `5.6.0`, degrees, defaults `0.0`) and
+`rotate_vertices()` depend on being true - a silent mismatch here
+wouldn't just look wrong in the browser, it would mean an approved job
+prints in a different orientation than whatever anyone actually looked
+at and signed off on.
+
+**A second, separate correctness trap found the same way, this time by
+being *wrong* first and catching it before shipping:** "snap to
+surface" needs to compose an *additional* rotation on top of whatever's
+already dialed in, then express the combined result back as three
+angles a future re-slice can reproduce. The natural-looking approach -
+`new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z, "XYZ"))`
+to represent "the same rotation as calling `.rotateX(x).rotateY(y)
+.rotateZ(z)`" - is simply false; verified this directly (built both,
+compared results, they disagreed) before it ever reached working code.
+Three.js's `"XYZ"` Euler order is *intrinsic* (each axis is the model's
+own, already-tilted-by-the-previous-rotation axis); `rotateX/Y/Z` calls
+compose *extrinsically* (each axis is the fixed world axis, unaffected
+by earlier rotations) - two genuinely different rotations that happen
+to share a label. The actual equivalent, confirmed by a full compose-
+then-decompose-then-reapply round trip (not just a single-stage check)
+across three test cases including angles past 90°: Three.js's
+*intrinsic* `"ZYX"` order. `preview.js`'s `computeSnapRotation()` is
+built entirely on that confirmed equivalence, commented with the
+reasoning directly in the code so a future change to this can't
+casually reintroduce the mistake without at least reading why it's
+there.
+
+**Order of operations in `stl_to_3mf.build_3mf()`: rotate, then scale,
+then center** - rotate first so scaling and centering both act on the
+model's actual print orientation, not its as-authored one; rotate/scale
+order between those two specifically doesn't matter (uniform scale
+commutes with any rotation), but centering has to run last regardless,
+since it needs the final, already-transformed geometry to compute the
+right centroid and the right new Z-floor (rotating can change which
+point is actually lowest). Threaded through the same subprocess chain
+resize already established (`slice.py --rotate-x/-y/-z`,
+`pipeline.run_slice()`, `jobs.slice_and_update()`/`start_reslice()`) -
+no bounds check on the angles the way scale gets one, since sin/cos are
+periodic and there's no such thing as "too rotated" the way there's a
+"too small/too large" for scale.
+
+**The UI: three degree fields (live preview per keystroke, same
+`applyTransform()` resize already uses, now also taking `rotateX/Y/Z`)
+plus a "Snap to surface" mode** - click the button, then click a face on
+the model itself; a raycast against the currently-displayed mesh finds
+which face was clicked, and `computeSnapRotation()` returns the new
+total rotation that makes that face the new bottom. Click-vs-drag is
+distinguished by movement distance between pointer-down and pointer-up
+on the preview container (over ~5px counts as a drag, e.g. orbiting the
+camera via `OrbitControls`, and is ignored) rather than by which DOM
+element fired the event - the canvas is the same element either way.
+`autoFitScale()` (see "Resize and auto-fit" above) was made
+rotation-aware at the same time: reorienting a model changes its actual
+footprint on the plate, so fitting it has to account for whatever
+rotation is currently applied, not just the as-uploaded shape.
+
+Verified end-to-end, both halves: the actual `Flexi_Seal.stl` file, run
+through the real production `--rotate-z 45` code path (not a one-off
+script), reproduced the exact passing result found during the original
+investigation and produced a genuine `.makerbot`. In the browser (a
+real headless browser, not just read as correct): manual rotation
+inputs live-updating the preview and correctly changing reported
+dimensions; a miss-click in snap mode changing nothing and staying in
+snap mode; a genuine drag across the model also changing nothing
+(confirmed separately that the drag *did* orbit the camera, ruling out
+"nothing happened because the drag didn't register" as a false
+explanation); and a real click that hits the model updating all three
+rotation fields, exiting snap mode, and changing the reported
+dimensions to match the new orientation. Getting a *reliable* real click
+onto the model at all took its own debugging - dead-center of the
+preview canvas turned out to miss a hole in the middle of this
+particular shape, and a synthetic `page.mouse.click()` at fixed
+coordinates proved less trustworthy in this environment than Playwright's
+own locator-relative `click(position=...)` - worth remembering as a
+real, environment-specific quirk if this class of test needs writing
+again, not evidence the underlying feature was ever broken.
+
+### A real regression, found immediately after shipping the above: a canvas-sizing race condition
+
+**What happened, reported directly:** "This is a major regression
+failure" - the 3D preview rendered as a completely blank box, on pages
+that had nothing to do with rotation at all (a previously-and-still
+successfully-sliced plain `.stl`, viewed on the ordinary read-only
+"View 3D" page). Investigated the obvious suspects first, and ruled
+each out with real evidence rather than assumption: the real server was
+serving byte-identical, correct files (diffed directly against a known-
+good copy); the exact template rendered correctly server-side for the
+real job in question; and the identical code, driven through a real
+headless browser in an isolated test, produced a working preview with
+correct dimensions. All of that pointed away from the code being
+broken - until the user reported the actual fix that worked: switching
+their browser to fullscreen and back made the preview reappear.
+
+**That one detail was the real diagnosis.** `preview.js`'s scene setup
+already had exactly the right idea - call `resizeToContainer()` once
+immediately, so the canvas is sized correctly from the very first
+frame, rather than waiting on the asynchronous `ResizeObserver` callback
+that also keeps it sized correctly later. The bug was in the timing of
+that *immediate* call: it runs right after `container.innerHTML = ""`
+and appending a brand new `<canvas>`, reading `container.clientWidth`/
+`clientHeight` at that exact moment - which can occasionally race the
+browser's own layout pass and catch a transitional value before the
+container has actually taken on its real, CSS-computed size. Whatever
+wrong size that first call catches, the camera's aspect ratio and the
+renderer's pixel buffer get locked to it, and nothing was ever queued to
+correct it afterward - unless something else happened to trigger the
+`ResizeObserver` later, which is exactly what a manual window resize
+does. A live page that never gets resized by hand would have stayed
+blank indefinitely.
+
+**Fixed by scheduling one more, guaranteed-correctly-timed resize via
+`requestAnimationFrame`, right alongside the existing immediate call -
+not by replacing it.** `requestAnimationFrame` callbacks run after the
+browser's next layout/paint pass completes, so this second call is
+certain to see the container's real, settled size even on the rare
+occasion the immediate one didn't. Cheap enough to always do rather than
+trying to detect "was that first read actually wrong" from inside the
+function, which isn't reliably knowable at all from there. Verified the
+fix doesn't regress the ordinary, already-working case: loading a real
+model in a real headless browser still produces a canvas sized exactly
+to the container's CSS dimensions and a correctly-rendered preview.
+
+**Explicitly not claimed as a deterministically-reproduced fix** - this
+is a genuine browser layout timing race, not a logic bug with a fixed
+input/output to assert against, and automated headless testing (this
+project's main verification tool throughout) tends to run against an
+already-fully-laid-out page, which is exactly the condition under which
+this race doesn't occur - worth remembering as a real gap in what this
+project's testing approach can catch on its own; a live user's
+real-world page load remains the only way this particular class of bug
+actually surfaces.
+
+### On-canvas drag handles (model controls, part three)
+
+**Why this exists:** immediately after the rotation feature above
+shipped, the user asked directly: "Is it possible to have handles for
+the object in the preview to resize and rotate visually instead of only
+by numbers in the fields?" - the number fields plus click-to-snap cover
+precision and one specific reorientation, but not general-purpose
+"grab it and turn/resize it by eye," which is how most 3D editors work.
+
+**Built on Three.js's own `TransformControls` addon** (vendored at the
+exact same r160 revision as the rest of this project's Three.js build,
+per [[queue3d-deployment-network]]'s no-CDN rule - fetched once,
+unmodified, and committed verbatim rather than hand-rolled, since
+reimplementing a drag-gizmo's picking/highlighting/screen-space-sizing
+logic from scratch would just be reproducing a well-tested library
+worse). Two buttons, "Rotate (drag)" and "Resize (drag)", each toggling
+the gizmo on in that mode - mutually exclusive with each other and with
+"Snap to surface" (all three would otherwise fight over pointer events
+on the same canvas), same pattern the existing snap-mode toggle already
+used.
+
+**The integration challenge, and how it resolves cleanly with this
+app's existing architecture:** `TransformControls` expects to freely
+manipulate an attached Object3D's own position/quaternion/scale - but
+every other transform in this file is deliberately baked directly into
+vertex data instead, with the displayed mesh's own Object3D transform
+always kept at identity (see "Rotate and snap to surface" above, and
+`computeSnapRotation`'s own comment on why). Rather than fight that
+invariant, the gizmo is allowed to freely manipulate the mesh's
+Object3D transform *during* a drag (cheap, and exactly what the library
+expects), and only on release (`TransformControls`' own `"mouseUp"`
+event - fired once a handle is actually let go, not on a mere hover)
+does `commitGizmoTransform()` read the resulting delta back out,
+compose it onto a running baseline, re-bake the combined result via the
+same `applyTransform()` every other control uses, and re-attach the
+gizmo to the freshly-created mesh `applyTransform` always produces -
+restoring the identity-transform invariant before the next drag ever
+starts. `dragging-changed` (a `TransformControls` event fired the
+instant a drag actually starts/ends) disables `OrbitControls` for the
+duration, so grabbing a handle can't also spin the camera - both listen
+on the same canvas element.
+
+**Reused, not reinvented, the rotation math this session had already
+verified numerically:** the mesh's own quaternion after a drag session
+(starting from identity, since it's always freshly rebaked before each
+drag) *is* that drag's rotation delta - composing it onto the running
+baseline via the confirmed intrinsic-`"ZYX"`-Euler equivalence is
+exactly `computeSnapRotation`'s own `snapQuat.multiply(currentQuat)`
+pattern, reused rather than re-derived.
+
+**A hard product requirement needed its own small fix, not a
+work-around avoided:** "resize... while maintaining the aspect ratio"
+- but `TransformControls`' scale mode ships with three independent
+per-axis handles plus one uniform corner handle, matching a general-
+purpose 3D editor's needs, not this app's specific one. Rather than try
+to hide the individual X/Y/Z handles (their visibility logic is bound
+up with the same flags used for rotate/translate axes too, and there's
+no clean way to keep only the uniform corner visible), every drag in
+scale mode is forced uniform directly: a listener on `TransformControls`'
+own `"objectChange"` event (fired continuously *during* a drag, not
+just at the end) copies whichever axis actually changed into the other
+two, every frame - so which handle was grabbed stops mattering at all;
+every scale drag behaves as one single resize.
+
+**A real, numerically wild bug found by testing the actual drag
+interaction, not just reading the code as correct:** `TransformControls`'
+own free/uniform ("XYZ" corner) scale handle computes its factor as
+`pointEnd.length() / pointStart.length()` - the ratio of distances from
+the object's origin to where the drag's start/end points intersect an
+invisible helper plane. A drag that happens to *start* very close to
+that origin makes `pointStart.length()` near zero, and the resulting
+ratio can come out wildly large, or even negative (dividing by a value
+that crossed zero) - reproduced directly while testing this feature: a
+single drag turned a 100% scale into `-558084917.9%`. This is a real,
+known characteristic of the underlying library's own math (not a bug
+introduced here, and not something hiding the handle would fix, since
+any sufficiently-central click has the same issue) - but "resize while
+keeping proportions" should never actually show a negative or
+astronomical result regardless of what the widget's own math allows.
+Fixed by clamping the committed result in `commitGizmoTransform()` to
+the exact same `MIN_SCALE_FACTOR`/`MAX_SCALE_FACTOR` bounds
+`jobs.start_reslice()` already enforces server-side (1%-1000%),
+falling back to the pre-drag scale entirely for a non-finite or
+non-positive result rather than clamping a meaningless number into
+range. Verified directly: the same degenerate near-origin drag that
+previously produced the billion-percent result now lands safely inside
+bounds every time, while an ordinary, well-clear-of-center drag still
+produces its genuine, unclamped ratio.
+
+**A real test-harness bug worth remembering the shape of, caught while
+verifying this rather than shipped as a false "it works":** an
+automated click on the "Rotate (drag)"/"Resize (drag)" buttons -
+sitting further down the settings form than the preview canvas -
+scrolled that button into view, which pushed the canvas (much higher up
+the page) entirely out of the viewport; screen coordinates computed
+*before* that click were then stale, silently producing "hits" at
+off-screen coordinates that a real drag can never reach. The actual
+raycasting/projection math was correct throughout - the bug was in
+trusting a canvas position computed before an intervening action that
+could move it, the same general lesson this session's snap-to-surface
+testing already hit once (a stale click position computed before a
+drag had orbited the camera). Fixed in the test by re-fetching the
+canvas's position (scrolling it back into view first) immediately
+before every interaction, never reusing a position computed earlier in
+the run.
+
+Verified end-to-end in a real headless browser: a real drag on the
+free-rotate handle changes all three rotation fields and exits nothing
+else's mode; a real drag on the free-scale handle (from a well-clear-of-
+center starting point) changes the scale field to a sane, positive
+value; the same degenerate near-origin drag is safely clamped rather
+than producing an absurd number; turning on either drag mode correctly
+turns off "Snap to surface" (and vice versa, per the existing mutual-
+exclusivity code); and zero console/page errors throughout.
+
+### A real bug found using the feature for real: whole-number-only percent/degree fields
+
+**User report, using "Auto-resize to fit build plate" on a real model
+(a fighter jet): "The resize field accepts only whole number
+percentages, not float with a decimal."** All four of the scale/
+rotation `<input type="number">` fields (`scale-percent`, `rotate-x/y/
+z`) had `step="1"` - a leftover from when these fields were first added
+and always expected to be hand-typed in whole units, never revisited
+once `autoFitScale()`, `computeSnapRotation()`, and the drag gizmo's
+`commitGizmoTransform()` all started *computing* values to 2 decimal
+places (`Math.floor(factor * 100 * 100) / 100`, `Math.round(x * 100) /
+100`, etc.) and writing them straight into these same fields.
+
+**Confirmed the actual failure mode directly rather than assumed from
+the symptom description:** typing or programmatically setting a decimal
+value into a `step="1"` number input is allowed - the field displays it
+fine, and this app's own live-preview `"input"` listener fires and
+updates the 3D view correctly regardless, since `parseFloat()` doesn't
+care about `step` at all. The break is specifically at **submission**:
+a plain `<form method="post">` submit (this page uses one, unlike the
+upload form's manual XHR) runs the browser's native constraint
+validation first, and a `step="1"` field holding a non-integer value
+has `validity.stepMismatch === true` - the browser silently refuses to
+submit at all, showing only its own native tooltip instead of doing
+anything this app's code could catch or report. Reproduced directly:
+setting `63.47` into a `step="1"` copy of this field reported
+`checkValidity() === false` / `stepMismatch: true` and never reached
+the server at all; the identical value against a `step="0.01"` field
+reported valid and reached `/jobs/{id}/reslice` correctly.
+
+**Fixed, not documented as a limitation** - per the user's own
+framing ("if that's a limitation, then the page must state that"),
+the right call here was to check whether it actually needed to *be* a
+limitation first, and it didn't: the server side already accepted a
+plain `float` for every one of these fields with no integer
+requirement (`routers/user.py`'s `reslice()`, `jobs.start_reslice()`),
+so the `step="1"` attributes were a client-side-only restriction with
+no reason behind them once the auto-computed features existed.
+Changed all four to `step="0.01"`, matching the exact precision every
+value-producing feature already rounds to - min/max bounds (`min="1"
+max="1000"` on scale) are untouched, so out-of-range values are still
+caught the same way they always were, just no longer also silently
+blocking any in-range value with more than zero decimal places.
+
+### Auto-fit's blind spot: asymmetric models, and automatic rotation retry
+
+**Real report, using "Auto-resize to fit build plate" on an actual F-35
+fighter jet STL model, followed by a genuine slicing error:** OrcaSlicer
+refused to slice the auto-fit result at all. Investigated the real
+error directly rather than guessed at it - OrcaSlicer's own terse CLI
+output ("run found error, return -50, exit...") gives almost nothing to
+go on, but re-running it with `--debug 4 --logfile` produces a much more
+detailed internal log, which named the actual reason plainly: `"Plate 1:
+... Nothing to be sliced, Either the print is empty or no object is
+fully inside the print volume before apply."`
+
+**Root cause, confirmed by direct computation against the real mesh:**
+`autoFitScale()` and the "too large" warning both measured the model's
+raw bounding-box span against the bed dimensions, implicitly assuming
+the model would end up centered by that same bounding box once placed.
+It doesn't - `renderGeometry()` (and `stl_to_3mf.center_vertices()` on
+the server side) center on the area-weighted surface centroid instead
+(see "Rotate and snap to surface" above for why that centering exists
+at all), which for a strongly asymmetric shape can sit nowhere near the
+bounding-box middle. Computed directly for the real jet mesh: raw Y
+span was 2000.8mm, needing a ~9.75% shrink to fit the bed's 195mm depth
+by span alone - but the actual surface centroid sat at Y=297.9, while
+the bounding box's own middle would have been roughly Y=-1.4 - a ~299mm
+difference. At the auto-fit-computed 9.74% scale, the *span* fit
+(194.9mm, just under 195mm) but the *centered* placement didn't:
+Y ranged from -126.6mm to +68.3mm relative to the bed's own -97.5/+97.5
+half-depth - one side alone extended ~29mm past the edge, even though
+the total footprint was small enough to fit if it had been centered
+some other way.
+
+**Fixed by measuring the real constraint - not "does the span fit," but
+"does each side, measured from the centroid, fit its own half of the
+bed":** `autoFitScale()` now computes `halfExtentX/Y` as the larger of
+`|min - centroid|` and `|max - centroid|` per axis, and divides the
+bed's own half-width/half-depth by that instead of the old
+`bedDimension / span`. This is a strict generalization, not a special
+case bolted on: for any roughly-symmetric model (where the centroid
+already sits at the bounding-box middle), `halfExtentX` reduces to
+exactly `size.x / 2`, reproducing the old formula's result bit-for-bit
+- only a genuinely asymmetric model gets a different (correct) answer.
+`renderGeometry()`'s "does this fit" check (which drives the red/blue
+model color and the info-text warning) got the equivalent fix: instead
+of comparing the raw pre-centering span to the bed dimension, it now
+recomputes the bounding box *after* centering and checks each side
+against the bed's actual half-extent directly - the same shape of fix,
+applied to the check that runs on every render rather than only on an
+auto-fit click.
+
+Verified against the real file, not just the arithmetic: the corrected
+formula computes 7.50% for this model (not the old, wrong 9.74%), and
+re-centering the actual mesh at that scale through the real Python
+pipeline confirmed all three axes now genuinely fit (Y lands exactly on
+the boundary, -97.5, as expected for the axis that's the binding
+constraint). Re-ran the real OrcaSlicer CLI at the corrected scale and
+it no longer refuses to slice - confirmed via a real headless-browser
+test too: auto-fit on the actual model now reports 7.5% and clears the
+"doesn't fit" warning, with zero console errors.
+
+**A second, separate, already-known failure surfaced right underneath
+once the fit itself was fixed:** at the corrected scale, OrcaSlicer
+proceeded but `mbotmake`'s own bed-centering safety check
+(`assert -0.15 < yrel < 0.15` - see "A real stuck-slicing incident" and
+the Flexi_Seal investigation elsewhere in this file) still rejected it,
+with `yrel = -0.2995` - the same failure class as those two earlier
+investigations, on a third, independent real model. Swept a handful of
+Z rotations against the real file to check whether the same fix would
+apply again: 45° and 60° both produced a genuine `.makerbot`; 15° and
+30° did not. Confirmed general, not a one-off.
+
+**This is what prompted the automatic-rotation-retry feature, built the
+same session:** per the user, directly - "Rotating the object resolved
+the slicing error. When receiving slicing errors, suggest rotating the
+object," followed immediately by "Or, try rotating the object
+automatically when running into slicing errors," and, once asked how
+aggressive that should be: "I don't think it would hurt to attempt
+rotation and reslice until all reasonable rotations have been tried."
+
+`jobs.AUTO_ROTATE_CANDIDATES` is a fixed, bounded set of 11 rotations -
+quarter/eighth turns about Z (every real fix observed across all three
+investigated models landed here), plus the four ways to lay the model
+on one of its other faces (±90° about X or Y) - not an exhaustive
+multi-axis grid, which would multiply the real per-attempt cost
+(a full OrcaSlicer+`mbotmake` run each, genuinely minutes for a large
+model) combinatorially for a search with no particular reason to
+expect a better answer than a simpler sweep would find.
+`jobs._slice_with_rotation_retry()` tries the orientation actually
+requested first (never overriding an explicit choice), and only sweeps
+the candidates if that fails, stopping at the first success. If a
+candidate other than the requested one is what worked,
+`slice_and_update()` updates `Job.rotate_x/y/z` to what was *actually*
+sliced (not silently leaving the fields showing the orientation that
+failed) and repurposes `Job.slice_error` - normally error-only - as a
+one-time informational note on an otherwise-successful `sliced` job,
+explicitly saying what was requested and what was substituted;
+`job_edit.html` renders it as a plain note (not styled as an error) and
+it clears itself the next time a re-slice succeeds without needing to
+fall back to a candidate. If every candidate also fails, the *original*
+requested orientation's own failure is what gets reported (not
+whichever candidate happened to run last) - the one the user actually
+asked for is the most relevant thing to show - and the `slice_failed`
+page's own hint text was updated to say a broad rotation sweep was
+already tried automatically, so a user doesn't waste time manually
+retrying rotations the app already ruled out.
+
+Verified end-to-end against a real, previously-failing file, through
+the real pipeline: uploaded the Flexi_Seal model fresh (rotation
+defaulting to 0/0/0, deliberately not pre-rotated), let the real
+background slicing task run to completion, and confirmed it landed on
+`sliced` (not `slice_failed`) with `Job.rotate_z` automatically set to
+`45.0` and a clear note on the edit page explaining exactly what
+happened and why the rotation fields show a value nobody manually
+entered.
+
+**A related observation from the user, correctly identifying a real
+remaining gap: "The preview always shows the model in the center. If
+it's off center, that's not displayed visually."** True, and distinct
+from the calculation bug above (which is fixed - the red/blue color and
+info text are now numerically correct for exactly this case). The
+camera itself still frames around the *model's own* size and centroid
+(`camera.position.set(radius * 1.4, ...)`, `radius` derived from the
+model, not the bed), not the bed's fixed physical dimensions - so every
+model, whether it comfortably fits or genuinely hangs off one edge,
+gets framed to look similarly "centered in the picture," and the bed's
+true, fixed-size rectangle can be easy to miss as the actual frame of
+reference. The color/text warning is real and correct, but a viewer
+who's only glancing at the picture rather than reading the info line
+could still miss an overhang. Not addressed here - would need the
+camera (or at least the bed-plate rendering) to hold a consistent,
+recognizable scale/position across every model rather than re-framing
+per-model, which is a real design change to how the preview frames
+itself, not a quick follow-up to this fix.
 
 ### Browsing finished jobs, and the audit log
 

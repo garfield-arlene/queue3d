@@ -17,12 +17,14 @@ from models import Admin, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUS
 from pipeline import run_slice
 from printer import PrinterError, capture_photo, send_print_job, system_information
 from storage import (
+    archive_paths,
     archive_photo_path,
     delete_job_files,
     move_job_to_archive,
     queue_paths,
     read_makerbot_duration_s,
     scratch_paths,
+    scratch_stl_path,
 )
 
 
@@ -381,41 +383,208 @@ def reject(session: Session, job: Job, admin: Admin, note: str) -> Job:
     return job
 
 
-def delete_old_job(session: Session, job: Job, admin: Admin) -> None:
-    """Genuinely deletes a stale, still-undecided job - reachable only
-    from /admin/jobs/old (routers/admin.py), never a general "delete any
-    queued job" action. Not another terminal status like reject() above
-    (which deliberately keeps the job and archives its files as a
-    permanent record) - per the user, this specific action "removes the
-    job... and deletes the model files, with no undo," the same delete
-    semantics as the separate to-do item for a user deleting their own
-    queued job (this is the admin-side equivalent for one that's gone
-    stale instead, not a different kind of delete).
+def _delete_job_genuinely(
+    session: Session, job: Job, actor: str, detail: str, *allowed: JobStatus
+) -> None:
+    """The actual delete both delete_old_job() and delete_own_job() below
+    share - a genuine, unrecoverable delete, not another terminal status
+    like reject() (which deliberately keeps the job and archives its
+    files as a permanent record). Only the actor label, detail wording,
+    and *allowed* statuses differ between "an admin clearing a stale
+    job" and "a user removing their own" - the delete mechanics
+    themselves are identical.
 
     The job's own prior event history (submit, slice, queue-submission,
     etc.) is deleted along with it rather than left behind as orphaned
     rows a global log join can no longer resolve to a filename - once
     the job itself is gone, that per-job history has nothing left to
     attach meaningfully to. What actually persists is one new,
-    job_id=None event recording the deletion itself (who did it, and
-    what/whose it was) - the exact same pattern user_deleted already
-    uses for a User that's gone by the time anyone reads that log entry
-    back."""
-    _require_status(job, JobStatus.queued, JobStatus.approved)
-    user = session.get(User, job.user_id)
-    submitter = user.name if user else "?"
+    job_id=None event recording the deletion itself - the exact same
+    pattern user_deleted already uses for a User that's gone by the
+    time anyone reads that log entry back."""
+    _require_status(job, *allowed)
     for event in session.exec(select(JobEvent).where(JobEvent.job_id == job.id)).all():
         session.delete(event)
     delete_job_files(job)
-    log_event(
-        session,
-        None,
-        _admin_actor(admin),
-        "job_deleted",
-        detail=f"{job.original_filename} (submitted by {submitter})",
-    )
+    log_event(session, None, actor, "job_deleted", detail=detail)
     session.delete(job)
     session.commit()
+
+
+def delete_old_job(session: Session, job: Job, admin: Admin) -> None:
+    """Genuinely deletes a stale, still-undecided job - reachable only
+    from /admin/jobs/old (routers/admin.py), never a general "delete any
+    queued job" action. Per the user, this specific action "removes the
+    job... and deletes the model files, with no undo" - see
+    _delete_job_genuinely() above for the shared mechanics with
+    delete_own_job() below, this branch's admin-side equivalent for a
+    job that's gone stale rather than one its own submitter no longer
+    wants. queued/approved only - a draft is never admin-visible in the
+    first place (see models.QUEUE_STATUSES), so this never needs to
+    reach one."""
+    user = session.get(User, job.user_id)
+    submitter = user.name if user else "?"
+    _delete_job_genuinely(
+        session,
+        job,
+        _admin_actor(admin),
+        f"{job.original_filename} (submitted by {submitter})",
+        JobStatus.queued,
+        JobStatus.approved,
+    )
+
+
+def delete_own_job(session: Session, job: Job, user: User) -> None:
+    """A user deleting their own still-undecided job - per README.md's
+    to-do list, "they may no longer want it," with the same genuine,
+    no-undo delete semantics as delete_old_job() above (see
+    _delete_job_genuinely() for the shared mechanics). queued/approved,
+    same as the admin path (once released and printing, an admin is
+    already acting on it; deleting out from under that would be a
+    different, much riskier action never asked for) - plus
+    slice_failed, per the user's own follow-up ask: a draft that never
+    successfully sliced has nothing worth keeping around and no "submit"
+    option either, so re-slicing or waiting out the existing draft-expiry
+    cleanup were the only ways to get rid of one before this. Deliberately
+    NOT extended to a plain sliced draft (successfully sliced, not yet
+    submitted) - that one wasn't part of this ask, and already has its
+    own path forward (submit it, or keep iterating on settings).
+    No "submitted by" clause in the log detail unlike delete_old_job()'s -
+    the actor label (user:<name>) already says who, since here the actor
+    and the submitter are always the same person."""
+    _delete_job_genuinely(
+        session,
+        job,
+        f"user:{user.name}",
+        job.original_filename,
+        JobStatus.queued,
+        JobStatus.approved,
+        JobStatus.slice_failed,
+    )
+
+
+def restore_job(session: Session, job: Job, user: User) -> Job:
+    """Copies an archived job's model into a brand-new draft the user can
+    modify and resubmit, rather than only being able to start over with a
+    fresh upload - per README.md's to-do list, "useful both for fixing a
+    failed/rejected submission and for reprinting or tweaking a past
+    successful one." Only ever reaches jobs in models.TERMINAL_STATUSES
+    (rejected/done/failed/expired) - a slice_failed job is NOT included
+    here despite an earlier version of that to-do item mentioning it: a
+    slice_failed job is a draft (models.DRAFT_STATUSES), its files are
+    still in scratch/ (never archived at all), and it already has a full
+    edit/re-slice/delete path via the normal job-edit page - it has
+    nothing to "restore" from.
+
+    A genuine copy, not a move (per the same to-do item) - the archived
+    job and its own history are completely untouched; only a brand-new,
+    independent Job row and a duplicated .stl file are created. The new
+    draft starts pre-filled with the archived job's own scale/rotation/
+    support settings rather than plain defaults - the whole point is
+    reusing a previous submission, including whatever tuning (a specific
+    rotation that fixed a real slicing failure, say) it took to get there
+    the first time, not discarding it and hoping the model still slices
+    cleanly at 100%/0°/0°/0° from scratch.
+
+    Deliberately does NOT itself schedule the re-slice - the caller
+    (routers/user.py, which already owns the BackgroundTasks dependency
+    for every other job-creating action) does that immediately after,
+    the exact same shape upload() already uses."""
+    _require_status(job, *TERMINAL_STATUSES)
+    archived_stl, _archived_makerbot, _archived_supports = archive_paths(job.id)
+    if not archived_stl.exists():
+        raise JobActionError("The original model file for this job is no longer available to restore.")
+
+    new_job = Job(
+        user_id=user.id,
+        original_filename=job.original_filename,
+        status=JobStatus.submitted,
+        supports_enabled=job.supports_enabled,
+        support_style=job.support_style,
+        scale_factor=job.scale_factor,
+        rotate_x=job.rotate_x,
+        rotate_y=job.rotate_y,
+        rotate_z=job.rotate_z,
+    )
+    session.add(new_job)
+    session.commit()
+    session.refresh(new_job)
+
+    new_stl_path = scratch_stl_path(new_job.id)
+    shutil.copy(archived_stl, new_stl_path)
+    new_job.stl_path = str(new_stl_path)
+    session.add(new_job)
+    log_event(
+        session, new_job.id, f"user:{user.name}", "restored",
+        detail=f"from job #{job.id} ({job.original_filename}, was {job.status.value})",
+    )
+    session.commit()
+    session.refresh(new_job)
+    return new_job
+
+
+def reprint_job(session: Session, job: Job, user: User) -> Job:
+    """One-click "print another exactly as it was queued" - per the user,
+    distinct from restore_job() above: restore explicitly lands on an
+    editable draft for "fixing or tweaking" before resubmitting, since a
+    rejected/failed/expired job might genuinely need a change to work at
+    all. A job that already finished successfully doesn't need that - so
+    this skips re-slicing entirely (reusing the exact archived
+    .makerbot byte-for-byte, rather than re-running OrcaSlicer/mbotmake
+    against the same geometry and settings to reproduce, most likely,
+    the exact same result a little later and a little riskier) and goes
+    straight into the shared queue - not a draft at all - ready for an
+    admin to release like any other queued job.
+
+    Scoped to JobStatus.done only, not the other TERMINAL_STATUSES - a
+    rejected job was turned away for a reason an admin should see
+    reconsidered, not silently resubmitted unchanged; an expired draft
+    never actually printed at all, so there's nothing proven to reprint;
+    a failed print might have failed for a reason worth checking (bed
+    adhesion, say) before blindly retrying the identical file - all
+    three of those are what restore_job() is for instead.
+
+    A fresh queued_at (matching submit_draft's own convention), same as
+    requeue_job() below - genuinely joins the back of the line, not the
+    position the original job happened to hold."""
+    _require_status(job, JobStatus.done)
+    archived_stl, archived_makerbot, archived_supports = archive_paths(job.id)
+    if not archived_stl.exists() or not archived_makerbot.exists():
+        raise JobActionError("The original files for this job are no longer available to reprint.")
+
+    new_job = Job(
+        user_id=user.id,
+        original_filename=job.original_filename,
+        status=JobStatus.queued,
+        supports_enabled=job.supports_enabled,
+        support_style=job.support_style,
+        scale_factor=job.scale_factor,
+        rotate_x=job.rotate_x,
+        rotate_y=job.rotate_y,
+        rotate_z=job.rotate_z,
+        queued_at=datetime.now(timezone.utc),
+    )
+    session.add(new_job)
+    session.commit()
+    session.refresh(new_job)
+
+    new_stl, new_makerbot, new_supports = queue_paths(new_job.id)
+    shutil.copy(archived_stl, new_stl)
+    shutil.copy(archived_makerbot, new_makerbot)
+    new_job.stl_path = str(new_stl)
+    new_job.makerbot_path = str(new_makerbot)
+    if archived_supports.exists():
+        shutil.copy(archived_supports, new_supports)
+        new_job.supports_path = str(new_supports)
+    new_job.duration_estimate_s = read_makerbot_duration_s(new_makerbot)
+    session.add(new_job)
+    log_event(
+        session, new_job.id, f"user:{user.name}", "reprint_queued",
+        detail=f"from job #{job.id} ({job.original_filename})",
+    )
+    session.commit()
+    session.refresh(new_job)
+    return new_job
 
 
 def requeue_job(session: Session, job: Job, admin: Admin) -> Job:
@@ -487,11 +656,92 @@ def release(session: Session, job: Job, admin: Admin) -> Job:
     return job
 
 
+# A bounded, "what a person would reasonably try by hand" set of rotations
+# to attempt automatically after a slice fails at whatever orientation was
+# already requested - not exhaustive, and not a fine-grained search. Per
+# the user, after two separate real models (a Flexi_Seal gasket, an F-35
+# fighter jet model) were BOTH fixed by nothing more than rotating - one
+# needing 45 degrees about Z, the other 45 or 60 - with no smarter
+# centering/scaling logic able to fix either: quarter/eighth turns about Z
+# (where both real fixes observed so far actually landed) plus laying the
+# model on each of its other four faces via a 90-degree turn about X or Y.
+# Each entry costs one full OrcaSlicer+mbotmake run (real minutes for a
+# large/complex model) - kept to 11 candidates deliberately, not an
+# exhaustive multi-axis grid, which would multiply that cost combinatorially
+# for a search with no reason to believe it would find anything a simpler
+# sweep wouldn't.
+AUTO_ROTATE_CANDIDATES = [
+    (0.0, 0.0, 45.0), (0.0, 0.0, 90.0), (0.0, 0.0, 135.0), (0.0, 0.0, 180.0),
+    (0.0, 0.0, 225.0), (0.0, 0.0, 270.0), (0.0, 0.0, 315.0),
+    (90.0, 0.0, 0.0), (-90.0, 0.0, 0.0), (0.0, 90.0, 0.0), (0.0, -90.0, 0.0),
+]
+
+
+def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, support_style, scratch_supports, scale_factor, rotate_x, rotate_y, rotate_z):
+    """Tries the requested orientation first (whatever the job actually has
+    set - respecting an explicit user choice, not second-guessing it), then
+    - only if that fails - sweeps AUTO_ROTATE_CANDIDATES above, stopping at
+    the first success. Returns (success, detail, used_rotate_x, used_y,
+    used_z, auto_rotated) - auto_rotated is True only when a candidate other
+    than the originally-requested rotation is what actually worked, so the
+    caller can record what really got sliced and note that it wasn't what
+    was asked for.
+
+    Deliberately does NOT try to detect "is this the kind of failure
+    rotation could plausibly fix" from the error text first - per the
+    user, broad and simple ("attempt rotation... until all reasonable
+    rotations have been tried") rather than narrowly gated to one known
+    failure signature. A failure rotation genuinely can't fix (a corrupt
+    file, say) just burns through the same candidates and reports the
+    original failure back - wasted time, but not wrong, and no worse than
+    a user manually trying the same thing by hand."""
+    success, detail = run_slice(
+        stl_path,
+        scratch_makerbot,
+        enable_supports=enable_supports,
+        support_style=support_style,
+        supports_json_path=scratch_supports if enable_supports else None,
+        scale_factor=scale_factor,
+        rotate_x=rotate_x,
+        rotate_y=rotate_y,
+        rotate_z=rotate_z,
+    )
+    if success:
+        return success, detail, rotate_x, rotate_y, rotate_z, False
+
+    original_detail = detail
+    for rx, ry, rz in AUTO_ROTATE_CANDIDATES:
+        if (rx, ry, rz) == (rotate_x, rotate_y, rotate_z):
+            continue  # already tried above as the requested orientation
+        success, detail = run_slice(
+            stl_path,
+            scratch_makerbot,
+            enable_supports=enable_supports,
+            support_style=support_style,
+            supports_json_path=scratch_supports if enable_supports else None,
+            scale_factor=scale_factor,
+            rotate_x=rx,
+            rotate_y=ry,
+            rotate_z=rz,
+        )
+        if success:
+            return success, detail, rx, ry, rz, True
+
+    # Every candidate failed - report the ORIGINAL requested orientation's
+    # own failure back, not whichever candidate happened to run last; it's
+    # the one the user actually asked for and the most relevant to show.
+    return False, original_detail, rotate_x, rotate_y, rotate_z, False
+
+
 def slice_and_update(
     job_id: int,
     stl_path: Path,
     enable_supports: bool,
     support_style: str | None,
+    scale_factor: float = 1.0,
+    rotate_x: float = 0.0,
+    rotate_y: float = 0.0,
+    rotate_z: float = 0.0,
 ) -> None:
     """Runs slicing for a draft and records the outcome as 'sliced' (ready
     to preview and, if the user wants, submit) or 'slice_failed' - never
@@ -514,6 +764,15 @@ def slice_and_update(
     'submitted' forever with no way for the user to tell it isn't still
     working - a background task's exceptions don't propagate anywhere a
     user would ever see them.
+
+    If slicing fails at the requested orientation, automatically sweeps
+    AUTO_ROTATE_CANDIDATES above before giving up - per the user, after
+    real models were repeatedly fixed by nothing more than rotating. If a
+    candidate other than the one requested is what actually worked,
+    job.rotate_x/y/z are updated to reflect what was *actually* sliced
+    (not silently left showing the orientation that failed), and a short
+    note is recorded so this isn't a silent surprise - see job_edit.html's
+    own handling of a 'sliced' job with a note still set.
     """
     with Session(engine) as session:
         job = session.get(Job, job_id)
@@ -522,15 +781,20 @@ def slice_and_update(
 
         _scratch_stl, scratch_makerbot, scratch_supports = scratch_paths(job.id)
         try:
-            success, detail = run_slice(
+            success, detail, used_rotate_x, used_rotate_y, used_rotate_z, auto_rotated = _slice_with_rotation_retry(
                 stl_path,
                 scratch_makerbot,
-                enable_supports=enable_supports,
-                support_style=support_style,
-                supports_json_path=scratch_supports if enable_supports else None,
+                enable_supports,
+                support_style,
+                scratch_supports,
+                scale_factor,
+                rotate_x,
+                rotate_y,
+                rotate_z,
             )
         except Exception as e:
-            success, detail = False, f"Unexpected error while slicing: {e}"
+            success, detail, auto_rotated = False, f"Unexpected error while slicing: {e}", False
+            used_rotate_x, used_rotate_y, used_rotate_z = rotate_x, rotate_y, rotate_z
 
         actor = _user_actor(session, job.user_id)
         if success:
@@ -540,9 +804,21 @@ def slice_and_update(
                 job.supports_path = str(scratch_supports)
             else:
                 job.supports_path = None  # clear a stale one from a previous re-slice attempt
-            job.slice_error = None  # clear a stale one from a previous failed attempt
             job.status = JobStatus.sliced
-            log_event(session, job.id, actor, "sliced")
+            if auto_rotated:
+                job.rotate_x, job.rotate_y, job.rotate_z = used_rotate_x, used_rotate_y, used_rotate_z
+                job.slice_error = (
+                    f"Note: the requested orientation (x={rotate_x:g}, y={rotate_y:g}, z={rotate_z:g}) "
+                    f"failed to slice, so this was automatically rotated to "
+                    f"x={used_rotate_x:g}, y={used_rotate_y:g}, z={used_rotate_z:g} to make it work."
+                )
+                log_event(
+                    session, job.id, actor, "sliced",
+                    detail=f"auto-rotated after the requested orientation failed (now x={used_rotate_x:g}, y={used_rotate_y:g}, z={used_rotate_z:g})",
+                )
+            else:
+                job.slice_error = None  # clear a stale one from a previous failed attempt
+                log_event(session, job.id, actor, "sliced")
         else:
             job.status = JobStatus.slice_failed
             job.slice_error = detail[-4000:]  # cap - slicer output can be long
@@ -552,21 +828,54 @@ def slice_and_update(
         session.commit()
 
 
+MIN_SCALE_FACTOR = 0.01  # 1% - below this, a model isn't meaningfully printable any more
+MAX_SCALE_FACTOR = 10.0  # 1000% - generous, but not unbounded
+
+
 def start_reslice(
-    session: Session, job: Job, enable_supports: bool, support_style: str | None
+    session: Session,
+    job: Job,
+    enable_supports: bool,
+    support_style: str | None,
+    scale_factor: float = 1.0,
+    rotate_x: float = 0.0,
+    rotate_y: float = 0.0,
+    rotate_z: float = 0.0,
 ) -> Path:
     """Resets a draft to re-slice the same already-uploaded file with new
     settings - the whole point of splitting slicing from submitting: a
-    user can freely iterate on support settings before ever deciding to
-    submit. Returns the STL path to hand to slice_and_update (via a
-    BackgroundTask, same as the initial slice - see routers/user.py)."""
+    user can freely iterate on support settings, scale, or now rotation
+    (see models.Job.rotate_x/y/z) before ever deciding to submit. Returns
+    the STL path to hand to slice_and_update (via a BackgroundTask, same
+    as the initial slice - see routers/user.py). No bounds check on the
+    rotation angles the way scale gets one - any float is a valid
+    rotation (sin/cos are periodic, so e.g. 370 degrees and 10 degrees
+    produce the identical result), there's no "too rotated" the way
+    there's a "too small/too large" for scale."""
     _require_status(job, JobStatus.sliced, JobStatus.slice_failed)
+    if not (MIN_SCALE_FACTOR <= scale_factor <= MAX_SCALE_FACTOR):
+        raise JobActionError(
+            f"Scale must be between {MIN_SCALE_FACTOR * 100:.0f}% and {MAX_SCALE_FACTOR * 100:.0f}%."
+        )
     job.supports_enabled = enable_supports
     job.support_style = support_style
+    job.scale_factor = scale_factor
+    job.rotate_x = rotate_x
+    job.rotate_y = rotate_y
+    job.rotate_z = rotate_z
     job.status = JobStatus.submitted
     job.slice_error = None
     session.add(job)
-    style_detail = f"supports={enable_supports}" + (f" style={support_style}" if support_style else "")
+    style_detail = (
+        f"supports={enable_supports}"
+        + (f" style={support_style}" if support_style else "")
+        + (f" scale={scale_factor:.2f}" if scale_factor != 1.0 else "")
+        + (
+            f" rotate=({rotate_x:.1f},{rotate_y:.1f},{rotate_z:.1f})"
+            if (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0)
+            else ""
+        )
+    )
     log_event(session, job.id, _user_actor(session, job.user_id), "reslice_started", detail=style_detail)
     session.commit()
     return Path(job.stl_path)

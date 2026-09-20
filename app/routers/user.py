@@ -1,7 +1,11 @@
+import tempfile
+from pathlib import Path
+
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session
 
+import storage
 from auth import (
     check_lockout,
     hash_secret,
@@ -15,18 +19,22 @@ from db import get_session
 from jobs import (
     JobActionError,
     corrected_duration_estimate_s,
+    delete_own_job,
     format_duration,
     jobs_for_user,
     log_event,
     printing_eta,
     queue_position,
     queue_wait_seconds,
+    reprint_job,
+    restore_job,
     slice_and_update,
     start_reslice,
     submit_draft,
 )
+from mesh import convert_obj_to_stl
 from models import DRAFT_STATUSES, Job, JobStatus, User
-from storage import MAX_UPLOAD_BYTES, scratch_stl_path
+from storage import MAX_UPLOAD_BYTES, MAX_ZIP_MODEL_FILES, scratch_stl_path
 from templates_env import templates
 from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
 
@@ -198,6 +206,7 @@ def _dashboard_context(session: Session, user: User, flash_error: str | None = N
         "rows": rows,
         "flash_error": flash_error,
         "support_styles": SUPPORT_STYLES,
+        "max_zip_models": MAX_ZIP_MODEL_FILES,
     }
 
 
@@ -234,33 +243,48 @@ def dashboard_jobs_table(
     return templates.TemplateResponse(request, "_jobs_table.html", context)
 
 
-@router.post("/upload")
-def upload(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    enable_supports: bool = Form(False),
-    support_style: str = Form("default"),
-    user: User = Depends(require_user),
-    session: Session = Depends(get_session),
-):
-    filename = file.filename or "model.stl"
-    if support_style not in SUPPORT_STYLES:
-        support_style = "default"
-
-    def fail(message: str):
-        request.session["flash_error"] = message
-        return RedirectResponse("/dashboard", status_code=303)
-
-    if not filename.lower().endswith(".stl"):
-        return fail("Only .stl files are accepted.")
-
-    data = file.file.read()
+def _stl_bytes_from_upload(filename: str, data: bytes) -> bytes:
+    """Validates one uploaded model file and returns real STL bytes ready
+    to write to scratch/ - converting from OBJ first if that's what this
+    is (see mesh.py's own docstring for why that conversion happens here,
+    immediately, rather than teaching anything downstream a second
+    format). Raises ValueError with a user-facing message for anything
+    that shouldn't become a job at all: empty, oversized, or (for OBJ) not
+    actually parseable. Shared by a plain upload and each file pulled out
+    of an uploaded zip - both need the exact same validation+conversion,
+    just applied once vs. in a loop."""
     if not data:
-        return fail("That file is empty.")
+        raise ValueError("empty file")
     if len(data) > MAX_UPLOAD_BYTES:
-        return fail(f"File is too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB).")
+        raise ValueError(f"too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB)")
+    ext = Path(filename).suffix.lower()
+    if ext != ".obj":
+        return data
+    with tempfile.TemporaryDirectory(prefix="queue3d-objconvert-") as tmp:
+        obj_path = Path(tmp) / "in.obj"
+        stl_path = Path(tmp) / "out.stl"
+        obj_path.write_bytes(data)
+        try:
+            convert_obj_to_stl(obj_path, stl_path)
+        except Exception as e:
+            raise ValueError(f"couldn't read as an OBJ file ({e})")
+        return stl_path.read_bytes()
 
+
+def _create_job_from_model(
+    session: Session,
+    background_tasks: BackgroundTasks,
+    user: User,
+    filename: str,
+    stl_bytes: bytes,
+    enable_supports: bool,
+    support_style: str | None,
+) -> Job:
+    """The actual job-creation body shared by a plain upload and each file
+    extracted from a zip - `filename` is always what's shown as
+    Job.original_filename (the *true* original name, e.g. "vase.obj",
+    even though `stl_bytes` by this point is always real STL - see
+    _stl_bytes_from_upload above)."""
     job = Job(
         user_id=user.id,
         original_filename=filename,
@@ -273,7 +297,7 @@ def upload(
     session.refresh(job)
 
     stl_path = scratch_stl_path(job.id)
-    stl_path.write_bytes(data)
+    stl_path.write_bytes(stl_bytes)
     job.stl_path = str(stl_path)
     session.add(job)
     log_event(session, job.id, f"user:{user.name}", "submitted", detail=filename)
@@ -291,11 +315,77 @@ def upload(
         enable_supports,
         support_style if enable_supports else None,
     )
+    return job
 
+
+@router.post("/upload")
+def upload(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    enable_supports: bool = Form(False),
+    support_style: str = Form("default"),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    filename = file.filename or "model.stl"
+    ext = Path(filename).suffix.lower()
+    if support_style not in SUPPORT_STYLES:
+        support_style = "default"
+    style = support_style if enable_supports else None
+
+    def fail(message: str):
+        request.session["flash_error"] = message
+        return RedirectResponse("/dashboard", status_code=303)
+
+    data = file.file.read()
+
+    if ext == ".zip":
+        # A Thingiverse-style download of several separate STLs - each
+        # becomes its own job/draft, not a combined-plate print (see
+        # storage.extract_model_files's own docstring for why, and
+        # app/README.md's "Uploading zip/OBJ files" section). One bad
+        # entry doesn't sink the whole zip - it's just skipped and named
+        # in the flash message, same spirit as any partial success.
+        try:
+            entries = storage.extract_model_files(data)
+        except ValueError as e:
+            return fail(str(e))
+        if not entries:
+            return fail("No .stl or .obj files found in that zip.")
+        created = 0
+        skipped = []
+        for entry_name, entry_data in entries:
+            try:
+                stl_bytes = _stl_bytes_from_upload(entry_name, entry_data)
+            except ValueError as e:
+                skipped.append(f"{entry_name} ({e})")
+                continue
+            _create_job_from_model(
+                session, background_tasks, user, entry_name, stl_bytes, enable_supports, style
+            )
+            created += 1
+        if created == 0:
+            return fail("Couldn't use any files in that zip: " + "; ".join(skipped))
+        if skipped:
+            request.session["flash_error"] = (
+                f"Uploaded {created} model(s) from the zip. Skipped: " + "; ".join(skipped)
+            )
+        return RedirectResponse("/dashboard", status_code=303)
+
+    if ext not in (".stl", ".obj"):
+        return fail("Only .stl, .obj, and .zip files are accepted.")
+
+    try:
+        stl_bytes = _stl_bytes_from_upload(filename, data)
+    except ValueError as e:
+        return fail(f"Couldn't use that file: {e}.")
+
+    _create_job_from_model(session, background_tasks, user, filename, stl_bytes, enable_supports, style)
     return RedirectResponse("/dashboard", status_code=303)
 
 
-def _owned_draft(session: Session, user: User, job_id: int) -> Job:
+def _owned_job(session: Session, user: User, job_id: int) -> Job:
     job = session.get(Job, job_id)
     if job is None or job.user_id != user.id:
         raise HTTPException(status_code=404, detail="No such job")
@@ -317,7 +407,7 @@ def edit_draft(
     anyone who lands here anyway (a stale link, or the row that put them
     here has since moved on) back to the dashboard rather than showing an
     edit form for a job it can no longer apply to."""
-    job = _owned_draft(session, user, job_id)
+    job = _owned_job(session, user, job_id)
     if job.status not in DRAFT_STATUSES:
         return RedirectResponse("/dashboard", status_code=303)
     flash_error = request.session.pop("flash_error", None)
@@ -335,6 +425,10 @@ def reslice(
     background_tasks: BackgroundTasks,
     enable_supports: bool = Form(False),
     support_style: str = Form("default"),
+    scale_percent: float = Form(100.0),
+    rotate_x: float = Form(0.0),
+    rotate_y: float = Form(0.0),
+    rotate_z: float = Form(0.0),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
@@ -343,13 +437,26 @@ def reslice(
     whole point of splitting slicing from submitting. Redirects back to
     that same edit page (not the dashboard) either way, so re-slicing
     repeatedly to try different settings stays a loop on one page, the
-    same as it would with a real slicer's own settings panel."""
-    job = _owned_draft(session, user, job_id)
+    same as it would with a real slicer's own settings panel.
+
+    scale_percent, not a raw factor, in the form itself - matches what
+    the edit page actually shows/lets someone type (see job_edit.html).
+    rotate_x/y/z are already in degrees, applied in that order - see
+    models.Job.rotate_x's own docstring for why the order matters."""
+    job = _owned_job(session, user, job_id)
     if support_style not in SUPPORT_STYLES:
         support_style = "default"
+    scale_factor = scale_percent / 100
     try:
         stl_path = start_reslice(
-            session, job, enable_supports, support_style if enable_supports else None
+            session,
+            job,
+            enable_supports,
+            support_style if enable_supports else None,
+            scale_factor,
+            rotate_x,
+            rotate_y,
+            rotate_z,
         )
     except JobActionError as e:
         request.session["flash_error"] = str(e)
@@ -361,6 +468,10 @@ def reslice(
         stl_path,
         enable_supports,
         support_style if enable_supports else None,
+        scale_factor,
+        rotate_x,
+        rotate_y,
+        rotate_z,
     )
     return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 
@@ -377,9 +488,90 @@ def submit(
     to edit, and a failure here means the job wasn't in a submittable
     state any more (e.g. a duplicate click), which the dashboard's own
     status column already explains."""
-    job = _owned_draft(session, user, job_id)
+    job = _owned_job(session, user, job_id)
     try:
         submit_draft(session, job)
+    except JobActionError as e:
+        request.session["flash_error"] = str(e)
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@router.post("/jobs/{job_id}/delete")
+def delete_job(
+    job_id: int,
+    request: Request,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """A user removing their own still-undecided model - see
+    jobs.delete_own_job. Genuinely deletes the job and its files, no
+    undo - reachable while queued/approved, or a slice_failed draft with
+    nowhere else to go; once released and printing, an admin is already
+    acting on it, so this button doesn't show any more (see
+    _jobs_table.html) and a request that somehow arrives anyway is
+    rejected the same way any other already-moved-on action is."""
+    job = _owned_job(session, user, job_id)
+    try:
+        delete_own_job(session, job, user)
+    except JobActionError as e:
+        request.session["flash_error"] = str(e)
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@router.post("/jobs/{job_id}/restore")
+def restore(
+    job_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Copies an archived (rejected/done/failed/expired) job's model into
+    a brand-new draft to modify and resubmit - see jobs.restore_job for
+    why a slice_failed draft is deliberately not included (it already has
+    a full edit path of its own). Schedules the same background
+    slice_and_update() any fresh upload triggers, seeded with the
+    archived job's own settings rather than plain defaults - lands
+    straight on the new draft's own edit page (not the dashboard, unlike
+    upload()) since there's always exactly one resulting job, never a
+    zip's worth of several."""
+    job = _owned_job(session, user, job_id)
+    try:
+        new_job = restore_job(session, job, user)
+    except JobActionError as e:
+        request.session["flash_error"] = str(e)
+        return RedirectResponse("/dashboard", status_code=303)
+
+    background_tasks.add_task(
+        slice_and_update,
+        new_job.id,
+        Path(new_job.stl_path),
+        new_job.supports_enabled,
+        new_job.support_style,
+        scale_factor=new_job.scale_factor,
+        rotate_x=new_job.rotate_x,
+        rotate_y=new_job.rotate_y,
+        rotate_z=new_job.rotate_z,
+    )
+    return RedirectResponse(f"/jobs/{new_job.id}/edit", status_code=303)
+
+
+@router.post("/jobs/{job_id}/reprint")
+def reprint(
+    job_id: int,
+    request: Request,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """One-click "print another exactly as it was queued" for a job that
+    already finished successfully - see jobs.reprint_job for why this is
+    scoped to `done` only and skips slicing entirely (reusing the exact
+    archived .makerbot). Lands back on the dashboard, same as a normal
+    upload/submit - no background task to schedule here, unlike restore
+    above, since nothing needs slicing."""
+    job = _owned_job(session, user, job_id)
+    try:
+        reprint_job(session, job, user)
     except JobActionError as e:
         request.session["flash_error"] = str(e)
     return RedirectResponse("/dashboard", status_code=303)

@@ -8,7 +8,14 @@
   <h2>Hi, {{ user.name }}</h2>
 
   <form id="upload-form" method="post" action="/upload" enctype="multipart/form-data">
-    <label>Upload a model (.stl)<br><input type="file" id="stl-file" name="file" accept=".stl" required></label>
+    <label>Upload a model (.stl, .obj, or a .zip of them)<br>
+      <input type="file" id="stl-file" name="file" accept=".stl,.obj,.zip" required>
+    </label>
+    <p class="muted">
+      A .zip with more than one model becomes one job per model (up to
+      {{ max_zip_models }} models per zip) - not a single combined-plate
+      print.
+    </p>
     <label><input type="checkbox" name="enable_supports"> Generate supports</label>
     <label>Support style<br>
       <select name="support_style">
@@ -20,6 +27,7 @@
     <button type="submit">Upload &amp; slice</button>
     <progress id="upload-progress" value="0" max="100" hidden></progress>
   </form>
+  <p class="error" id="upload-error" hidden></p>
 
   <div id="preview-container" class="preview-container" hidden></div>
   <p id="preview-info" class="preview-info"></p>
@@ -39,6 +47,19 @@
     fileInput.addEventListener("change", () => {
       const file = fileInput.files[0];
       if (!file) return;
+      // Instant client-side preview only works for .stl right now (the
+      // vendored loader is STL-only - see static/preview.js) - an .obj
+      // or .zip selection still uploads and slices normally, it just
+      // doesn't get this immediate before-upload look. The real preview
+      // (post-slice, from the server's own always-STL copy - see
+      // mesh.py) works the same regardless of what was originally
+      // uploaded, once slicing finishes.
+      if (!file.name.toLowerCase().endsWith(".stl")) {
+        container.hidden = true;
+        info.textContent = "Preview available after upload.";
+        info.classList.remove("error");
+        return;
+      }
       container.hidden = false;
       previewFile(file, container, info);
     });
@@ -50,15 +71,29 @@
     // "slicing", is handled by _jobs_table.html's htmx polling once we're
     // back on /dashboard). Sent manually via XHR rather than through htmx
     // because what's needed here is genuine upload-byte progress
-    // (xhr.upload's own progress event), not an htmx-managed
-    // request/swap - and the server always ends at the same place
-    // (/dashboard, error or not - see routers/user.py's upload()), so the
-    // completion handler doesn't need to inspect the response at all,
-    // just navigate there for real.
+    // (xhr.upload's own progress event), not an htmx-managed request/swap.
+    //
+    // A real report caught the flaw in this comment's original assumption
+    // ("the server always ends at the same place... the completion handler
+    // doesn't need to inspect the response at all"): that's only true for
+    // error paths this app's own code controls (routers/user.py's fail()
+    // always redirects to /dashboard with a flash message set) - it's NOT
+    // true for a request that fails validation before upload() ever runs
+    // (a real 422 was seen for an actual zip upload, cause not yet fully
+    // understood - see README.md's To do list). That kind of failure never
+    // redirects at all, so blindly navigating to /dashboard regardless of
+    // xhr.status showed a perfectly ordinary dashboard with no job and no
+    // error text - indistinguishable from the upload having done nothing.
+    // XHR follows same-origin redirects transparently, so a normal
+    // success *or* an in-app fail() both still land on xhr.status 200 (the
+    // followed GET /dashboard) by the time "load" fires - only a failure
+    // that never got redirected at all surfaces as a non-2xx status here.
     const uploadForm = document.getElementById("upload-form");
     const uploadProgress = document.getElementById("upload-progress");
+    const uploadError = document.getElementById("upload-error");
     uploadForm.addEventListener("submit", (event) => {
       event.preventDefault();
+      uploadError.hidden = true;
       const xhr = new XMLHttpRequest();
       xhr.open("POST", uploadForm.action);
       xhr.upload.addEventListener("progress", (e) => {
@@ -67,8 +102,21 @@
         uploadProgress.value = e.loaded;
         uploadProgress.max = e.total;
       });
-      xhr.addEventListener("loadend", () => {
-        window.location.href = "/dashboard";
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 400) {
+          window.location.href = "/dashboard";
+          return;
+        }
+        uploadProgress.hidden = true;
+        uploadError.hidden = false;
+        uploadError.textContent =
+          `Upload failed (server responded ${xhr.status}) - nothing was saved. ` +
+          "Try a different file, or let an admin know if this keeps happening.";
+      });
+      xhr.addEventListener("error", () => {
+        uploadProgress.hidden = true;
+        uploadError.hidden = false;
+        uploadError.textContent = "Upload failed - couldn't reach the server. Check your connection and try again.";
       });
       xhr.send(new FormData(uploadForm));
     });

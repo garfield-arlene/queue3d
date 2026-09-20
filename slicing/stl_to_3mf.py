@@ -21,6 +21,7 @@ A .3mf is just a zip (the OPC/OOXML package format) with:
 
 import argparse
 import json
+import math
 import struct
 import sys
 import zipfile
@@ -123,9 +124,42 @@ def _parse_stl_binary(head, rest):
     return vertices, triangles
 
 
-def center_vertices(vertices):
-    """Center X/Y on the bounding-box center and drop Z so the lowest point
-    sits at 0 - matching app/static/preview.js's showModel() exactly.
+def surface_centroid_xy(vertices, triangles):
+    """Area-weighted centroid of the mesh's triangles, projected to X/Y -
+    where the model's actual surface area is concentrated, not just the
+    midpoint of its bounding box. Unlike a plain vertex average (biased by
+    tessellation density - an area with more/smaller triangles pulls the
+    average toward it for no geometric reason), weighting each triangle's
+    own centroid by its own area is tessellation-independent - a large
+    triangle counts for exactly as much as many small ones covering the
+    same real surface area.
+
+    Falls back to (0, 0) for a mesh with no triangles or degenerate
+    (zero-total-area) geometry - center_vertices() below then behaves
+    like a no-op shift, same as it would for any other degenerate input.
+    """
+    total_area = 0.0
+    weighted_x = 0.0
+    weighted_y = 0.0
+    for a_i, b_i, c_i in triangles:
+        ax, ay = vertices[a_i][0], vertices[a_i][1]
+        bx, by = vertices[b_i][0], vertices[b_i][1]
+        cx, cy = vertices[c_i][0], vertices[c_i][1]
+        area = abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) / 2
+        weighted_x += (ax + bx + cx) / 3 * area
+        weighted_y += (ay + by + cy) / 3 * area
+        total_area += area
+    if total_area == 0:
+        return 0.0, 0.0
+    return weighted_x / total_area, weighted_y / total_area
+
+
+def center_vertices(vertices, triangles):
+    """Center X/Y on the mesh's own area-weighted surface centroid (see
+    surface_centroid_xy above), not just its bounding-box midpoint, and
+    drop Z so the lowest point sits at 0 - matching
+    app/static/preview.js's showModel() exactly, which must use the
+    identical centroid calculation for the same reason described below.
 
     Why this has to happen here, not left to OrcaSlicer: confirmed (by
     slicing a real, off-center-authored model and comparing its sliced
@@ -135,22 +169,83 @@ def center_vertices(vertices):
     while a large real-world model with an off-center authored origin
     (Y-center ~9.8mm, not 0) came out of slicing centered near Y~0 instead.
     Meanwhile the client-side preview always centers the raw STL to its own
-    bounding box for display, independent of whatever OrcaSlicer decides.
-    Two independently-arrived-at placements agreeing by luck for a
+    reference point for display, independent of whatever OrcaSlicer
+    decides. Two independently-arrived-at placements agreeing by luck for a
     centered-ish model, and visibly disagreeing for an off-center one, is
     exactly the "supports render solid now but are floating disconnected
     from the model" bug reported after the tube-rendering fix. Centering
     here ourselves - the same way, in the same place, every time - removes
     the guesswork: OrcaSlicer slices already-centered geometry, so there's
     nothing left for it to reposition differently than what's displayed.
-    """
+
+    Bounding-box centering (the original approach here) was replaced with
+    this area-weighted version after a real slicing failure: an
+    asymmetric model (most of its surface concentrated well off from its
+    own bounding-box midpoint - a tree-like shape, for one real example)
+    passed bbox-centering fine but then failed mbotmake's own downstream
+    bed-centering sanity check, which compares where the *sliced
+    toolpath's* material actually ends up against zero - a check
+    bounding-box centering has no way to satisfy for a shape whose bulk
+    isn't near its own box's middle. Confirmed against the real failing
+    model before shipping this, not just reasoned about: the area-weighted
+    centroid came out far closer to where the toolpath's own material
+    center needed to be than the bounding-box center did, and re-slicing
+    the identical model with this centering passed cleanly."""
     xs = [v[0] for v in vertices]
     ys = [v[1] for v in vertices]
     zs = [v[2] for v in vertices]
-    cx = (min(xs) + max(xs)) / 2
-    cy = (min(ys) + max(ys)) / 2
+    cx, cy = surface_centroid_xy(vertices, triangles)
     z_min = min(zs)
     return [(x - cx, y - cy, z - z_min) for x, y, z in vertices]
+
+
+def rotate_vertices(vertices, x_deg, y_deg, z_deg):
+    """Rotates every vertex by x_deg about the (fixed, world) X axis, then
+    y_deg about the world Y axis, then z_deg about the world Z axis - in
+    that exact order, each applied to the result of the previous one, not
+    combined into a single "rotate by all three simultaneously" matrix.
+    This is deliberately the *same* operation as calling a Three.js
+    BufferGeometry's `.rotateX(x).rotateY(y).rotateZ(z)` in that order
+    (see app/static/preview.js's identical rotation for the live
+    preview) - has to stay in lockstep with that, the same invariant
+    center_vertices() and its own JS counterpart already maintain for
+    centering (see that function's docstring): this app slices
+    already-transformed geometry, and the preview has to show that exact
+    placement, or an approved job could print in a different orientation
+    than what anyone actually looked at and signed off on.
+
+    A no-op (returns `vertices` unchanged) when all three angles are 0 -
+    the overwhelmingly common case (most jobs are never rotated) skips
+    the trig entirely rather than multiplying every vertex by an
+    identity-equivalent matrix for no reason."""
+    if x_deg == 0 and y_deg == 0 and z_deg == 0:
+        return vertices
+
+    def rotate_x(pts, deg):
+        if deg == 0:
+            return pts
+        a = math.radians(deg)
+        cos_a, sin_a = math.cos(a), math.sin(a)
+        return [(x, y * cos_a - z * sin_a, y * sin_a + z * cos_a) for x, y, z in pts]
+
+    def rotate_y(pts, deg):
+        if deg == 0:
+            return pts
+        a = math.radians(deg)
+        cos_a, sin_a = math.cos(a), math.sin(a)
+        return [(z * sin_a + x * cos_a, y, z * cos_a - x * sin_a) for x, y, z in pts]
+
+    def rotate_z(pts, deg):
+        if deg == 0:
+            return pts
+        a = math.radians(deg)
+        cos_a, sin_a = math.cos(a), math.sin(a)
+        return [(x * cos_a - y * sin_a, x * sin_a + y * cos_a, z) for x, y, z in pts]
+
+    vertices = rotate_x(vertices, x_deg)
+    vertices = rotate_y(vertices, y_deg)
+    vertices = rotate_z(vertices, z_deg)
+    return vertices
 
 
 def build_model_xml(vertices, triangles):
@@ -163,12 +258,36 @@ def build_model_xml(vertices, triangles):
     return MODEL_TEMPLATE.format(vertices=vlines, triangles=tlines)
 
 
-def build_3mf(stl_path, settings_path, output_path, overrides=None):
+def build_3mf(
+    stl_path,
+    settings_path,
+    output_path,
+    overrides=None,
+    scale_factor=1.0,
+    rotate_x=0.0,
+    rotate_y=0.0,
+    rotate_z=0.0,
+):
     """overrides: optional dict of settings keys to override in the loaded
     profile before embedding it - e.g. {"enable_support": "1"} to turn
-    supports on for one job without needing a second profile file."""
+    supports on for one job without needing a second profile file.
+
+    scale_factor: uniform scale (1.0 = original size). rotate_x/y/z:
+    degrees, applied in that order (see rotate_vertices above). Order of
+    operations here is deliberate, not incidental: rotate first (so
+    scaling and centering both act on the model's actual print
+    orientation, not its as-authored one), then scale (uniform, so it
+    commutes with rotation anyway - order between these two specifically
+    wouldn't matter, but rotate-then-scale reads more naturally), then
+    center last of all - center_vertices() needs the final (already
+    rotated and scaled) triangle geometry to compute the right centroid
+    and the right new Z=0 floor, since rotating can change which point
+    is actually lowest."""
     vertices, triangles = parse_stl(stl_path)
-    vertices = center_vertices(vertices)
+    vertices = rotate_vertices(vertices, rotate_x, rotate_y, rotate_z)
+    if scale_factor != 1.0:
+        vertices = [(x * scale_factor, y * scale_factor, z * scale_factor) for x, y, z in vertices]
+    vertices = center_vertices(vertices, triangles)
     model_xml = build_model_xml(vertices, triangles)
 
     with open(settings_path, "r") as f:

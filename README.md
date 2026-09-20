@@ -209,6 +209,78 @@ Managing user accounts:
   with the user - a print actively running is being acted on, not
   sitting in an undecided backlog. The main dashboard flags how many
   are waiting, with a link straight to the backlog view.
+- **Delete your own queued job** - changed your mind about a submission
+  still awaiting a decision? Delete it directly from the dashboard,
+  with a clear "this cannot be undone" confirmation first. Genuinely
+  removes the job and its model file - the same real, unrecoverable
+  delete an admin can do to a stale one (see "Old jobs" above), just
+  reachable by the submitter instead. Only available while still
+  `queued`/`approved`; once released and printing, an admin is already
+  acting on it and the option disappears. Logged in the activity log
+  like any other change.
+- **Restore & edit, and Reprint** - two ways to reuse a job that's
+  already reached a final outcome, instead of only being able to start
+  over with a fresh upload. "Restore & edit" (any `rejected`, `failed`,
+  `done`, or `expired` job) copies the model into a brand-new draft,
+  pre-filled with its previous scale/rotation/support settings, and
+  drops you straight onto that draft's edit page to tweak and resubmit -
+  the original archived job is never touched, just copied from. "Reprint"
+  (a `done` job only) skips the edit step entirely for the case that
+  doesn't need it: it reuses the exact already-sliced file and goes
+  straight back into the queue, ready for an admin to release, with no
+  re-slicing wait at all.
+- **Upload `.obj` files directly, and `.zip` files of one or more
+  `.stl`/`.obj` models** (a common Thingiverse shape - several separate
+  parts plus a README/photo that's just ignored). Each model in a zip
+  becomes its own separate job/draft, up to `MAX_ZIP_MODEL_FILES` (25) -
+  stated right on the upload form, not just in this README - rather
+  than a combined-plate print, confirmed as the right design with the
+  user since this app's whole pipeline is built around one object per
+  job. An `.obj` upload is converted to a real `.stl` immediately
+  (losslessly - same geometry, different container) so nothing
+  downstream (slicing, the 3D preview, re-slicing) needs to know it was
+  ever anything but one; the original filename still displays as
+  uploaded. A real multi-part functional-print kit (15 separate model
+  files) confirmed working end-to-end, including every part slicing
+  successfully - see `app/README.md`'s "Fixing a real multi-model zip
+  upload" for the earlier, narrower cap this exposed and the (wrong)
+  concurrency assumption it was based on.
+- **Resize and auto-fit on the job edit page** - a draft's own edit page
+  has a scale control (always uniform - proportions can never distort)
+  with a live, before-you-commit 3D preview as you change it, and a
+  one-click "Auto-resize to fit build plate" button for a model that's
+  too large, computing exactly the shrink needed rather than making the
+  user guess a percentage by hand. The read-only "View 3D" page for an
+  already-submitted job shows it at whatever scale it was actually
+  sliced at too, not just the original file size.
+- **Automatic rotation retry on a slicing failure** - if a model fails to
+  slice at whatever orientation was requested, the app automatically
+  tries a handful of likely rotations (quarter/eighth turns, and
+  standing the model on each of its other faces) before giving up,
+  since real models have repeatedly turned out to need nothing more
+  than a different rotation to slice successfully at all. If one of
+  those works, the job's rotation is updated to match and a clear note
+  says so (not silently applied without explanation); if none do, the
+  job fails as before, with a note that this was already tried so a
+  manual re-attempt at the same rotations won't help.
+- **Rotate and snap to surface** - free rotation on any axis (three
+  degree fields, live preview as you type), plus a "Snap to surface"
+  button: click it, then click any face on the model, and it reorients
+  to stand on that face - useful both for fit (a diagonal rotation can
+  let an oversized model fit the plate) and for print success. Directly
+  confirmed to fix a real slicing failure that resizing alone never
+  could: a model whose asymmetric shape failed the printer's own
+  bed-centering safety check slices successfully once rotated to a
+  sensible printing orientation. Auto-fit accounts for whatever rotation
+  is currently applied too, since reorienting changes the model's actual
+  footprint on the plate - and, for an asymmetric model, accounts for
+  exactly how far off-center its actual centered placement will be, not
+  just its raw size, so a lopsided model can no longer pass this check
+  while still genuinely hanging off one edge of the bed. On-canvas drag
+  handles (rotate freely, or uniform resize) are available too,
+  alongside the number fields and
+  snap-to-surface - three different ways to reach the same rotate/scale
+  values, kept in sync with each other.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
@@ -227,14 +299,89 @@ Managing user accounts:
 ## To do
 
 **Upload**
-- Accept file types beyond `.stl` - `.3mf`, `.obj`, and `.zip` (presumably
-  a zipped model file) were specifically asked for.
+- ~~Accept `.obj` files directly~~ **Done** - see Features above.
+- ~~`.zip` files containing multiple models, splitting into one job per
+  model.~~ **Done, confirmed against a real multi-part file** - a
+  real-world functional-print kit (15 separate `.STL` files) uploaded,
+  split into 15 jobs, and every one sliced successfully. This had
+  previously been marked broken after the user reported it not working
+  in real use following an earlier round of synthetic-only testing
+  (see `app/README.md`'s "Fixing a real multi-model zip upload" for the
+  full account) - the real cause turned out to be `MAX_ZIP_MODEL_FILES`
+  being set too low (10) for a legitimate multi-part kit, not a
+  FastAPI-level failure; raised to 25, and now stated directly on the
+  upload form per the user ("We need to note the limitation for the
+  users"), not just here. Confirmed independently by the user in real
+  use, not just by this session's own testing - the stronger of the two
+  claims this project distinguishes between.
+- **Separately, still open:** the *original* 422 report (a different
+  real multi-model zip, before the file above was available to test)
+  never got a confirmed root cause - that specific file was never
+  available to reproduce against directly, and every synthetic zip
+  built to investigate it tested clean. Whether it was the same
+  too-low-cap issue (plausible - a `ValueError` there produces a clean
+  flash-message redirect, not literally the "422 Unprocessable Content"
+  originally reported, so it may not be) or a genuinely separate
+  request-validation failure is unresolved. Needs either that original
+  file or a browser Network-tab capture of a future failed request to
+  pin down further.
+- A real, independent bug found and fixed while investigating the above,
+  regardless of the 422's root cause: the dashboard's own upload JS
+  (`user_dashboard.html`) unconditionally redirected to `/dashboard` on
+  any completed request, on the (mostly but not always true) assumption
+  that the server always ends up there - true for every error this
+  app's own code controls (`fail()` always redirects with a flash
+  message set), but not for a request that fails validation before the
+  route runs at all, which never redirects anywhere. That's exactly why
+  a failure like this looked like "nothing happened" instead of showing
+  an error. **Done** - the JS now checks the response status and shows
+  its own error message for anything outside 2xx-after-redirect, or a
+  network failure.
+- ~~Related gap noticed while investigating the above: a `slice_failed`
+  draft has no delete route at all (only `queued`/`approved` jobs could
+  be deleted, by a user or an admin) - it could only ever be re-sliced
+  or left to the existing draft-expiry cleanup.~~ **Done** - a
+  `slice_failed` draft now shows the same Delete button/confirmation a
+  queued/approved job does (`jobs.delete_own_job`'s allowed statuses
+  extended; `storage.delete_job_files` now looks in `scratch/` rather
+  than `queue/` for anything still in `models.DRAFT_STATUSES`).
+  Deliberately NOT extended to a plain `sliced` draft (successfully
+  sliced, not yet submitted) - not part of this ask, and it already has
+  a path forward (submit it, or keep adjusting settings). Still open,
+  cross-referenced below: "allow rejected jobs to be edited and
+  requeued" is the same underlying gap for a different terminal status.
+- `.3mf` upload support - not yet built, and a meaningfully bigger lift
+  than `.obj`/`.zip` turned out to be: unlike OBJ (a flat, transform-free
+  mesh format converted to STL in a few dozen lines - see `app/mesh.py`),
+  a real-world `.3mf` can bundle multiple objects with their own
+  placement transforms in one file (the same "one object per job"
+  question `.zip` already answered - each object would become its own
+  job, matching that precedent) and the client-side instant preview
+  would need Three.js's heavier `3MFLoader` (plus its own `fflate`
+  dependency) vendored, not just a small loader file like OBJ's. Worth
+  doing, but as its own follow-up rather than folded into the
+  OBJ/zip work.
 - Model repair (like PrusaSlicer/OrcaSlicer's "Fix through Netfabb") -
   confirmed OrcaSlicer's CLI has no repair flag to lean on (that's a
   GUI-only feature there), so this would mean a dedicated repair pass
   before slicing - `trimesh` (Python, fill holes/fix normals/fix winding)
   or `admesh` (a small purpose-built STL repair CLI) are the two realistic
   options to build it on.
+- ~~Centering an uploaded model by its actual geometric centroid, not
+  just its bounding-box center - a real asymmetric model was seen to
+  fail `mbotmake`'s own bed-centering sanity check this way.~~ **Done,
+  but confirmed only a partial fix** - `slicing/stl_to_3mf.center_vertices`
+  now uses an area-weighted surface centroid (matched in
+  `static/preview.js`, which has to stay in lockstep - see either's own
+  comment), a real, measured improvement (moved the actual failing
+  model's `yrel` from -0.232 to -0.162 against the real pipeline), but
+  that specific model is asymmetric enough to still narrowly miss the
+  ±0.15 tolerance. A full volume-centroid (not just projected surface
+  area) might close the remaining gap, but needs a watertight,
+  consistently-wound mesh to compute correctly - a real precondition to
+  check first for a mesh converted from an arbitrary uploaded OBJ, not
+  yet attempted. See `app/README.md`'s "A real stuck-slicing incident"
+  section for the full numbers.
 
 **Job review & feedback**
 - ~~Show failure reasons to the user, not just rejection notes - rejection
@@ -263,15 +410,35 @@ Managing user accounts:
   log" below, since that delete has to be logged like any other change.~~
   **Done** - see Features above (confirmed by the user: queued/approved
   only, not printing).
-- Let a user restore an archived model (`slice_failed`, `rejected`,
-  `failed`, or `done` - any job whose files ended up in `archive/`) back
-  into their working space to modify and resubmit, rather than only being
-  able to start over from scratch - useful both for fixing a failed/rejected
-  submission and for reprinting or tweaking a past successful one. A
-  restored resubmission goes to the end of the queue, not back to where the
-  original was - it's a new submission, and the admin still decides when to
-  release it like any other. Should copy the archived files rather than
-  move them, so the original archived record/history isn't lost.
+- ~~Let a user restore an archived model (`rejected`, `failed`, or
+  `done` - any job whose files ended up in `archive/`) back into their
+  working space to modify and resubmit, rather than only being able to
+  start over from scratch.~~ **Done** - "Restore & edit" on the
+  dashboard for any `rejected`/`failed`/`done`/`expired` job copies its
+  model into a brand-new draft (never moves the archived original - its
+  own record/history is completely untouched) pre-filled with its
+  previous scale/rotation/support settings, and lands straight on that
+  new draft's edit page to tweak and resubmit like any other draft - a
+  fresh `queued_at` once actually submitted, genuinely joining the back
+  of the line, not the original's old position. (Explicitly re-confirmed
+  by the user for the `rejected` case specifically: "allow rejected jobs
+  to be edited and requeued.") Corrected from the original wording of
+  this item: `slice_failed` was never actually part of this gap - a
+  `slice_failed` job is a draft, not an archived one (its files live in
+  `scratch/`, never `archive/`), and it already has a full edit/re-slice/
+  delete path of its own on the same edit page every draft uses.
+- ~~Add a "reprint" option to print another exactly as it was queued.~~
+  **Done**, per the user, as a one-click alternative to "Restore & edit"
+  for the case that doesn't need editing at all: a `done` job's own
+  "Reprint" button skips re-slicing entirely (reusing the exact archived
+  `.makerbot` byte-for-byte) and goes straight into the shared queue,
+  ready for an admin to release. Deliberately scoped to `done` only -
+  not `rejected` (turned away for a reason an admin should reconsider,
+  not silently resubmit unchanged), `expired` (never actually printed,
+  nothing proven to reprint), or `failed` (a failed print might have
+  failed for a reason worth checking before blindly retrying the
+  identical file - "Restore & edit" is the right tool for all three of
+  those instead).
 - The "View 3D" page (`/jobs/{id}/preview`) is view-only today - no way to
   resize a model or change its support settings (enable/style) from there,
   only at initial upload. This is really the same gap as the resize
@@ -284,7 +451,58 @@ Managing user accounts:
   end like a restored one does - those are different user expectations and
   worth deciding deliberately rather than defaulting to whichever is
   easier to build.
-- Let a user delete their own model from the queue (they may no longer
+- ~~**Model orientation/sizing controls** - the user's full spec: rotate
+  on any axis, "snap to surface," resize maintaining aspect ratio, and
+  one-click auto-fit.~~ **Done** - see Features above ("Resize and
+  auto-fit" and "Rotate and snap to surface"). Directly confirmed to
+  resolve a real, previously-unfixable slicing failure: the Flexi_Seal
+  model that failed `mbotmake`'s bed-centering check (see `app/README.md`'s
+  "A real stuck-slicing incident" section) slices successfully once
+  rotated ~45° about its vertical axis - found by testing the real file
+  through the real pipeline, not guessed. Scoped to draft
+  (`sliced`/`slice_failed`) jobs only, on the existing job-edit page -
+  not the upload form, and not yet extended to an already-`queued`/
+  `approved` job (the "does editing an active job re-slice in place or
+  count as a new submission" question two bullets up is still open, and
+  out of scope for what's built so far).
+- **Real bug found using auto-fit on an actual model (an F-35 fighter
+  jet STL): "Auto-resize to fit build plate" could compute a scale that
+  still didn't actually fit.** Root cause: auto-fit and the "too large"
+  warning both measured the model's raw bounding-box span against the
+  bed, assuming it would be centered by that same bounding box - but the
+  model is actually centered on its area-weighted surface centroid (see
+  the Flexi_Seal fix above), which for a strongly lopsided shape can sit
+  nowhere near the bounding-box middle. This exact jet model, shrunk to
+  fit its own total span, still hung ~29mm off one edge of the bed once
+  centered on its real centroid. **Fixed** - both checks now measure the
+  actual centroid-relative distance to each side independently, which
+  is what genuinely determines whether it fits; unchanged for any
+  roughly-symmetric model, where the two calculations agree anyway.
+  Verified against the real file: auto-fit dropped from a wrong 9.74% to
+  a correct 7.50%, and OrcaSlicer's own placement check accepted the
+  result (previously refused with "no object is fully inside the print
+  volume").
+- ~~Automatic rotation retry on a slicing failure.~~ **Done** - see
+  Features above. Per the user, after this same fighter-jet model
+  (once correctly sized) still failed `mbotmake`'s own bed-centering
+  check exactly like the Flexi_Seal model did, and rotating it by hand
+  fixed it too: "I don't think it would hurt to attempt rotation and
+  reslice until all reasonable rotations have been tried." A bounded
+  sweep (not exhaustive) of 11 candidate rotations, tried automatically
+  after the requested orientation fails, stopping at the first success.
+- The 3D preview's camera always frames around the *model's own* size
+  and position, not the bed's fixed physical dimensions - correctly
+  identified by the user right after the auto-fit fix above: "The
+  preview always shows the model in the center. If it's off center,
+  that's not displayed visually." The numeric fit-check is now correct
+  (see above) and shows as a red model + text warning, but a viewer
+  only glancing at the picture rather than reading that line could
+  still miss an overhang, since every model - fitting or not - gets
+  framed to look similarly "centered in the picture." Would need the
+  camera (or at least the bed-plate rendering) to hold a consistent
+  scale/position across every model rather than re-framing per-model -
+  a real design change to the preview, not a quick follow-up.
+- ~~Let a user delete their own model from the queue (they may no longer
   want it) - with a clear warning first that this is permanent: it removes
   the job from the queue/list and deletes the model files, with no undo.
   Only allowed while a job is still `queued`/`approved` (before release) -
@@ -293,7 +511,7 @@ Managing user accounts:
   (`done`/`failed`) like any other. Deleting does not need to also remove
   the job from any backup already taken before the delete. Like any other
   change to a job, this needs to be recorded in the job log - see "Audit
-  log" below.
+  log" below.~~ **Done** - see Features above.
 
 **Audit log**
 - The core log is built (`models.JobEvent`; `/admin/log` - one global,
@@ -308,10 +526,10 @@ Managing user accounts:
   model, an admin deleting an old one) actually exist, each needs its own
   log entry too, and an admin deletion specifically must say who did it -
   the log doesn't have anything to log yet for actions that don't exist.~~
-  Half done: an admin deleting an old job is logged (`job_deleted`, actor
-  + filename + submitter) - see "Old jobs" in Features. Still waiting on
-  the other half (a user deleting their own queued job) actually being
-  built.
+  **Done** - both delete a user's own queued/approved job and an admin
+  deleting an old one log a `job_deleted` event (actor + filename, plus
+  the submitter's name for the admin-side one) - see "Old jobs" and
+  "Delete your own queued job" in Features.
 
 **Backups & recovery**
 - Let admins see a list of backups taken and a manifest of what's actually
@@ -321,12 +539,24 @@ Managing user accounts:
   `archive/` instead; this is about visibility into the database-level
   backups themselves (see `backup.py`), for confirming they're actually
   capturing what's expected.
+- Periodic disk-space checks on the relevant volumes - the OS disk and
+  each mounted USB backup flash drive (see `backup.py`'s rotation between
+  two targets) - so running low is surfaced before a backup silently
+  fails or the queue itself can't accept new uploads, not discovered
+  after the fact.
+- A system performance view for admins - CPU and RAM usage, presumably
+  alongside the disk-space check above on the same page, given a Pi is a
+  real resource-constrained target and slicing (OrcaSlicer + mbotmake)
+  is genuinely CPU/memory-heavy.
 
 **Print options**
 - Color selection for users - 1st/2nd/3rd preference, chosen from a
   dropdown populated by an admin-managed list of colors (admins check or
   uncheck which colors are currently available, based on inventory).
-- Controls for resizing a model before submitting.
+- ~~Controls for resizing a model before submitting.~~ Folded into the
+  fuller "Model orientation/sizing controls" item under Job review &
+  feedback above, once the user spelled out the full scope (rotate,
+  snap-to-surface, resize, auto-fit) - not a separate item any more.
 
 **Appearance**
 - ~~An admin setting for the display timezone - every timestamp shown
@@ -438,9 +668,10 @@ Managing user accounts:
   with a way to start pairing from there~~ **Done** - see Features below
   ("Printer status on the admin dashboard") and `app/README.md`'s
   "Printer status and in-app pairing" section.
-- Bed adhesion tuning in the slicing profile - a test print completed
-  without error but didn't stick to the bed (first-layer/Z-offset/brim
-  settings need dialing in for the actual printer).
+- ~~Bed adhesion tuning - a test print completed without error but
+  didn't stick to the bed.~~ **Done** - resolved physically, not in the
+  slicing profile: new bed tape and a glue stick fixed it. No
+  first-layer/Z-offset/brim setting changes were needed.
 - Support for printer models/brands beyond the MakerBot Replicator+.
 - An admin UI for managing printers - add/remove a printer and pair it,
   all from within the app, rather than today's CLI-only, server-access-
@@ -493,6 +724,16 @@ Managing user accounts:
   scratch/queue/archive + two backup-target USB drives mounted, and the
   backup cron job installed - all designed for, none yet done on real
   hardware.
+- A downloadable "support bundle" (a `.tar.gz`) an admin can generate
+  on demand, bundling whatever's needed for offline bugfixing after the
+  real deployment (Pi/network/printer in place, zero internet access,
+  per [[queue3d-deployment-network]]) without remote access to the
+  device itself - per the user: "After I setup the app/Pi, network, and
+  printer in place, I want to be able to show up and collect the
+  support files." Likely contents: recent job `slice_error`s (the exact
+  captured OrcaSlicer/mbotmake output already shown on a failed job's
+  own page), the specific model files involved, the activity log, and
+  relevant application/service logs - exact scope not yet decided.
 
 ## Project layout
 
