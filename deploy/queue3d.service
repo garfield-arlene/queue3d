@@ -1,0 +1,43 @@
+[Unit]
+Description=queue3d - shared 3D printer queue
+# Only network-online, not the printer specifically - printer.py already
+# tolerates the printer being unreachable at any point (see its own
+# connection-status tracking); the app must still come up and serve the
+# dashboard/queue even if the printer itself is off or not yet paired.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# A dedicated, unprivileged, no-login system account - not the admin's own
+# personal login. Per the deployment requirement that only one person logs
+# into the Pi at all: this account exists so the *service* has its own
+# minimal identity, separate from that person's own account, and can never
+# itself be used to log in (no shell, no password) even if something in
+# the app were compromised.
+User=queue3d
+Group=queue3d
+WorkingDirectory=/opt/queue3d/app
+# No --reload: that's a dev-only feature (file-watching + auto-restart on
+# every source change) with no place in a production service - see
+# app/README.md's own note on this. Binds all interfaces (0.0.0.0), not
+# just localhost, since other devices on the deployment LAN need to reach
+# it; port 8000 (not 80) so the service never needs the extra privilege
+# a port below 1024 would require for an otherwise-unprivileged user.
+ExecStart=/opt/queue3d/app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+# Defense in depth - this account can already do very little as an
+# unprivileged user, but these narrow it further to just what the app
+# actually needs, matching "nobody should have more access than
+# necessary" even for the service's own identity, not only human logins.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/queue3d/app/data
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

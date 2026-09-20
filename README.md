@@ -725,10 +725,20 @@ Managing user accounts:
 **Deployment**
 - A fixed IP or mDNS hostname for the server so users don't have to type
   or remember a raw IP address on the deployment network.
-- Actually setting this up on the target Raspberry Pi: OS install, the
-  scratch/queue/archive + two backup-target USB drives mounted, and the
-  backup cron job installed - all designed for, none yet done on real
-  hardware.
+- Actually setting this up on the target Raspberry Pi - the install/
+  upgrade tooling itself is built (`deploy/`: a systemd unit, a script to
+  bundle Python wheels + OrcaSlicer for the Pi's exact architecture from
+  a machine with internet, and a script to deploy/upgrade over SSH+rsync
+  with the Pi itself never touching the network), verified as far as
+  possible without the real hardware (a real cross-platform `pip
+  download` targeting linux aarch64 + Python 3.11 resolved every
+  dependency with no source builds needed; the aarch64 OrcaSlicer
+  AppImage downloads and extracts cleanly). Still needed on the real
+  device: first boot, SSH hardening, the actual `deploy.sh` run, backup/
+  cleanup cron jobs (not yet wired into the deploy tooling), and the
+  scratch/queue/archive + two backup-target USB drives mounted - see
+  `deploy/README.md` for the full runbook and what's confirmed vs. still
+  open.
 - ~~A downloadable "support bundle" (a `.tar.gz`) an admin can generate
   on demand, bundling whatever's needed for offline bugfixing after the
   real deployment (Pi/network/printer in place, zero internet access) -
@@ -750,5 +760,7 @@ Managing user accounts:
 - `slicing/` - the STL -> print-ready-file pipeline, usable standalone.
 - `test-print/` - the printer network protocol client, usable standalone
   for testing connectivity without the rest of the app.
+- `deploy/` - systemd unit + scripts for installing/upgrading on the real
+  Raspberry Pi target with zero internet access at the deployment site.
 
 Each has its own README with setup and implementation details.
