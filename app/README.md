@@ -614,6 +614,87 @@ per-zip model limit right under the file picker, reading the same
 through `_dashboard_context()`) rather than a second, hand-typed number
 that could drift out of sync with the real limit.
 
+### Restoring an archived job, and one-click reprint
+
+**Why this exists:** asked directly, "what's next most important" -
+recommended this since a `rejected`/`failed`/`done`/`expired` job had
+no way back except a completely fresh upload, discarding any tuning
+(a specific rotation that fixed a real slicing failure, an auto-fit
+scale) it took real investigation to find earlier this same session.
+The user agreed and asked to build it, then immediately extended the
+ask mid-build: "Also, add a reprint option to print another as it was
+queued" - a deliberately different, narrower action from restore,
+covered second below.
+
+**"Restore & edit" (`jobs.restore_job()`, any `rejected`/`failed`/
+`done`/`expired` job) copies the archived `.stl` into a brand-new,
+independent draft - never moves it, so the original archived job and
+its own event history are completely untouched, exactly per the
+original to-do item's own requirement.** The new draft starts
+pre-filled with the archived job's own `scale_factor`/`rotate_x/y/z`/
+`supports_enabled`/`support_style` rather than plain defaults - the
+whole point is reusing a previous submission including whatever tuning
+it took to get there, not resetting to 100%/0°/0°/0° and risking the
+exact same slicing failure all over again. Immediately schedules the
+same `slice_and_update()` background task a fresh upload triggers
+(seeded with those carried-over settings as the *first* attempt, not
+defaults), and redirects straight to the new draft's own edit page -
+unlike a fresh upload's redirect to the dashboard, there's always
+exactly one resulting job here, never a zip's worth of several, so
+there's no ambiguity about where to send the user.
+
+**Correcting a real error in how this was originally scoped, caught
+while actually building it, not left to ship wrong:** the original to-do
+item's own wording listed `slice_failed` alongside `rejected`/`failed`/
+`done` as something to "restore" - but a `slice_failed` job is a
+*draft* (`models.DRAFT_STATUSES`), not an archived one at all; its files
+still live in `scratch/` and it already has a complete edit/re-slice/
+delete path on the exact same edit page every draft uses (including the
+delete route built earlier this same session). Restore is scoped to
+exactly `models.TERMINAL_STATUSES` (`rejected`/`done`/`failed`/
+`expired`) - the actual jobs whose files genuinely moved to `archive/`
+and have no path back otherwise.
+
+**"Reprint" (`jobs.reprint_job()`, `done` only) is a different action
+entirely, not restore-with-an-extra-step: it skips slicing altogether.**
+A job that already finished printing successfully doesn't need to prove
+itself again - reusing the exact archived `.makerbot` byte-for-byte is
+both faster and more certain to reproduce the same result than
+re-running OrcaSlicer/`mbotmake` against identical geometry and settings
+a second time. Copies the archived `.stl`/`.makerbot`/`.supports.json`
+straight into `queue/` (not `scratch/` - there's no draft stage at all
+here) with a fresh `queued_at` (matching `submit_draft()`'s own
+convention - genuinely joins the back of the line, not the original's
+old position), reads the reused `.makerbot`'s own duration estimate the
+same way a real slice would, and lands back on the dashboard already
+`queued`.
+
+**Deliberately narrower than restore, and why each excluded status
+stays excluded:** not `rejected` (an admin turned it away for a reason
+that reprinting the identical file unchanged doesn't address - "Restore
+& edit" is the right tool there, letting an actual change happen before
+resubmitting); not `expired` (a draft that never actually printed at
+all has nothing proven to reprint); not `failed` (a failed *print* -
+distinct from a failed *slice* - might have failed for a physical
+reason, like this very session's own bed-adhesion incident, worth
+checking or fixing before blindly retrying the identical file rather
+than assuming the file itself was ever the problem).
+
+Verified end-to-end in a real isolated instance for every path, not
+assumed from reading the code: staged a real `done` job (release()
+itself needs the actual printer hardware, unavailable here - staged the
+status transition directly the same way this project's own screenshot
+generation already does for hard-to-reach states) and confirmed Reprint
+produces an immediately-`queued` job with the exact reused `.makerbot`
+file, correct carried-over duration estimate, and a clean audit-log
+entry; confirmed a real `rejected` job's "Restore & edit" produces a
+new draft that automatically re-slices to `sliced` with its own correct
+audit trail, while the original rejected job's own status and archived
+files are completely unaffected; confirmed both routes reject the wrong
+status cleanly (reprinting a `rejected` job, say) with a clear flash
+message via the same `JobActionError` pattern every other job action
+already uses, rather than a raw error or silent no-op.
+
 ### Upload and slicing progress
 
 Slicing (OrcaSlicer + `mbotmake`, both real subprocesses) can take minutes

@@ -17,12 +17,14 @@ from models import Admin, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUS
 from pipeline import run_slice
 from printer import PrinterError, capture_photo, send_print_job, system_information
 from storage import (
+    archive_paths,
     archive_photo_path,
     delete_job_files,
     move_job_to_archive,
     queue_paths,
     read_makerbot_duration_s,
     scratch_paths,
+    scratch_stl_path,
 )
 
 
@@ -459,6 +461,130 @@ def delete_own_job(session: Session, job: Job, user: User) -> None:
         JobStatus.approved,
         JobStatus.slice_failed,
     )
+
+
+def restore_job(session: Session, job: Job, user: User) -> Job:
+    """Copies an archived job's model into a brand-new draft the user can
+    modify and resubmit, rather than only being able to start over with a
+    fresh upload - per README.md's to-do list, "useful both for fixing a
+    failed/rejected submission and for reprinting or tweaking a past
+    successful one." Only ever reaches jobs in models.TERMINAL_STATUSES
+    (rejected/done/failed/expired) - a slice_failed job is NOT included
+    here despite an earlier version of that to-do item mentioning it: a
+    slice_failed job is a draft (models.DRAFT_STATUSES), its files are
+    still in scratch/ (never archived at all), and it already has a full
+    edit/re-slice/delete path via the normal job-edit page - it has
+    nothing to "restore" from.
+
+    A genuine copy, not a move (per the same to-do item) - the archived
+    job and its own history are completely untouched; only a brand-new,
+    independent Job row and a duplicated .stl file are created. The new
+    draft starts pre-filled with the archived job's own scale/rotation/
+    support settings rather than plain defaults - the whole point is
+    reusing a previous submission, including whatever tuning (a specific
+    rotation that fixed a real slicing failure, say) it took to get there
+    the first time, not discarding it and hoping the model still slices
+    cleanly at 100%/0°/0°/0° from scratch.
+
+    Deliberately does NOT itself schedule the re-slice - the caller
+    (routers/user.py, which already owns the BackgroundTasks dependency
+    for every other job-creating action) does that immediately after,
+    the exact same shape upload() already uses."""
+    _require_status(job, *TERMINAL_STATUSES)
+    archived_stl, _archived_makerbot, _archived_supports = archive_paths(job.id)
+    if not archived_stl.exists():
+        raise JobActionError("The original model file for this job is no longer available to restore.")
+
+    new_job = Job(
+        user_id=user.id,
+        original_filename=job.original_filename,
+        status=JobStatus.submitted,
+        supports_enabled=job.supports_enabled,
+        support_style=job.support_style,
+        scale_factor=job.scale_factor,
+        rotate_x=job.rotate_x,
+        rotate_y=job.rotate_y,
+        rotate_z=job.rotate_z,
+    )
+    session.add(new_job)
+    session.commit()
+    session.refresh(new_job)
+
+    new_stl_path = scratch_stl_path(new_job.id)
+    shutil.copy(archived_stl, new_stl_path)
+    new_job.stl_path = str(new_stl_path)
+    session.add(new_job)
+    log_event(
+        session, new_job.id, f"user:{user.name}", "restored",
+        detail=f"from job #{job.id} ({job.original_filename}, was {job.status.value})",
+    )
+    session.commit()
+    session.refresh(new_job)
+    return new_job
+
+
+def reprint_job(session: Session, job: Job, user: User) -> Job:
+    """One-click "print another exactly as it was queued" - per the user,
+    distinct from restore_job() above: restore explicitly lands on an
+    editable draft for "fixing or tweaking" before resubmitting, since a
+    rejected/failed/expired job might genuinely need a change to work at
+    all. A job that already finished successfully doesn't need that - so
+    this skips re-slicing entirely (reusing the exact archived
+    .makerbot byte-for-byte, rather than re-running OrcaSlicer/mbotmake
+    against the same geometry and settings to reproduce, most likely,
+    the exact same result a little later and a little riskier) and goes
+    straight into the shared queue - not a draft at all - ready for an
+    admin to release like any other queued job.
+
+    Scoped to JobStatus.done only, not the other TERMINAL_STATUSES - a
+    rejected job was turned away for a reason an admin should see
+    reconsidered, not silently resubmitted unchanged; an expired draft
+    never actually printed at all, so there's nothing proven to reprint;
+    a failed print might have failed for a reason worth checking (bed
+    adhesion, say) before blindly retrying the identical file - all
+    three of those are what restore_job() is for instead.
+
+    A fresh queued_at (matching submit_draft's own convention), same as
+    requeue_job() below - genuinely joins the back of the line, not the
+    position the original job happened to hold."""
+    _require_status(job, JobStatus.done)
+    archived_stl, archived_makerbot, archived_supports = archive_paths(job.id)
+    if not archived_stl.exists() or not archived_makerbot.exists():
+        raise JobActionError("The original files for this job are no longer available to reprint.")
+
+    new_job = Job(
+        user_id=user.id,
+        original_filename=job.original_filename,
+        status=JobStatus.queued,
+        supports_enabled=job.supports_enabled,
+        support_style=job.support_style,
+        scale_factor=job.scale_factor,
+        rotate_x=job.rotate_x,
+        rotate_y=job.rotate_y,
+        rotate_z=job.rotate_z,
+        queued_at=datetime.now(timezone.utc),
+    )
+    session.add(new_job)
+    session.commit()
+    session.refresh(new_job)
+
+    new_stl, new_makerbot, new_supports = queue_paths(new_job.id)
+    shutil.copy(archived_stl, new_stl)
+    shutil.copy(archived_makerbot, new_makerbot)
+    new_job.stl_path = str(new_stl)
+    new_job.makerbot_path = str(new_makerbot)
+    if archived_supports.exists():
+        shutil.copy(archived_supports, new_supports)
+        new_job.supports_path = str(new_supports)
+    new_job.duration_estimate_s = read_makerbot_duration_s(new_makerbot)
+    session.add(new_job)
+    log_event(
+        session, new_job.id, f"user:{user.name}", "reprint_queued",
+        detail=f"from job #{job.id} ({job.original_filename})",
+    )
+    session.commit()
+    session.refresh(new_job)
+    return new_job
 
 
 def requeue_job(session: Session, job: Job, admin: Admin) -> Job:

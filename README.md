@@ -218,6 +218,17 @@ Managing user accounts:
   `queued`/`approved`; once released and printing, an admin is already
   acting on it and the option disappears. Logged in the activity log
   like any other change.
+- **Restore & edit, and Reprint** - two ways to reuse a job that's
+  already reached a final outcome, instead of only being able to start
+  over with a fresh upload. "Restore & edit" (any `rejected`, `failed`,
+  `done`, or `expired` job) copies the model into a brand-new draft,
+  pre-filled with its previous scale/rotation/support settings, and
+  drops you straight onto that draft's edit page to tweak and resubmit -
+  the original archived job is never touched, just copied from. "Reprint"
+  (a `done` job only) skips the edit step entirely for the case that
+  doesn't need it: it reuses the exact already-sliced file and goes
+  straight back into the queue, ready for an admin to release, with no
+  re-slicing wait at all.
 - **Upload `.obj` files directly, and `.zip` files of one or more
   `.stl`/`.obj` models** (a common Thingiverse shape - several separate
   parts plus a README/photo that's just ignored). Each model in a zip
@@ -300,7 +311,9 @@ Managing user accounts:
   being set too low (10) for a legitimate multi-part kit, not a
   FastAPI-level failure; raised to 25, and now stated directly on the
   upload form per the user ("We need to note the limitation for the
-  users"), not just here.
+  users"), not just here. Confirmed independently by the user in real
+  use, not just by this session's own testing - the stronger of the two
+  claims this project distinguishes between.
 - **Separately, still open:** the *original* 422 report (a different
   real multi-model zip, before the file above was available to test)
   never got a confirmed root cause - that specific file was never
@@ -397,17 +410,35 @@ Managing user accounts:
   log" below, since that delete has to be logged like any other change.~~
   **Done** - see Features above (confirmed by the user: queued/approved
   only, not printing).
-- Let a user restore an archived model (`slice_failed`, `rejected`,
-  `failed`, or `done` - any job whose files ended up in `archive/`) back
-  into their working space to modify and resubmit, rather than only being
-  able to start over from scratch - useful both for fixing a failed/rejected
-  submission and for reprinting or tweaking a past successful one. A
-  restored resubmission goes to the end of the queue, not back to where the
-  original was - it's a new submission, and the admin still decides when to
-  release it like any other. Should copy the archived files rather than
-  move them, so the original archived record/history isn't lost.
-  (Explicitly re-confirmed by the user for the `rejected` case
-  specifically: "allow rejected jobs to be edited and requeued.")
+- ~~Let a user restore an archived model (`rejected`, `failed`, or
+  `done` - any job whose files ended up in `archive/`) back into their
+  working space to modify and resubmit, rather than only being able to
+  start over from scratch.~~ **Done** - "Restore & edit" on the
+  dashboard for any `rejected`/`failed`/`done`/`expired` job copies its
+  model into a brand-new draft (never moves the archived original - its
+  own record/history is completely untouched) pre-filled with its
+  previous scale/rotation/support settings, and lands straight on that
+  new draft's edit page to tweak and resubmit like any other draft - a
+  fresh `queued_at` once actually submitted, genuinely joining the back
+  of the line, not the original's old position. (Explicitly re-confirmed
+  by the user for the `rejected` case specifically: "allow rejected jobs
+  to be edited and requeued.") Corrected from the original wording of
+  this item: `slice_failed` was never actually part of this gap - a
+  `slice_failed` job is a draft, not an archived one (its files live in
+  `scratch/`, never `archive/`), and it already has a full edit/re-slice/
+  delete path of its own on the same edit page every draft uses.
+- ~~Add a "reprint" option to print another exactly as it was queued.~~
+  **Done**, per the user, as a one-click alternative to "Restore & edit"
+  for the case that doesn't need editing at all: a `done` job's own
+  "Reprint" button skips re-slicing entirely (reusing the exact archived
+  `.makerbot` byte-for-byte) and goes straight into the shared queue,
+  ready for an admin to release. Deliberately scoped to `done` only -
+  not `rejected` (turned away for a reason an admin should reconsider,
+  not silently resubmit unchanged), `expired` (never actually printed,
+  nothing proven to reprint), or `failed` (a failed print might have
+  failed for a reason worth checking before blindly retrying the
+  identical file - "Restore & edit" is the right tool for all three of
+  those instead).
 - The "View 3D" page (`/jobs/{id}/preview`) is view-only today - no way to
   resize a model or change its support settings (enable/style) from there,
   only at initial upload. This is really the same gap as the resize
@@ -637,9 +668,10 @@ Managing user accounts:
   with a way to start pairing from there~~ **Done** - see Features below
   ("Printer status on the admin dashboard") and `app/README.md`'s
   "Printer status and in-app pairing" section.
-- Bed adhesion tuning in the slicing profile - a test print completed
-  without error but didn't stick to the bed (first-layer/Z-offset/brim
-  settings need dialing in for the actual printer).
+- ~~Bed adhesion tuning - a test print completed without error but
+  didn't stick to the bed.~~ **Done** - resolved physically, not in the
+  slicing profile: new bed tape and a glue stick fixed it. No
+  first-layer/Z-offset/brim setting changes were needed.
 - Support for printer models/brands beyond the MakerBot Replicator+.
 - An admin UI for managing printers - add/remove a printer and pair it,
   all from within the app, rather than today's CLI-only, server-access-

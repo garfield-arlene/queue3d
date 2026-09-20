@@ -26,6 +26,8 @@ from jobs import (
     printing_eta,
     queue_position,
     queue_wait_seconds,
+    reprint_job,
+    restore_job,
     slice_and_update,
     start_reslice,
     submit_draft,
@@ -511,6 +513,65 @@ def delete_job(
     job = _owned_job(session, user, job_id)
     try:
         delete_own_job(session, job, user)
+    except JobActionError as e:
+        request.session["flash_error"] = str(e)
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@router.post("/jobs/{job_id}/restore")
+def restore(
+    job_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Copies an archived (rejected/done/failed/expired) job's model into
+    a brand-new draft to modify and resubmit - see jobs.restore_job for
+    why a slice_failed draft is deliberately not included (it already has
+    a full edit path of its own). Schedules the same background
+    slice_and_update() any fresh upload triggers, seeded with the
+    archived job's own settings rather than plain defaults - lands
+    straight on the new draft's own edit page (not the dashboard, unlike
+    upload()) since there's always exactly one resulting job, never a
+    zip's worth of several."""
+    job = _owned_job(session, user, job_id)
+    try:
+        new_job = restore_job(session, job, user)
+    except JobActionError as e:
+        request.session["flash_error"] = str(e)
+        return RedirectResponse("/dashboard", status_code=303)
+
+    background_tasks.add_task(
+        slice_and_update,
+        new_job.id,
+        Path(new_job.stl_path),
+        new_job.supports_enabled,
+        new_job.support_style,
+        scale_factor=new_job.scale_factor,
+        rotate_x=new_job.rotate_x,
+        rotate_y=new_job.rotate_y,
+        rotate_z=new_job.rotate_z,
+    )
+    return RedirectResponse(f"/jobs/{new_job.id}/edit", status_code=303)
+
+
+@router.post("/jobs/{job_id}/reprint")
+def reprint(
+    job_id: int,
+    request: Request,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """One-click "print another exactly as it was queued" for a job that
+    already finished successfully - see jobs.reprint_job for why this is
+    scoped to `done` only and skips slicing entirely (reusing the exact
+    archived .makerbot). Lands back on the dashboard, same as a normal
+    upload/submit - no background task to schedule here, unlike restore
+    above, since nothing needs slicing."""
+    job = _owned_job(session, user, job_id)
+    try:
+        reprint_job(session, job, user)
     except JobActionError as e:
         request.session["flash_error"] = str(e)
     return RedirectResponse("/dashboard", status_code=303)
