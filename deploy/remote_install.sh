@@ -26,6 +26,49 @@ if ! id -u queue3d >/dev/null 2>&1; then
   useradd --system --no-create-home --shell /usr/sbin/nologin queue3d
 fi
 
+# Per the user, asked directly before ever relying on this for a real
+# upgrade rather than after a bad one: "does the upgrade process trigger
+# a backup in case it fails? I don't want to leave it in an unstable
+# state." It didn't, until now - the rsync --delete calls just below this
+# would otherwise overwrite the previous working code with no way back,
+# and a bad upgrade could leave a broken service with nothing to restore
+# from. Skipped entirely on a genuine first install (nothing exists yet
+# to back up) - only runs when $APP_DIR/app is already a real install.
+BACKUP_ROOT=/opt/queue3d-backups
+if [ -d "$APP_DIR/app" ] && [ -f "$APP_DIR/app/data/queue3d.db" ]; then
+  BACKUP_DIR="$BACKUP_ROOT/$(date -u +%Y%m%dT%H%M%SZ)"
+  echo "Existing install found - backing up code and database to $BACKUP_DIR before upgrading..."
+  mkdir -p "$BACKUP_DIR"
+  # Code: a plain snapshot, never touched again unless actually restoring
+  # from it - not the same rsync --delete the real sync below uses. Skips
+  # data/ (backed up properly, below, not just file-copied) and .venv/
+  # (fully regenerated from the bundled wheels either way, nothing
+  # meaningful to preserve there).
+  cp -a "$APP_DIR/app" "$BACKUP_DIR/app"
+  rm -rf "$BACKUP_DIR/app/data" "$BACKUP_DIR/app/.venv"
+  cp -a "$APP_DIR/slicing" "$BACKUP_DIR/slicing"
+  rm -rf "$BACKUP_DIR/slicing/tools"
+  # Database: the exact same safe, consistent online-backup-API copy
+  # backup.py's own backup_database() uses (not a raw file copy, which
+  # could grab a half-written page) - run via the OLD venv, still fully
+  # intact at this point since nothing has touched it yet.
+  if "$APP_DIR/app/.venv/bin/python3" -c "
+import sys; sys.path.insert(0, '$APP_DIR/app')
+from pathlib import Path
+from backup import backup_database
+backup_database(Path('$BACKUP_DIR/db'))
+"; then
+    echo "Pre-upgrade backup complete."
+  else
+    echo "WARNING: pre-upgrade database backup failed - continuing anyway, but there is no database rollback point for this particular upgrade." >&2
+  fi
+  # Keep the 5 most recent pre-upgrade backups, not an unbounded pile on
+  # a Pi's limited SD card - oldest deleted first.
+  ls -1dt "$BACKUP_ROOT"/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
+else
+  echo "No existing install found - nothing to back up (this is a fresh install)."
+fi
+
 echo "Syncing staged files into $APP_DIR..."
 mkdir -p "$APP_DIR/app" "$APP_DIR/slicing"
 # Two separate calls, not one rsync given both source dirs at once -
@@ -70,5 +113,26 @@ systemctl enable queue3d
 
 echo "Restarting the service..."
 systemctl restart queue3d
-sleep 2
-systemctl --no-pager status queue3d
+sleep 3
+
+# Deliberately reports clearly rather than attempting an automatic
+# rollback - an automatic rollback has its own real failure modes (what
+# if the restore itself goes wrong, unattended?), and the whole backup
+# above exists precisely so a person can make that call with the actual
+# situation in front of them, not have a script guess at 3am. This is
+# the moment that tells you whether it worked at all.
+if systemctl is-active --quiet queue3d && curl -sf -o /dev/null http://127.0.0.1:8000/login; then
+  echo "queue3d is up and responding on port 8000."
+else
+  echo "" >&2
+  echo "WARNING: queue3d does not appear to be running/responding after this deploy." >&2
+  if [ -n "${BACKUP_DIR:-}" ]; then
+    echo "This was an upgrade - the previous working version was backed up to:" >&2
+    echo "  $BACKUP_DIR" >&2
+    echo "See deploy/README.md's rollback section to restore it." >&2
+  else
+    echo "This was a fresh install, so there is no previous version to roll back to." >&2
+  fi
+  systemctl --no-pager status queue3d || true
+  exit 1
+fi

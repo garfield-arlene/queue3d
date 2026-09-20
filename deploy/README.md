@@ -145,12 +145,51 @@ machine, then `./deploy.sh <target>` again from the `deploy/` directory.
 Nothing on the Pi side changes about this process whether it's the
 first deploy or the fiftieth.
 
+## If an upgrade goes wrong: rolling back
+
+Per the user, asked directly before ever relying on this for a real
+upgrade: every upgrade (not a fresh install - there's nothing to back up
+yet on the first one) automatically backs up the previous code and
+database to `/opt/queue3d-backups/<timestamp>/` *before* touching
+anything, and checks that the service actually comes back up and
+responds afterward. If it doesn't, `remote_install.sh` stops and tells
+you plainly rather than leaving you to discover it later - it
+deliberately does **not** try to roll back automatically (an unattended
+automatic restore has its own real failure modes; the backup exists so
+a person can make that call with the actual situation in front of them).
+
+To actually roll back by hand, pick the backup you want (they're named
+by UTC timestamp, most recent last) and, on the Pi:
+
+```bash
+sudo systemctl stop queue3d
+BACKUP=/opt/queue3d-backups/<the-timestamp-you-want>
+sudo rsync -a --delete "$BACKUP/app/" /opt/queue3d/app/ --exclude data --exclude .venv
+sudo rsync -a --delete "$BACKUP/slicing/" /opt/queue3d/slicing/ --exclude tools
+sudo cp "$BACKUP/db/queue3d.db" /opt/queue3d/app/data/queue3d.db
+sudo chown -R queue3d:queue3d /opt/queue3d
+sudo systemctl start queue3d
+sudo systemctl status queue3d
+```
+
+Note this restores the **database** to exactly how it was right before
+that upgrade too, not just the code - any jobs submitted/changed between
+that backup and now would be lost. That's an inherent tradeoff of
+restoring a consistent snapshot, not a bug: the alternative (roll back
+code but keep the newer database) risks the old code not understanding
+data the new code already wrote. The last 5 pre-upgrade backups are kept
+automatically (oldest pruned first) so this option stays available
+without accumulating unboundedly on the Pi's limited storage.
+
 ## What's NOT handled here yet
 
-- **Backups and draft-expiry cron jobs** (`app/backup.py`,
-  `app/cleanup_drafts.py`) still need their own cron entries installed
-  on the Pi - not wired into `remote_install.sh` yet. See each script's
-  own module docstring for the exact crontab line.
+- **The regular, ongoing disaster-recovery backup and draft-expiry cron
+  jobs** (`app/backup.py`, `app/cleanup_drafts.py`) - a different thing
+  from the pre-upgrade snapshots above: this is the daily backup to the
+  two rotating external USB drives, protecting against real data loss
+  (a failed SD card, say), not just a bad upgrade. Still needs its own
+  cron entries installed on the Pi - not wired into `remote_install.sh`
+  yet. See each script's own module docstring for the exact crontab line.
 - **A fixed IP or mDNS hostname** so `<hostname>.local` actually
   resolves reliably on the deployment network - still a README.md
   to-do item, not yet set up.
