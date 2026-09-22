@@ -9,6 +9,14 @@
 # wheels already rsynced alongside this script.
 set -euo pipefail
 
+# Pinned explicitly rather than trusting whatever sudo/ssh -t happens to
+# inherit - useradd/nginx both live under /usr/sbin, and a real run hit
+# "useradd: command not found" despite the binary being present on disk,
+# almost certainly because that directory wasn't on PATH in that
+# particular invocation. This removes the whole class of problem outright
+# rather than depending on the caller's environment being right.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 APP_DIR=/opt/queue3d
 STAGING_DIR=/tmp/queue3d-deploy-staging  # must match deploy.sh's own STAGING_DIR
 
