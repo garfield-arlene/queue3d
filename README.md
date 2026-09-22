@@ -723,22 +723,41 @@ Managing user accounts:
   orphaned, or removed too.
 
 **Deployment**
-- A fixed IP or mDNS hostname for the server so users don't have to type
-  or remember a raw IP address on the deployment network.
-- Actually setting this up on the target Raspberry Pi - the install/
-  upgrade tooling itself is built (`deploy/`: a systemd unit, a script to
-  bundle Python wheels + OrcaSlicer for the Pi's exact architecture from
-  a machine with internet, and a script to deploy/upgrade over SSH+rsync
-  with the Pi itself never touching the network), verified as far as
-  possible without the real hardware (a real cross-platform `pip
-  download` targeting linux aarch64 + Python 3.11 resolved every
-  dependency with no source builds needed; the aarch64 OrcaSlicer
-  AppImage downloads and extracts cleanly). Still needed on the real
-  device: first boot, SSH hardening, the actual `deploy.sh` run, backup/
-  cleanup cron jobs (not yet wired into the deploy tooling), and the
-  scratch/queue/archive + two backup-target USB drives mounted - see
-  `deploy/README.md` for the full runbook and what's confirmed vs. still
-  open.
+- ~~A fixed IP or mDNS hostname for the server so users don't have to type
+  or remember a raw IP address on the deployment network.~~ **Done** -
+  the Pi's hostname is set to `q3d` via `raspi-config`, resolving as
+  `q3d.local` through mDNS/Avahi from any client on the network (real
+  DHCP + mDNS resolution issues hit and fixed during actual first-boot
+  setup, not just assumed to work - see `deploy/README.md`).
+- ~~Actually setting this up on the target Raspberry Pi~~ **Done, on the
+  real hardware, not just verified in isolation** - first boot, SSH
+  hardening (key-only auth, `PermitRootLogin no`, `PasswordAuthentication
+  no`, a dedicated no-login `queue3d` service account), and a real
+  `deploy.sh` run all completed against the actual Pi. Also grew well
+  past its original scope along the way, all per the user, live: an
+  nginx reverse proxy (so the app is reachable on a plain
+  `https://q3d.local/`, no `:8000` to remember), a self-signed TLS cert
+  generated once on first install (the only option - `.local` names can
+  never get a real CA-signed cert), a pre-upgrade backup + rollback
+  safety net with a post-deploy health check, and `remote_install.sh`
+  now apt-installs its own missing OS packages (nginx/openssl/
+  python3-venv) rather than requiring a separate manual step. Real bugs
+  found and fixed only by actually running this against the hardware,
+  not caught by any amount of isolated testing beforehand: a `PATH`
+  issue breaking `useradd` under `sudo`/`ssh -t`, a `/opt` permission
+  error from staging in the wrong directory, a Python 3.11-vs-3.13 wheel
+  mismatch, and - the longest chase of the session - a Chrome-only
+  `ERR_ADDRESS_UNREACHABLE` that turned out to be macOS's own Local
+  Network privacy permission blocking Chrome, nothing to do with the
+  deploy at all. Full account in `deploy/README.md`.
+- Backup/cleanup cron jobs (`app/backup.py`, `app/cleanup_drafts.py`)
+  still not wired into `remote_install.sh` or installed on the real
+  Pi - the pre-upgrade safety backup added this session is a different,
+  narrower thing (one snapshot right before an upgrade, kept 5 deep),
+  not the ongoing daily disaster-recovery backup this item is about.
+- The two rotating external USB backup drives (`backup.py`'s target)
+  not yet physically connected/mounted on the real Pi - still runs
+  against local disk only right now.
 - ~~A downloadable "support bundle" (a `.tar.gz`) an admin can generate
   on demand, bundling whatever's needed for offline bugfixing after the
   real deployment (Pi/network/printer in place, zero internet access) -
