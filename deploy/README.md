@@ -193,6 +193,29 @@ resolve it on the island network - a bigger lift, worth revisiting only
 if this turns out to actually be the situation on the real deployment
 devices).
 
+**If Chrome (specifically, and only Chrome) shows `ERR_ADDRESS_UNREACHABLE`
+instead of the cert warning above** - this isn't a queue3d, nginx, or
+cert problem at all, even though it looks like one. On a Mac, it's
+almost always macOS's own **Local Network privacy permission**
+(Apple menu -> System Settings -> Privacy & Security -> Local Network):
+apps have to be individually granted permission to connect to devices
+on your local subnet, tied specifically to resolving/connecting via
+mDNS (`.local` names) - and unlike Firefox, Chrome doesn't reliably
+prompt for it. Diagnosed for real, not guessed: a `chrome://net-export/`
+capture showed DNS resolution succeeding correctly
+(`q3d.local` -> `192.168.1.x`), then the actual TCP connect immediately
+failing with `os_error 65` (`EHOSTUNREACH`) - the kernel itself refusing
+the connection for that app, not a network or server problem. Fix:
+find Chrome in that Local Network list (it may appear more than once -
+harmless, both are Chrome-related) and enable it, fully quit and
+relaunch Chrome, and retry. If toggling it doesn't visibly take effect,
+`tccutil reset LocalNetwork` from Terminal resets it for every app and
+forces a fresh permission prompt next time each one tries. This is a
+macOS-specific gatekeeper with no ChromeOS equivalent (Chrome effectively
+*is* the OS on a Chromebook, not a sandboxed app requesting permission
+from a layer above it), so it should not recur on the real deployment
+devices.
+
 ### 6. Confirm it's actually running
 
 ```bash
