@@ -6,9 +6,18 @@ Description=queue3d - shared 3D printer queue
 # dashboard/queue even if the printer itself is off or not yet paired.
 After=network-online.target
 Wants=network-online.target
+# The live database + scratch/queue/archive live on a dedicated external
+# drive, not the SD card (see project memory queue3d-app-progress) -
+# this refuses to even start the app until that drive is actually
+# mounted, rather than letting it silently start up against a fresh,
+# empty local directory if the drive is missing/not yet mounted at boot
+# (db.py's own ismount() check is the same guard, belt-and-suspenders,
+# for the case this unit's dependency is somehow bypassed).
+RequiresMountsFor=/mnt/queue3d-data
 
 [Service]
 Type=simple
+Environment=QUEUE3D_DATA_DIR=/mnt/queue3d-data
 # A dedicated, unprivileged, no-login system account - not the admin's own
 # personal login. Per the deployment requirement that only one person logs
 # into the Pi at all: this account exists so the *service* has its own
@@ -41,7 +50,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/queue3d/app/data
+ReadWritePaths=/mnt/queue3d-data
 CapabilityBoundingSet=
 
 [Install]

@@ -110,7 +110,80 @@ your own machine instead and bundled through `deploy.sh` below,
 deliberately, since the real deployment site never has internet for
 those at all.
 
-### 4. Build the deploy bundle (on this machine, or your Mac - wherever
+### 4. Set up the three storage drives
+
+Per the original storage plan (three USB flash drives, already owned,
+no new hardware purchase needed): the microSD card boots the OS only:
+one flash drive holds the live database and every job's files, the
+other two rotate as daily backup targets (see `backup.py`'s own
+docstring for why day-parity rotation between two always-plugged-in
+drives, rather than a manually-swapped one). Plug in all three, then
+identify them:
+
+```bash
+lsblk -o NAME,SIZE,MODEL,SERIAL,MOUNTPOINT
+```
+
+If they're all the same size, it genuinely doesn't matter which
+physical drive gets which role - everything below mounts by the
+filesystem's own UUID, not by device letter (`sda`/`sdb`/`sdc` can
+shift across reboots/reconnects depending on enumeration order, but a
+UUID is embedded in the filesystem itself at format time and travels
+with the physical drive regardless of which port it's plugged into).
+If they differ, give the largest one the live-data role - it's the one
+that only ever grows over a school year, while the two backups just
+mirror that same content on rotation.
+
+**Formatting wipes whatever's currently on each drive - confirm you
+don't need that data first.** Reusing each drive's existing single
+partition (already spanning the whole disk) rather than repartitioning:
+
+```bash
+sudo mkfs.ext4 -F -L q3d-data /dev/sda1        # live data - adjust device letter as identified above
+sudo mkfs.ext4 -F -L q3d-backup-a /dev/sdb1    # backup A
+sudo mkfs.ext4 -F -L q3d-backup-b /dev/sdc1    # backup B
+```
+
+Get each partition's UUID and add persistent mounts by UUID, not
+`/dev/sdX` - the `nofail` option matters specifically here since these
+are removable USB drives, not permanent internal storage: without it, a
+drive that's unplugged or slow to enumerate would hang or fail the
+whole boot:
+
+```bash
+sudo blkid /dev/sda1 /dev/sdb1 /dev/sdc1
+sudo mkdir -p /mnt/queue3d-data /mnt/queue3d-backup-a /mnt/queue3d-backup-b
+```
+
+Add one line per drive to `/etc/fstab` (substitute the real UUIDs from
+`blkid` above):
+
+```
+UUID=<data-uuid>       /mnt/queue3d-data       ext4  defaults,nofail,noatime  0  2
+UUID=<backup-a-uuid>   /mnt/queue3d-backup-a   ext4  defaults,nofail,noatime  0  2
+UUID=<backup-b-uuid>   /mnt/queue3d-backup-b   ext4  defaults,nofail,noatime  0  2
+```
+
+Then mount and hand ownership to the `queue3d` service account (the
+same dedicated no-login user everything else runs as - without this,
+the app gets permission denied trying to write its own database):
+
+```bash
+sudo mount -a
+sudo chown -R queue3d:queue3d /mnt/queue3d-data /mnt/queue3d-backup-a /mnt/queue3d-backup-b
+```
+
+`queue3d.service` (step 6 below) refuses to even start if
+`/mnt/queue3d-data` isn't actually mounted (`RequiresMountsFor`,
+backed up by the same check inside `db.py` itself) - deliberately, so a
+drive that's unplugged or not yet mounted at boot can never look like a
+successful start against a silently-empty, freshly-created local
+directory instead of the real data. The first `remote_install.sh` run
+after this is set up also migrates any existing local database onto
+this drive automatically, one time only - nothing already submitted
+gets lost by moving to this setup partway through.
+
+### 5. Build the deploy bundle (on this machine, or your Mac - wherever
 ### you actually have internet)
 
 ```bash
@@ -137,7 +210,7 @@ machine - that still needs the real Pi. Re-run this whenever
 the cache persists between
 deploys and there's nothing to re-fetch.
 
-### 5. Deploy
+### 6. Deploy
 
 ```bash
 ./deploy.sh <hostname-or-ip>.local
@@ -151,13 +224,18 @@ Syncs the app, bundled wheels, and OrcaSlicer to the Pi, then runs
 `remote_install.sh` there via `sudo` - creates the `queue3d` system
 user and venv if this is the first run, installs/upgrades Python
 dependencies from the bundled wheels only (no network), extracts
-OrcaSlicer, installs and enables the systemd unit, generates a
-self-signed TLS cert (first run only - see below), configures nginx as
-an https reverse proxy in front of it, and (re)starts both services.
-The exact same command is both "install" and "upgrade" - every step is
-idempotent, so there's no separate first-time mode to remember (see
-`remote_install.sh`'s own comments for why each step is safe to
-re-run).
+OrcaSlicer, installs and enables the systemd unit (and the
+`queue3d-backup`/`queue3d-cleanup` timers - daily backup and
+draft-expiry cleanup, actually wired in and running rather than left as
+a "run manually, or wire into cron" note in each script's own
+docstring), generates a self-signed TLS cert (first run only - see
+below), configures nginx as an https reverse proxy in front of it, and
+(re)starts everything. The exact same command is both "install" and
+"upgrade" - every step is idempotent, so there's no separate first-time
+mode to remember (see `remote_install.sh`'s own comments for why each
+step is safe to re-run). Refuses to proceed at all if step 4's live-data
+drive isn't actually mounted at `/mnt/queue3d-data` - check that first
+if this exits early with that message.
 
 The app itself (`queue3d.service`) only ever listens on `127.0.0.1:8000`
 - never directly reachable from the network at all. `nginx` is the
@@ -216,21 +294,31 @@ macOS-specific gatekeeper with no ChromeOS equivalent (Chrome effectively
 from a layer above it), so it should not recur on the real deployment
 devices.
 
-### 6. Confirm it's actually running
+### 7. Confirm it's actually running
 
 ```bash
 ssh <hostname-or-ip>.local sudo systemctl status queue3d nginx
+ssh <hostname-or-ip>.local sudo systemctl list-timers queue3d-backup.timer queue3d-cleanup.timer
 curl -k https://<hostname-or-ip>.local/login
 ```
 
 (`-k` skips certificate validation - expected here, since the cert is
 self-signed and there's no CA for curl to check it against either.) In
 a real browser, click through the "not secure" warning once per device
-- that's expected, not a sign anything is actually wrong.
+- that's expected, not a sign anything is actually wrong. The
+`list-timers` output shows when each is next scheduled to run (3am/4am)
+- worth a manual run of each once, too, rather than waiting until 3am to
+find out if either has a problem:
+
+```bash
+ssh <hostname-or-ip>.local sudo systemctl start queue3d-backup.service
+ssh <hostname-or-ip>.local sudo systemctl start queue3d-cleanup.service
+ssh <hostname-or-ip>.local sudo journalctl -u queue3d-backup.service -u queue3d-cleanup.service -n 20 --no-pager
+```
 
 Only now, once this all checks out, move the Pi to its real deployment
 location and connect it to the isolated LAN instead of your home
-network. From this point on, every future update is just steps 4-5
+network. From this point on, every future update is just steps 5-6
 again, run from wherever your laptop happens to be *on the same LAN as
 the Pi* - the Pi itself never needs internet again.
 
@@ -264,8 +352,8 @@ sudo systemctl stop queue3d
 BACKUP=/opt/queue3d-backups/<the-timestamp-you-want>
 sudo rsync -a --delete "$BACKUP/app/" /opt/queue3d/app/ --exclude data --exclude .venv
 sudo rsync -a --delete "$BACKUP/slicing/" /opt/queue3d/slicing/ --exclude tools
-sudo cp "$BACKUP/db/queue3d.db" /opt/queue3d/app/data/queue3d.db
-sudo chown -R queue3d:queue3d /opt/queue3d
+sudo cp "$BACKUP/db/queue3d.db" /mnt/queue3d-data/queue3d.db
+sudo chown -R queue3d:queue3d /opt/queue3d /mnt/queue3d-data
 sudo systemctl start queue3d
 sudo systemctl status queue3d
 ```
@@ -281,16 +369,6 @@ without accumulating unboundedly on the Pi's limited storage.
 
 ## What's NOT handled here yet
 
-- **The regular, ongoing disaster-recovery backup and draft-expiry cron
-  jobs** (`app/backup.py`, `app/cleanup_drafts.py`) - a different thing
-  from the pre-upgrade snapshots above: this is the daily backup to the
-  two rotating external USB drives, protecting against real data loss
-  (a failed SD card, say), not just a bad upgrade. Still needs its own
-  cron entries installed on the Pi - not wired into `remote_install.sh`
-  yet. See each script's own module docstring for the exact crontab line.
-- **A fixed IP or mDNS hostname** so `<hostname>.local` actually
-  resolves reliably on the deployment network - still a README.md
-  to-do item, not yet set up.
 - **Printer pairing** (`QUEUE3D_PRINTER_HOST`/`QUEUE3D_PRINTER_PORT`
   env vars, if the Pi's network setup needs them different from the
   app's own defaults) - not yet wired into the systemd unit as an

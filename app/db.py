@@ -2,6 +2,7 @@
 printer; a separate DB server would be pure overhead, and a single file is
 trivial to back up."""
 
+import os
 from pathlib import Path
 
 from sqlalchemy import text
@@ -9,8 +10,34 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from version import APP_VERSION
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
-DATA_DIR.mkdir(exist_ok=True)
+# Defaults to a local dev directory; the real deployment points this at a
+# dedicated external drive instead (QUEUE3D_DATA_DIR, set in
+# deploy/queue3d.service) - see project memory queue3d-app-progress for
+# why: the microSD boots the OS, one flash drive holds the live data
+# (this - scratch/queue/archive all live under DATA_DIR too, see
+# storage.py), the other two rotate as backups (see backup.py).
+DATA_DIR = Path(os.environ.get("QUEUE3D_DATA_DIR", Path(__file__).resolve().parent / "data"))
+
+# Only enforced when QUEUE3D_DATA_DIR is explicitly set - a real deployment
+# never wants this directory to silently exist as an ordinary (empty)
+# folder on the SD card just because the external drive happened to be
+# unplugged or not yet mounted at boot. Without this check, that failure
+# mode wouldn't look like a failure at all: the app would just start up
+# fine against a brand new, empty database, quietly discarding every real
+# job/user/setting on the actual drive until someone noticed the queue
+# looked wrong. Fail loudly at startup instead - see
+# deploy/queue3d.service's RequiresMountsFor for the systemd-level version
+# of this same guard.
+if "QUEUE3D_DATA_DIR" in os.environ and not os.path.ismount(DATA_DIR):
+    raise RuntimeError(
+        f"QUEUE3D_DATA_DIR={DATA_DIR} is set but is not actually a mounted "
+        "filesystem right now - refusing to start rather than silently "
+        "creating a fresh, empty database on local disk instead of using "
+        "the real external drive. Check it's plugged in and mounted "
+        "(see deploy/README.md)."
+    )
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "queue3d.db"
 
 # check_same_thread=False: FastAPI may use a different thread per request;

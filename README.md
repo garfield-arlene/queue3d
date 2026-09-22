@@ -750,14 +750,33 @@ Managing user accounts:
   `ERR_ADDRESS_UNREACHABLE` that turned out to be macOS's own Local
   Network privacy permission blocking Chrome, nothing to do with the
   deploy at all. Full account in `deploy/README.md`.
-- Backup/cleanup cron jobs (`app/backup.py`, `app/cleanup_drafts.py`)
-  still not wired into `remote_install.sh` or installed on the real
-  Pi - the pre-upgrade safety backup added this session is a different,
+- ~~Backup/cleanup cron jobs (`app/backup.py`, `app/cleanup_drafts.py`)
+  not wired into `remote_install.sh` or installed on the real Pi - the
+  pre-upgrade safety backup added earlier this session is a different,
   narrower thing (one snapshot right before an upgrade, kept 5 deep),
-  not the ongoing daily disaster-recovery backup this item is about.
-- The two rotating external USB backup drives (`backup.py`'s target)
-  not yet physically connected/mounted on the real Pi - still runs
-  against local disk only right now.
+  not the ongoing daily disaster-recovery backup this item is about.~~
+  **Done, on the real hardware** - all three original USB flash drives
+  (already owned, per the original storage plan in project memory
+  queue3d-app-progress) formatted ext4 and mounted by filesystem UUID,
+  not `/dev/sdX` (stable across reboots/reconnects regardless of which
+  physical port each ends up in - confirmed this mattered per the user's
+  own question about drives getting swapped between ports). `db.py`'s
+  `DATA_DIR` is now configurable (`QUEUE3D_DATA_DIR`, set in
+  `queue3d.service`) instead of hardcoded under the app folder on the SD
+  card, with a real safety guard added on both the app side (`db.py`
+  refuses to start against a configured path that isn't actually
+  mounted, rather than silently creating a fresh empty database on local
+  disk) and the backup side (`backup.py` applies the same check per
+  target, since day-parity rotation means only one drive matters on any
+  given run - the *other* drive's future backups stay unaffected if one
+  is temporarily unplugged). `backup.py`/`cleanup_drafts.py` run as
+  systemd timers (`queue3d-backup`/`queue3d-cleanup`, 3am/4am,
+  `Persistent=true` to catch up if the Pi was off at the scheduled
+  time) rather than plain cron, matching every other service here's
+  `systemctl`/`journalctl` visibility. `remote_install.sh` also
+  migrates any existing local database onto the new drive automatically,
+  once, the first time this runs - nothing already submitted was lost
+  by moving to this setup partway through a real deployment.
 - ~~A downloadable "support bundle" (a `.tar.gz`) an admin can generate
   on demand, bundling whatever's needed for offline bugfixing after the
   real deployment (Pi/network/printer in place, zero internet access) -
