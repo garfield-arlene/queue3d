@@ -167,13 +167,18 @@ internet - see project memory `queue3d-deployment-network`). Consequences:
 - The real deployment (see `deploy/`) runs this behind an nginx reverse
   proxy, not exposed directly - `uvicorn` itself binds `127.0.0.1:8000`
   only (`deploy/queue3d.service`), and nginx (`deploy/nginx-queue3d.conf`)
-  is the actual public listener on plain port 80, so client devices on
-  the LAN reach it at `http://<host>/` with no port number to remember,
-  and the app itself is never directly exposed to the network at all.
-  This changed after a real first-deploy session revealed everyone
-  would otherwise need to type `:8000` - for a quick local-only dev
-  check (not the real deployment), plain `--host 0.0.0.0 --port 8000`
-  still works fine, same as always.
+  is the actual public listener, terminating https with a self-signed
+  cert (there's no CA reachable at the deployment site) and redirecting
+  plain port 80 to it. Client devices on the LAN reach it at
+  `https://<host>/` with no port number to remember, the app itself is
+  never directly exposed to the network at all, and every browser shows
+  a one-time "not trusted" warning per device for the self-signed cert -
+  expected on an offline network, not a sign of a problem. This changed
+  after a real first-deploy session revealed everyone would otherwise
+  need to type `:8000`, then again once plain http wasn't considered
+  good enough even on an isolated LAN - for a quick local-only dev check
+  (not the real deployment), plain `--host 0.0.0.0 --port 8000` still
+  works fine, same as always.
 - `/docs` and `/redoc` are disabled (`docs_url=None` in `main.py`) - FastAPI's
   built-in interactive docs load their JS/CSS from `cdn.jsdelivr.net`,
   which is a dead link here and isn't needed for this app anyway.

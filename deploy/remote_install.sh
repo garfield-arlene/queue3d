@@ -124,6 +124,34 @@ if ! command -v nginx >/dev/null 2>&1; then
   echo "the network): sudo apt install -y nginx" >&2
   exit 1
 fi
+if ! command -v openssl >/dev/null 2>&1; then
+  echo "openssl is not installed - install it first: sudo apt install -y openssl" >&2
+  exit 1
+fi
+
+# Self-signed TLS cert for nginx's https listener. Per the user, plain
+# http wasn't good enough even on an isolated LAN - but there's no CA
+# reachable at the deployment site to get a real one from (zero internet,
+# by design, same reason nothing here ever runs apt/pip against the real
+# internet), so self-signed is the only option at all. Generated once, on
+# the Pi itself, and left alone on every later run - regenerating it on
+# every upgrade would invalidate the cert everyone already clicked
+# "trust" on, forcing that warning again for no reason.
+SSL_DIR=/etc/nginx/ssl
+if [ ! -f "$SSL_DIR/queue3d.crt" ] || [ ! -f "$SSL_DIR/queue3d.key" ]; then
+  echo "Generating a self-signed TLS certificate (first run only)..."
+  mkdir -p "$SSL_DIR"
+  HOST_NAME="$(hostname -f 2>/dev/null || hostname)"
+  openssl req -x509 -nodes -newkey rsa:2048 \
+    -keyout "$SSL_DIR/queue3d.key" -out "$SSL_DIR/queue3d.crt" \
+    -days 3650 \
+    -subj "/CN=$HOST_NAME" \
+    -addext "subjectAltName=DNS:$HOST_NAME,DNS:localhost,IP:127.0.0.1"
+  chmod 600 "$SSL_DIR/queue3d.key"
+else
+  echo "Existing self-signed TLS certificate found - leaving it in place."
+fi
+
 echo "Configuring nginx..."
 cp "$STAGING_DIR/nginx-queue3d.conf" /etc/nginx/sites-available/queue3d
 ln -sf /etc/nginx/sites-available/queue3d /etc/nginx/sites-enabled/queue3d
@@ -153,15 +181,19 @@ sleep 3
 # than one combined pass/fail is worth the extra few lines here.
 APP_OK=0; PROXY_OK=0
 systemctl is-active --quiet queue3d && curl -sf -o /dev/null http://127.0.0.1:8000/login && APP_OK=1
-curl -sf -o /dev/null http://127.0.0.1/login && PROXY_OK=1
+# -k: the cert is self-signed (there's no CA to validate against here at
+# all), so curl would otherwise refuse it on principle even though it's
+# exactly the cert nginx was just told to use - this check only cares
+# that TLS itself terminates and the app answers behind it.
+curl -sfk -o /dev/null https://127.0.0.1/login && PROXY_OK=1
 
 if [ "$APP_OK" -eq 1 ] && [ "$PROXY_OK" -eq 1 ]; then
-  echo "queue3d is up and reachable through nginx on port 80."
+  echo "queue3d is up and reachable through nginx at https://<host>/."
 else
   echo "" >&2
   echo "WARNING: something is not right after this deploy:" >&2
   [ "$APP_OK" -eq 1 ] || echo "  - queue3d itself is not running/responding on its internal port" >&2
-  [ "$PROXY_OK" -eq 1 ] || echo "  - nginx is not proxying port 80 to it successfully" >&2
+  [ "$PROXY_OK" -eq 1 ] || echo "  - nginx is not proxying https to it successfully" >&2
   if [ -n "${BACKUP_DIR:-}" ]; then
     echo "This was an upgrade - the previous working version was backed up to:" >&2
     echo "  $BACKUP_DIR" >&2

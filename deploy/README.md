@@ -76,14 +76,18 @@ sudo apt install -y rsync python3-venv nginx
 image with SSH turned on; `python3` itself ships with Raspberry Pi OS
 Lite by default. `nginx` is the one addition beyond what queue3d's
 Python dependencies need directly - it's the reverse proxy that makes
-the app reachable on a plain `http://<host>/` with no port number (see
+the app reachable on a plain `https://<host>/` with no port number (see
 step 6 below), added after a real first-deploy session revealed
-everyone would otherwise need to remember `:8000`. Nothing else here
-needs installing from the internet - every *application* dependency
-(Python packages, OrcaSlicer) is fetched on your own machine instead
-and bundled through `deploy.sh` below, deliberately, so this is the
-only step this whole process ever asks the Pi itself to reach the
-internet for.
+everyone would otherwise need to remember `:8000`. `openssl` (normally
+already present as a base-system dependency, e.g. of `ssh` itself) is
+what generates the self-signed TLS certificate nginx serves - there's no
+CA reachable at the deployment site to get a real one from, but the user
+still wants https rather than plain http even on an isolated LAN.
+Nothing else here needs installing from the internet - every
+*application* dependency (Python packages, OrcaSlicer) is fetched on
+your own machine instead and bundled through `deploy.sh` below,
+deliberately, so this is the only step this whole process ever asks the
+Pi itself to reach the internet for.
 
 ### 4. Build the deploy bundle (on this machine, or your Mac - wherever
 ### you actually have internet)
@@ -122,32 +126,44 @@ Syncs the app, bundled wheels, and OrcaSlicer to the Pi, then runs
 `remote_install.sh` there via `sudo` - creates the `queue3d` system
 user and venv if this is the first run, installs/upgrades Python
 dependencies from the bundled wheels only (no network), extracts
-OrcaSlicer, installs and enables the systemd unit, configures nginx as
-a reverse proxy in front of it, and (re)starts both services. The exact
-same command is both "install" and "upgrade" - every step is
+OrcaSlicer, installs and enables the systemd unit, generates a
+self-signed TLS cert (first run only - see below), configures nginx as
+an https reverse proxy in front of it, and (re)starts both services.
+The exact same command is both "install" and "upgrade" - every step is
 idempotent, so there's no separate first-time mode to remember (see
 `remote_install.sh`'s own comments for why each step is safe to
 re-run).
 
 The app itself (`queue3d.service`) only ever listens on `127.0.0.1:8000`
 - never directly reachable from the network at all. `nginx` is the
-actual public-facing listener, on plain port 80, proxying to it (see
+actual public-facing listener, terminating TLS with a self-signed cert
+(generated once on the Pi itself and left alone on every later deploy,
+so it doesn't force everyone to re-click-through a "not trusted"
+warning on every upgrade) and proxying to the app (see
 `nginx-queue3d.conf`) - so everyone on the deployment network reaches
-this at `http://<host>/`, no port number to remember, and the app
+this at `https://<host>/`, no port number to remember, and the app
 itself has one less thing directly exposed to the network regardless.
+Plain port 80 just redirects to https, for anyone who types a bare
+`http://` URL.
+
+Since there's no CA reachable at the deployment site (zero internet, by
+design), the cert is self-signed - every browser will show a "not
+secure" / "not trusted" warning the first time it visits, on every
+device, with no way around that short of manually installing the cert
+as trusted on each one. That's inherent to a self-signed cert on an
+otherwise-offline network, not a bug here.
 
 ### 6. Confirm it's actually running
 
 ```bash
 ssh pi@<hostname-or-ip>.local sudo systemctl status queue3d nginx
-curl http://<hostname-or-ip>.local/login
+curl -k https://<hostname-or-ip>.local/login
 ```
 
-If your browser doesn't load it even though `curl` and `systemctl`
-both look fine: Chrome (unlike Firefox) silently upgrades a bare
-address-bar entry with no `http://` typed to `https://` by default,
-which fails outright against a plain-HTTP-only server - type the full
-`http://<host>/` explicitly rather than just `<host>`.
+(`-k` skips certificate validation - expected here, since the cert is
+self-signed and there's no CA for curl to check it against either.) In
+a real browser, click through the "not secure" warning once per device
+- that's expected, not a sign anything is actually wrong.
 
 Only now, once this all checks out, move the Pi to its real deployment
 location and connect it to the isolated LAN instead of your home
