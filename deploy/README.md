@@ -69,16 +69,21 @@ password auth works for anyone," not just "you have a key."
 
 ```bash
 sudo apt update
-sudo apt install -y rsync python3-venv
+sudo apt install -y rsync python3-venv nginx
 ```
 
 `openssh-server` is normally already present/enabled on a Pi Imager
 image with SSH turned on; `python3` itself ships with Raspberry Pi OS
-Lite by default. Nothing else here needs installing from the internet -
-every *application* dependency (Python packages, OrcaSlicer) is fetched
-on your own machine instead and bundled through `deploy.sh` below,
-deliberately, so this is the only step this whole process ever asks the
-Pi itself to reach the internet for.
+Lite by default. `nginx` is the one addition beyond what queue3d's
+Python dependencies need directly - it's the reverse proxy that makes
+the app reachable on a plain `http://<host>/` with no port number (see
+step 6 below), added after a real first-deploy session revealed
+everyone would otherwise need to remember `:8000`. Nothing else here
+needs installing from the internet - every *application* dependency
+(Python packages, OrcaSlicer) is fetched on your own machine instead
+and bundled through `deploy.sh` below, deliberately, so this is the
+only step this whole process ever asks the Pi itself to reach the
+internet for.
 
 ### 4. Build the deploy bundle (on this machine, or your Mac - wherever
 ### you actually have internet)
@@ -117,18 +122,32 @@ Syncs the app, bundled wheels, and OrcaSlicer to the Pi, then runs
 `remote_install.sh` there via `sudo` - creates the `queue3d` system
 user and venv if this is the first run, installs/upgrades Python
 dependencies from the bundled wheels only (no network), extracts
-OrcaSlicer, installs and enables the systemd unit, and (re)starts the
-service. The exact same command is both "install" and "upgrade" - every
-step is idempotent, so there's no separate first-time mode to remember
-(see `remote_install.sh`'s own comments for why each step is safe to
+OrcaSlicer, installs and enables the systemd unit, configures nginx as
+a reverse proxy in front of it, and (re)starts both services. The exact
+same command is both "install" and "upgrade" - every step is
+idempotent, so there's no separate first-time mode to remember (see
+`remote_install.sh`'s own comments for why each step is safe to
 re-run).
+
+The app itself (`queue3d.service`) only ever listens on `127.0.0.1:8000`
+- never directly reachable from the network at all. `nginx` is the
+actual public-facing listener, on plain port 80, proxying to it (see
+`nginx-queue3d.conf`) - so everyone on the deployment network reaches
+this at `http://<host>/`, no port number to remember, and the app
+itself has one less thing directly exposed to the network regardless.
 
 ### 6. Confirm it's actually running
 
 ```bash
-ssh pi@<hostname-or-ip>.local sudo systemctl status queue3d
-curl http://<hostname-or-ip>.local:8000/login
+ssh pi@<hostname-or-ip>.local sudo systemctl status queue3d nginx
+curl http://<hostname-or-ip>.local/login
 ```
+
+If your browser doesn't load it even though `curl` and `systemctl`
+both look fine: Chrome (unlike Firefox) silently upgrades a bare
+address-bar entry with no `http://` typed to `https://` by default,
+which fails outright against a plain-HTTP-only server - type the full
+`http://<host>/` explicitly rather than just `<host>`.
 
 Only now, once this all checks out, move the Pi to its real deployment
 location and connect it to the isolated LAN instead of your home

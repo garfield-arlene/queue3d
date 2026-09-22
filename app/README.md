@@ -164,9 +164,16 @@ This runs on an isolated "island" LAN (Pi + printer wired to a router,
 client devices join over wifi, nothing on that network ever reaches the
 internet - see project memory `queue3d-deployment-network`). Consequences:
 
-- Run with `--host 0.0.0.0` (not the `127.0.0.1` used above for local dev)
-  so client devices on the LAN can actually reach it, e.g.:
-  `uvicorn main:app --host 0.0.0.0 --port 8000`.
+- The real deployment (see `deploy/`) runs this behind an nginx reverse
+  proxy, not exposed directly - `uvicorn` itself binds `127.0.0.1:8000`
+  only (`deploy/queue3d.service`), and nginx (`deploy/nginx-queue3d.conf`)
+  is the actual public listener on plain port 80, so client devices on
+  the LAN reach it at `http://<host>/` with no port number to remember,
+  and the app itself is never directly exposed to the network at all.
+  This changed after a real first-deploy session revealed everyone
+  would otherwise need to type `:8000` - for a quick local-only dev
+  check (not the real deployment), plain `--host 0.0.0.0 --port 8000`
+  still works fine, same as always.
 - `/docs` and `/redoc` are disabled (`docs_url=None` in `main.py`) - FastAPI's
   built-in interactive docs load their JS/CSS from `cdn.jsdelivr.net`,
   which is a dead link here and isn't needed for this app anyway.

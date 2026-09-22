@@ -59,6 +59,7 @@ rsync -az --delete \
 rsync -az cache/wheels "$TARGET:$STAGING_DIR/"
 rsync -az cache/OrcaSlicer-aarch64-*.AppImage "$TARGET:$STAGING_DIR/"
 rsync -az queue3d.service "$TARGET:$STAGING_DIR/"
+rsync -az nginx-queue3d.conf "$TARGET:$STAGING_DIR/"
 rsync -az remote_install.sh "$TARGET:$STAGING_DIR/"
 
 echo "Running the install/upgrade on $TARGET (needs your sudo password there)..."

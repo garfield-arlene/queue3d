@@ -20,11 +20,16 @@ Group=queue3d
 WorkingDirectory=/opt/queue3d/app
 # No --reload: that's a dev-only feature (file-watching + auto-restart on
 # every source change) with no place in a production service - see
-# app/README.md's own note on this. Binds all interfaces (0.0.0.0), not
-# just localhost, since other devices on the deployment LAN need to reach
-# it; port 8000 (not 80) so the service never needs the extra privilege
-# a port below 1024 would require for an otherwise-unprivileged user.
-ExecStart=/opt/queue3d/app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+# app/README.md's own note on this. Binds localhost only, not all
+# interfaces - nginx (see nginx-queue3d.conf) is the actual public-facing
+# listener on port 80, proxying to this. Two reasons: everyone on the
+# deployment network reaches this on a plain http://<host>/ with no port
+# number to remember, and the app itself is never directly reachable at
+# all, a real defense-in-depth improvement independent of the
+# convenience. Port 8000 specifically so the service never needs the
+# extra privilege a port below 1024 would require for an otherwise-
+# unprivileged user, even proxied.
+ExecStart=/opt/queue3d/app/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=5
 

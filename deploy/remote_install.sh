@@ -111,7 +111,33 @@ cp "$STAGING_DIR/queue3d.service" /etc/systemd/system/queue3d.service
 systemctl daemon-reload
 systemctl enable queue3d
 
-echo "Restarting the service..."
+# nginx itself is a one-time apt install (see deploy/README.md) done while
+# there's still internet, same as rsync/python3-venv - remote_install.sh
+# never touches the network, so it only *configures* nginx here, never
+# installs the package. Fails clearly rather than silently skipping if
+# it's missing, since a queue3d "working" but unreachable on port 80
+# would otherwise look like this deploy succeeded when the actual site
+# isn't up at all.
+if ! command -v nginx >/dev/null 2>&1; then
+  echo "nginx is not installed - install it first (this is the one apt" >&2
+  echo "step remote_install.sh never does itself, since it never touches" >&2
+  echo "the network): sudo apt install -y nginx" >&2
+  exit 1
+fi
+echo "Configuring nginx..."
+cp "$STAGING_DIR/nginx-queue3d.conf" /etc/nginx/sites-available/queue3d
+ln -sf /etc/nginx/sites-available/queue3d /etc/nginx/sites-enabled/queue3d
+rm -f /etc/nginx/sites-enabled/default
+# Verified before ever reloading, not after - a broken config left in
+# place by `nginx -t` failing loudly here is far better than silently
+# restarting into a state where nginx won't come back up at all. This
+# config couldn't be syntax-checked on the machine that wrote it (no
+# nginx installed there) - this is the first real check it ever gets.
+nginx -t
+systemctl enable nginx
+systemctl restart nginx
+
+echo "Restarting queue3d..."
 systemctl restart queue3d
 sleep 3
 
@@ -120,12 +146,22 @@ sleep 3
 # if the restore itself goes wrong, unattended?), and the whole backup
 # above exists precisely so a person can make that call with the actual
 # situation in front of them, not have a script guess at 3am. This is
-# the moment that tells you whether it worked at all.
-if systemctl is-active --quiet queue3d && curl -sf -o /dev/null http://127.0.0.1:8000/login; then
-  echo "queue3d is up and responding on port 8000."
+# the moment that tells you whether it worked at all. Checks both the
+# app directly on its own internal port (isolates whether queue3d itself
+# is the problem) and through nginx on 80 (the thing anyone on the
+# network actually reaches) - reporting exactly which one failed rather
+# than one combined pass/fail is worth the extra few lines here.
+APP_OK=0; PROXY_OK=0
+systemctl is-active --quiet queue3d && curl -sf -o /dev/null http://127.0.0.1:8000/login && APP_OK=1
+curl -sf -o /dev/null http://127.0.0.1/login && PROXY_OK=1
+
+if [ "$APP_OK" -eq 1 ] && [ "$PROXY_OK" -eq 1 ]; then
+  echo "queue3d is up and reachable through nginx on port 80."
 else
   echo "" >&2
-  echo "WARNING: queue3d does not appear to be running/responding after this deploy." >&2
+  echo "WARNING: something is not right after this deploy:" >&2
+  [ "$APP_OK" -eq 1 ] || echo "  - queue3d itself is not running/responding on its internal port" >&2
+  [ "$PROXY_OK" -eq 1 ] || echo "  - nginx is not proxying port 80 to it successfully" >&2
   if [ -n "${BACKUP_DIR:-}" ]; then
     echo "This was an upgrade - the previous working version was backed up to:" >&2
     echo "  $BACKUP_DIR" >&2
@@ -134,5 +170,6 @@ else
     echo "This was a fresh install, so there is no previous version to roll back to." >&2
   fi
   systemctl --no-pager status queue3d || true
+  systemctl --no-pager status nginx || true
   exit 1
 fi
