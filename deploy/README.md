@@ -176,7 +176,22 @@ design), the cert is self-signed - every browser will show a "not
 secure" / "not trusted" warning the first time it visits, on every
 device, with no way around that short of manually installing the cert
 as trusted on each one. That's inherent to a self-signed cert on an
-otherwise-offline network, not a bug here.
+otherwise-offline network, not a bug here. Firefox's version of this
+warning has an obvious "Accept the Risk and Continue" button; Chrome
+buries the same option one level deeper - click **Advanced**, then
+**Proceed to `<host>` (unsafe)** underneath it. Confirmed working this
+way on an ordinary, unmanaged Chrome install.
+
+One real caveat worth confirming before this becomes the primary way
+students/staff reach the app: on a **managed** Chrome install (e.g.
+school-issued Chromebooks under a Google Workspace for Education admin
+console), that "Proceed anyway" option can be disabled entirely by
+district policy - if so, there is no client-side click-through at all,
+on any page, ever, and the fix has to happen elsewhere (a real
+CA-signed cert for a domain you actually own, with local DNS set up to
+resolve it on the island network - a bigger lift, worth revisiting only
+if this turns out to actually be the situation on the real deployment
+devices).
 
 ### 6. Confirm it's actually running
 
