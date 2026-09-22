@@ -5,8 +5,12 @@
 # install) or a hundred times against an already-running service (upgrade)
 # - the whole point, since the same script has to cover both per the
 # deployment requirement ("install if not already; upgrade if already
-# installed"). Never touches the network - every package comes from the
-# wheels already rsynced alongside this script.
+# installed"). Every *application* dependency (Python packages,
+# OrcaSlicer) always comes from what's already been bundled alongside this
+# script, never the network - the real deployment site never has internet
+# at all. A couple of plain OS packages (nginx, openssl) are the one
+# exception: those get apt-installed here too, on demand, since they only
+# ever need internet once (during initial setup) - see below.
 set -euo pipefail
 
 # Pinned explicitly rather than trusting whatever sudo/ssh -t happens to
@@ -23,6 +27,37 @@ STAGING_DIR=/tmp/queue3d-deploy-staging  # must match deploy.sh's own STAGING_DI
 if [ "$(id -u)" -ne 0 ]; then
   echo "Must run as root (deploy.sh invokes this via sudo)." >&2
   exit 1
+fi
+
+# nginx/openssl/python3-venv are plain OS packages, not application
+# dependencies - unlike the Python packages and OrcaSlicer (which must
+# stay bundled forever, since the real deployment site never has
+# internet at all), these only ever need internet once, right now,
+# during this initial setup phase - so it's fine, and more genuinely
+# "remote", for this script to just apt-get them itself rather than
+# making you SSH in separately first. Every later run at the real
+# (offline) deployment site is a no-op here, since by then they're
+# already installed - this never reaches the network on an ordinary
+# upgrade. (rsync isn't included here even though it's the same kind of
+# package - deploy.sh's own rsync calls, from your machine to this Pi,
+# have to succeed just to get this script onto the Pi at all, so rsync
+# genuinely has to already be present beforehand; nothing later in this
+# script can bootstrap it.)
+MISSING_PKGS=""
+command -v nginx >/dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS nginx"
+command -v openssl >/dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS openssl"
+dpkg -s python3-venv >/dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS python3-venv"
+if [ -n "$MISSING_PKGS" ]; then
+  echo "Installing missing OS packages ($MISSING_PKGS) - needs internet..."
+  if ! (DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y $MISSING_PKGS); then
+    echo "" >&2
+    echo "Could not install:$MISSING_PKGS - most likely no internet is" >&2
+    echo "reachable from the Pi right now. This only needs to succeed once," >&2
+    echo "so if this is a genuinely offline deployment, install these" >&2
+    echo "manually the next time the Pi has internet:" >&2
+    echo "  sudo apt install -y$MISSING_PKGS" >&2
+    exit 1
+  fi
 fi
 
 # A dedicated, unprivileged, no-login system account for the service
@@ -118,24 +153,6 @@ echo "Installing the systemd unit..."
 cp "$STAGING_DIR/queue3d.service" /etc/systemd/system/queue3d.service
 systemctl daemon-reload
 systemctl enable queue3d
-
-# nginx itself is a one-time apt install (see deploy/README.md) done while
-# there's still internet, same as rsync/python3-venv - remote_install.sh
-# never touches the network, so it only *configures* nginx here, never
-# installs the package. Fails clearly rather than silently skipping if
-# it's missing, since a queue3d "working" but unreachable on port 80
-# would otherwise look like this deploy succeeded when the actual site
-# isn't up at all.
-if ! command -v nginx >/dev/null 2>&1; then
-  echo "nginx is not installed - install it first (this is the one apt" >&2
-  echo "step remote_install.sh never does itself, since it never touches" >&2
-  echo "the network): sudo apt install -y nginx" >&2
-  exit 1
-fi
-if ! command -v openssl >/dev/null 2>&1; then
-  echo "openssl is not installed - install it first: sudo apt install -y openssl" >&2
-  exit 1
-fi
 
 # Self-signed TLS cert for nginx's https listener. Per the user, plain
 # http wasn't good enough even on an isolated LAN - but there's no CA

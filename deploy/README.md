@@ -79,30 +79,36 @@ it (`sudo passwd -l <username>`) or delete the account entirely once
 your own key-only account is confirmed working - the requirement is "no
 password auth works for anyone," not just "you have a key."
 
-### 3. Install OS-level prerequisites (needs internet - the one and only
-### time this Pi should ever need it)
+### 3. Install `rsync` on the Pi (needs internet)
 
 ```bash
 sudo apt update
-sudo apt install -y rsync python3-venv nginx
+sudo apt install -y rsync
 ```
 
 `openssh-server` is normally already present/enabled on a Pi Imager
 image with SSH turned on; `python3` itself ships with Raspberry Pi OS
-Lite by default. `nginx` is the one addition beyond what queue3d's
-Python dependencies need directly - it's the reverse proxy that makes
-the app reachable on a plain `https://<host>/` with no port number (see
-step 6 below), added after a real first-deploy session revealed
-everyone would otherwise need to remember `:8000`. `openssl` (normally
-already present as a base-system dependency, e.g. of `ssh` itself) is
-what generates the self-signed TLS certificate nginx serves - there's no
-CA reachable at the deployment site to get a real one from, but the user
-still wants https rather than plain http even on an isolated LAN.
-Nothing else here needs installing from the internet - every
+Lite by default. `rsync` has to be a manual, separate step because
+`deploy.sh` needs it already present on the Pi just to sync files there
+at all in step 5 below - nothing later in the process can bootstrap it.
+
+`nginx` (the reverse proxy that makes the app reachable on a plain
+`https://<host>/` with no port number - see step 6), `openssl` (which
+generates the self-signed TLS cert nginx serves, since there's no CA
+reachable at the deployment site to get a real one from), and
+`python3-venv` are all installed automatically by `remote_install.sh`
+itself in step 5, on demand, over whatever internet the Pi has at the
+time - no separate manual step needed for those. That only works right
+now, during this initial setup at home; once deployed to a genuinely
+offline site, `remote_install.sh` will fail clearly if it ever needs one
+of these and can't reach the internet to get it (it never needs to, in
+practice, once they're already installed here first).
+
+Nothing else here needs installing from the internet by hand - every
 *application* dependency (Python packages, OrcaSlicer) is fetched on
 your own machine instead and bundled through `deploy.sh` below,
-deliberately, so this is the only step this whole process ever asks the
-Pi itself to reach the internet for.
+deliberately, since the real deployment site never has internet for
+those at all.
 
 ### 4. Build the deploy bundle (on this machine, or your Mac - wherever
 ### you actually have internet)
