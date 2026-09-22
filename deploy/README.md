@@ -41,8 +41,23 @@ set - much less fiddly than configuring a headless Pi after the fact.
 Verify you can reach it:
 
 ```bash
-ssh pi@<hostname-or-ip>.local
+ssh <your-user>@<hostname-or-ip>.local
 ```
+
+Worth setting up a `~/.ssh/config` entry on your own machine at this
+point too, rather than typing `user@host` every time from here on:
+
+```
+Host q3d
+    HostName q3d.local
+    User <your-user>
+    IdentityFile ~/.ssh/<your-key>
+```
+
+Every command below (including `deploy.sh <target>`) just takes
+whatever you pass as the SSH target verbatim - with this in place, that
+means every one of them can just be `q3d`, with the actual user and key
+resolved from the config file instead of typed out each time.
 
 ### 2. Lock SSH down to just your own key
 
@@ -119,8 +134,12 @@ deploys and there's nothing to re-fetch.
 ### 5. Deploy
 
 ```bash
-./deploy.sh pi@<hostname-or-ip>.local
+./deploy.sh <hostname-or-ip>.local
 ```
+
+(or `./deploy.sh q3d`, or whatever `Host` alias you gave it in
+`~/.ssh/config` per step 1 - `deploy.sh` just passes this straight
+through to `ssh`/`rsync`, so anything they'd accept works here too.)
 
 Syncs the app, bundled wheels, and OrcaSlicer to the Pi, then runs
 `remote_install.sh` there via `sudo` - creates the `queue3d` system
@@ -156,7 +175,7 @@ otherwise-offline network, not a bug here.
 ### 6. Confirm it's actually running
 
 ```bash
-ssh pi@<hostname-or-ip>.local sudo systemctl status queue3d nginx
+ssh <hostname-or-ip>.local sudo systemctl status queue3d nginx
 curl -k https://<hostname-or-ip>.local/login
 ```
 

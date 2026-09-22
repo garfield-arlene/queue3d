@@ -10,13 +10,15 @@
 # populated first - run fetch_bundle_assets.sh on a machine WITH internet
 # before this, since the Pi itself never touches the network.
 #
-# Usage: ./deploy.sh pi@queue3d.local
+# Usage: ./deploy.sh queue3d.local
+# (or user@host, or a ~/.ssh/config Host alias - this is passed straight
+# through to ssh/rsync, so anything they'd accept as a target works here)
 set -euo pipefail
 cd "$(dirname "$0")"
 
 if [ $# -ne 1 ]; then
-  echo "Usage: $0 <user@host>" >&2
-  echo "Example: $0 pi@queue3d.local" >&2
+  echo "Usage: $0 <host>" >&2
+  echo "Example: $0 queue3d.local   (or a ~/.ssh/config Host alias, or user@host)" >&2
   exit 1
 fi
 TARGET="$1"
