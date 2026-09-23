@@ -2216,12 +2216,40 @@ clause - the actor already says who, since here the actor and the
 submitter are always the same person), while `delete_old_job()` logs
 the admin's own actor plus who originally submitted it.
 
-**Scoped identically to the admin version - `queued`/`approved` only,
-not "any job the user owns."** Once released and `printing`, an admin
-is already acting on that job; deleting it out from under that would be
-a materially different, riskier action the to-do item never asked for -
-`_delete_job_genuinely()`'s shared `_require_status()` check enforces
-this the same way for both callers.
+**Originally scoped identically to the admin version - `queued`/
+`approved` only, not "any job the user owns."** Once released and
+`printing`, an admin is already acting on that job; deleting it out
+from under that would be a materially different, riskier action the
+to-do item never asked for - `_delete_job_genuinely()`'s shared
+`_require_status()` check enforces this the same way for both callers.
+Since extended twice, each time to exactly what was actually asked for
+rather than every terminal status at once: `slice_failed` (a draft that
+never successfully sliced has nothing worth keeping and no "submit"
+option either), and `rejected` (per the user - "I don't want to keep
+rejected jobs around," old USN `ddg.stl` jobs rejected back when the
+supports calculations were off, with no way to get rid of them, only
+"Restore & edit," which leaves the original rejected record sitting
+there regardless). Deliberately still not `done`/`failed`/`expired` -
+those raise different questions of their own (a done job is a real
+completed-print record; a failed one might be worth keeping to see why;
+an expired draft never even reached a decision) worth their own
+consideration, not bundled in by assumption.
+
+Extending to `rejected` surfaced a real bug in
+`storage.delete_job_files`, not just a one-line allowed-statuses
+change: it only ever knew about `scratch/` (drafts) and `queue/`
+(everything else) - a rejected job's files actually live in `archive/`
+(moved there by `reject()`), so deleting one without fixing this would
+have removed the database row while leaving the real files behind as
+permanently orphaned garbage, unreachable by anything since nothing
+else ever looks in `archive/` for a job that no longer exists. Now
+branches on `TERMINAL_STATUSES` too, and removes the archived photo
+file if one exists. Verified directly against real files, not just
+reasoned about: created actual `archive/` files (stl, makerbot, photo)
+for a job, rejected it, deleted it, and confirmed all three were
+genuinely gone afterward alongside the database row and the correct
+audit log entry; separately confirmed a `done` job - deliberately still
+out of scope - still refuses deletion.
 
 **`routers/user.py`'s `_owned_draft()` helper got renamed to
 `_owned_job()`** - it was always a plain ownership check with no actual
