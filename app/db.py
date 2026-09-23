@@ -232,6 +232,23 @@ def _migrate_to_5_6_0(conn):
             conn.execute(text(f"ALTER TABLE job ADD COLUMN {col} FLOAT NOT NULL DEFAULT 0.0"))
 
 
+def _migrate_to_6_2_0(conn):
+    """New Job.color_name/filament_grams columns - the color-selection and
+    best-effort filament-inventory feature (see models.Color,
+    jobs.filament_status). The new `color` table itself needs no migration
+    here at all - create_all() below already creates any missing table
+    from scratch, it just can't ALTER an existing one, which is the only
+    reason any of these functions exist. Both new columns purely additive/
+    nullable: an existing job simply reads as "no color recorded" and
+    "filament usage unknown" - exactly what was already implicitly true
+    of it before these columns existed, nothing to backfill."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "color_name" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN color_name VARCHAR"))
+    if "filament_grams" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN filament_grams FLOAT"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -254,6 +271,7 @@ MIGRATIONS = {
     "4.5.0": _migrate_to_4_5_0,
     "5.5.0": _migrate_to_5_5_0,
     "5.6.0": _migrate_to_5_6_0,
+    "6.2.0": _migrate_to_6_2_0,
 }
 
 

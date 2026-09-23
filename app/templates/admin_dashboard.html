@@ -2,6 +2,7 @@
 {% block title %}Admin - queue3d{% endblock %}
 {% block nav %}
   <a href="/admin/users">Users</a>
+  <a href="/admin/colors">Colors</a>
   <a href="/admin/jobs/finished">Finished jobs</a>
   <a href="/admin/jobs/old">Old jobs</a>
   <a href="/admin/log">Activity log</a>
@@ -43,7 +44,7 @@
     <p class="muted">Nothing in the queue.</p>
   {% else %}
     <table>
-      <tr><th>User</th><th>File</th><th></th><th></th><th>Status</th><th>Queued</th><th>Est.</th><th>Actions</th></tr>
+      <tr><th>User</th><th>File</th><th></th><th></th><th>Color</th><th>Status</th><th>Queued</th><th>Est.</th><th>Actions</th></tr>
       {% for row in rows %}
         {% set job = row.job %}
         <tr>
@@ -51,6 +52,15 @@
           <td>{{ job.original_filename }}</td>
           <td>{% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}</td>
           <td><a href="/admin/jobs/{{ job.id }}/log">Log</a></td>
+          <td>
+            {{ job.color_name or "Any available" }}
+            {% if row.filament and not row.filament.enough %}
+              <br><span class="error">
+                only {{ row.filament.available_g | round(1) }}g {{ job.color_name }} on
+                hand, needs ~{{ row.filament.required_g | round(1) }}g (best effort - see Colors)
+              </span>
+            {% endif %}
+          </td>
           <td>{{ job.status.value }}</td>
           <td class="muted">
             {% if job.status.value in ('queued', 'approved') and job.queued_at %}

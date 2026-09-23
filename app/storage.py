@@ -216,3 +216,20 @@ def read_makerbot_duration_s(makerbot_path: Path) -> float | None:
         return meta.get("duration_s")
     except Exception:
         return None
+
+
+def read_makerbot_filament_g(makerbot_path: Path) -> float | None:
+    """Read mbotmake's own computed filament mass out of a .makerbot's
+    meta.json ("extrusion_mass_g" - confirmed by directly inspecting a
+    real sliced .makerbot's meta.json, not assumed to exist) - same file,
+    same "returns None on any problem" contract as
+    read_makerbot_duration_s above; a missing/unreadable estimate never
+    blocks recording a job's own slice result, it just means the color-
+    inventory check in jobs.filament_status has nothing to compare for
+    this job."""
+    try:
+        with zipfile.ZipFile(makerbot_path) as z, z.open("meta.json") as f:
+            meta = json.load(f)
+        return meta.get("extrusion_mass_g")
+    except Exception:
+        return None

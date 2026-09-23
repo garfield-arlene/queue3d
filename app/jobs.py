@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from db import engine
-from models import Admin, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES, User
+from models import Admin, Color, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES, User
 from pipeline import run_slice
 from printer import PrinterError, capture_photo, send_print_job, system_information
 from storage import (
@@ -23,6 +23,7 @@ from storage import (
     move_job_to_archive,
     queue_paths,
     read_makerbot_duration_s,
+    read_makerbot_filament_g,
     scratch_paths,
     scratch_stl_path,
 )
@@ -259,6 +260,40 @@ def corrected_duration_estimate_s(session: Session, job: Job) -> float | None:
     if job.duration_estimate_s is None:
         return None
     return job.duration_estimate_s * _duration_correction_factor(session)
+
+
+def filament_status(session: Session, job: Job) -> dict | None:
+    """Best-effort comparison of this job's own recorded filament use
+    (job.filament_grams, read straight from the real sliced .makerbot -
+    see storage.read_makerbot_filament_g) against the *current* inventory
+    for whatever color it selected - None whenever there's nothing
+    meaningful to compare, not just when there's nothing wrong:
+
+    - never successfully sliced yet (filament_grams is None)
+    - "Any available" was selected (color_name is None) - there's no
+      specific color to check inventory for
+    - that color no longer exists (renamed/removed since this job was
+      submitted - see models.Color's own docstring for why a job's
+      color_name is a snapshot, never a live reference to it)
+    - an admin never entered a gram total for it (grams_available is
+      None) - tracking rolls without tracking grams is a legitimate,
+      supported choice, not an error
+
+    Per the user, this whole feature is "best effort": the printer has no
+    way to report actual remaining filament, so `available_g` here is
+    only ever as fresh as the last time an admin updated
+    Color.grams_available by hand - a caller displaying `enough: False`
+    should say so, not present this as a hard guarantee either way."""
+    if job.filament_grams is None or not job.color_name:
+        return None
+    color = session.exec(select(Color).where(Color.name == job.color_name)).first()
+    if color is None or color.grams_available is None:
+        return None
+    return {
+        "required_g": job.filament_grams,
+        "available_g": color.grams_available,
+        "enough": color.grams_available >= job.filament_grams,
+    }
 
 
 def format_duration(seconds: float) -> str:
@@ -505,6 +540,7 @@ def restore_job(session: Session, job: Job, user: User) -> Job:
         rotate_x=job.rotate_x,
         rotate_y=job.rotate_y,
         rotate_z=job.rotate_z,
+        color_name=job.color_name,
     )
     session.add(new_job)
     session.commit()
@@ -562,6 +598,7 @@ def reprint_job(session: Session, job: Job, user: User) -> Job:
         rotate_x=job.rotate_x,
         rotate_y=job.rotate_y,
         rotate_z=job.rotate_z,
+        color_name=job.color_name,
         queued_at=datetime.now(timezone.utc),
     )
     session.add(new_job)
@@ -577,6 +614,7 @@ def reprint_job(session: Session, job: Job, user: User) -> Job:
         shutil.copy(archived_supports, new_supports)
         new_job.supports_path = str(new_supports)
     new_job.duration_estimate_s = read_makerbot_duration_s(new_makerbot)
+    new_job.filament_grams = read_makerbot_filament_g(new_makerbot)
     session.add(new_job)
     log_event(
         session, new_job.id, f"user:{user.name}", "reprint_queued",
@@ -800,6 +838,7 @@ def slice_and_update(
         if success:
             job.makerbot_path = str(scratch_makerbot)
             job.duration_estimate_s = read_makerbot_duration_s(scratch_makerbot)
+            job.filament_grams = read_makerbot_filament_g(scratch_makerbot)
             if enable_supports and scratch_supports.exists():
                 job.supports_path = str(scratch_supports)
             else:

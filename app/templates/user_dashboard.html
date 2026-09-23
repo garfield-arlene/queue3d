@@ -24,6 +24,20 @@
         {% endfor %}
       </select>
     </label>
+    <label>Color<br>
+      <select name="color">
+        <option value="">Any available</option>
+        {% for color in colors %}
+          <option value="{{ color.name }}">{{ color.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="muted">
+      Only one color per job - pick "Any available" if you don't mind
+      which, so an admin doesn't have to change filament for you. This is
+      best effort: the printer can't report what's actually loaded, so
+      it's only as accurate as an admin's last inventory update.
+    </p>
     <button type="submit">Upload &amp; slice</button>
     <progress id="upload-progress" value="0" max="100" hidden></progress>
   </form>

@@ -200,6 +200,33 @@
     });
   </script>
 
+  <h3>Color</h3>
+  {# Separate, lightweight form from the settings one below - a color
+     change has zero effect on the actual sliced file (see
+     models.Job.color_name), so it doesn't need to pay for a full
+     re-slice the way a real settings change does. #}
+  <form method="post" action="/jobs/{{ job.id }}/color">
+    <select name="color">
+      <option value="" {% if not job.color_name %}selected{% endif %}>Any available</option>
+      {% for color in colors %}
+        <option value="{{ color.name }}" {% if color.name == job.color_name %}selected{% endif %}>
+          {{ color.name }}{% if not color.enabled %} (no longer offered){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+    <button type="submit">Save color</button>
+  </form>
+  {% if filament %}
+    <p class="muted">
+      This job uses about {{ filament.required_g | round(1) }}g of filament.
+      {% if not filament.enough %}
+        <span class="error">Only {{ filament.available_g | round(1) }}g of
+        {{ job.color_name }} on hand, per the admin-tracked inventory
+        (best effort - may be out of date).</span>
+      {% endif %}
+    </p>
+  {% endif %}
+
   <h3>Settings</h3>
   <form method="post" action="/jobs/{{ job.id }}/reslice">
     <label><input type="checkbox" name="enable_supports" {% if job.supports_enabled %}checked{% endif %}> Generate supports</label>

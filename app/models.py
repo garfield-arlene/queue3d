@@ -193,6 +193,35 @@ class Settings(SQLModel, table=True):
     old_job_threshold_days: int = Field(default=30)
 
 
+class Color(SQLModel, table=True):
+    """The admin-managed filament color list - per the user: admins add/
+    remove colors and set how many rolls are on hand, enable/disable which
+    ones users can currently pick from, and users pick exactly one (or
+    "any available") at upload time. `rolls_available` is just an admin's
+    own count of physical spools, shown for their own inventory tracking;
+    `grams_available` (optional - a color can exist with rolls tracked but
+    no gram total entered) is what actually powers the too-little-filament
+    check in jobs.filament_status, compared against a job's own
+    `Job.filament_grams` once it's been sliced.
+
+    Deliberately **not** referenced by `Job` as a real foreign key - see
+    `Job.color_name`'s own docstring for why a job's color is a plain
+    string snapshot instead. This means deleting a color here never
+    touches any existing job, by design.
+
+    This whole feature is explicitly "best effort," per the user: the
+    printer has no way to report how much filament is actually loaded or
+    remaining, so `grams_available` is only ever as accurate as the last
+    time an admin updated it by hand - see routers/admin.py's /admin/colors
+    page, which says this in the UI itself, not just here."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(unique=True)
+    enabled: bool = Field(default=True)
+    rolls_available: int = Field(default=0)
+    grams_available: float | None = Field(default=None)
+
+
 class JobEvent(SQLModel, table=True):
     """One row per audited action - the activity log. `Job` itself only
     ever holds the *current* snapshot (`reviewed_at`/`reviewed_by_admin_id`/
@@ -294,3 +323,22 @@ class Job(SQLModel, table=True):
     # missing photo never blocks recording the print's own outcome, see
     # that function's docstring.
     photo_path: str | None = Field(default=None)
+
+    # The exact Color.name selected at upload/edit time - a plain string
+    # snapshot, NOT a foreign key to Color. None means "Any available"
+    # (per the user, so an admin doesn't have to change filament for
+    # every job). A snapshot, not a relation, on purpose: an admin
+    # removing or renaming a color later must never silently change what
+    # an already-submitted job says it was printed in - this job's own
+    # history is what was actually selected, at the time it was
+    # selected, full stop. See jobs.filament_status for how this is
+    # looked up against the *current* Color table anyway, best-effort,
+    # purely for the low-filament warning - that's a live check, not
+    # something this snapshot itself needs to stay valid for.
+    color_name: str | None = Field(default=None)
+    # Grams of filament this job actually used, read straight out of the
+    # sliced .makerbot's own meta.json (mbotmake's real computed
+    # extrusion mass - see storage.read_makerbot_filament_g) the moment
+    # slicing succeeds, same timing as duration_estimate_s above. None
+    # until sliced at least once.
+    filament_grams: float | None = Field(default=None)

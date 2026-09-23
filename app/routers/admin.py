@@ -32,6 +32,7 @@ from jobs import (
     corrected_duration_estimate_s,
     delete_all_old_jobs,
     delete_old_job,
+    filament_status,
     finished_jobs,
     format_duration,
     is_old_job,
@@ -45,7 +46,7 @@ from jobs import (
     requeue_job,
     user_has_active_jobs,
 )
-from models import Admin, Job, Settings, User
+from models import Admin, Color, Job, Settings, User
 from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
 from support_bundle import build_support_bundle
 from templates_env import is_valid_timezone, set_display_timezone, templates
@@ -117,6 +118,7 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
                 "duration_estimate_s": estimate_s,
                 "duration_display": format_duration(estimate_s) if estimate_s else None,
                 "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
+                "filament": filament_status(session, job),
             }
         )
     return {
@@ -732,3 +734,119 @@ def download_support_bundle(
     background_tasks.add_task(bundle_path.unlink, missing_ok=True)
     filename = f"queue3d-support-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.tar.gz"
     return FileResponse(bundle_path, media_type="application/gzip", filename=filename)
+
+
+# ---- colors ----
+# The admin-managed filament color list (see models.Color) - add/remove
+# colors, set rolls/grams on hand, enable/disable which ones users can
+# currently pick from. Deliberately no "still in use, can't delete" guard
+# like users/admins get above - a job's color is a plain string snapshot,
+# never a live reference to this table (see Color's own docstring), so
+# deleting one here can never leave any job in a broken state.
+
+
+def _colors_context(session: Session, admin: Admin, error: str | None = None):
+    colors = session.exec(select(Color).order_by(Color.name)).all()
+    return {"admin": admin, "colors": colors, "action_error": error}
+
+
+def _parse_grams(raw: str) -> tuple[float | None, str | None]:
+    """Shared by add/update below - grams_available is optional (a color
+    can exist with only its roll count tracked), so this has to
+    distinguish "left blank" (fine, means None/unknown) from "typed
+    something that isn't a real non-negative number" (a real error, not
+    silently coerced to None) - returns (value, error)."""
+    raw = raw.strip()
+    if not raw:
+        return None, None
+    try:
+        grams = float(raw)
+    except ValueError:
+        return None, "Grams available must be a number."
+    if grams < 0:
+        return None, "Grams available can't be negative."
+    return grams, None
+
+
+@router.get("/colors")
+def colors_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    return templates.TemplateResponse(request, "admin_colors.html", _colors_context(session, admin))
+
+
+@router.post("/colors/add")
+def add_color(
+    request: Request,
+    name: str = Form(...),
+    rolls_available: int = Form(0),
+    grams_available: str = Form(""),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    name = name.strip()
+    grams, error = _parse_grams(grams_available)
+    if not name:
+        error = "Color name can't be empty."
+    elif session.exec(select(Color).where(Color.name == name)).first() is not None:
+        error = f'"{name}" already exists.'
+    elif rolls_available < 0:
+        error = "Rolls on hand can't be negative."
+    if error:
+        return templates.TemplateResponse(request, "admin_colors.html", _colors_context(session, admin, error))
+    color = Color(name=name, rolls_available=rolls_available, grams_available=grams)
+    session.add(color)
+    log_event(session, None, _admin_actor(admin), "color_added", detail=name)
+    session.commit()
+    return RedirectResponse("/admin/colors", status_code=303)
+
+
+def _get_color_or_404(session: Session, color_id: int) -> Color:
+    color = session.get(Color, color_id)
+    if color is None:
+        raise HTTPException(status_code=404, detail="No such color")
+    return color
+
+
+@router.post("/colors/{color_id}/update")
+def update_color(
+    request: Request,
+    color_id: int,
+    enabled: bool = Form(False),
+    rolls_available: int = Form(0),
+    grams_available: str = Form(""),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    color = _get_color_or_404(session, color_id)
+    grams, error = _parse_grams(grams_available)
+    if error is None and rolls_available < 0:
+        error = "Rolls on hand can't be negative."
+    if error:
+        return templates.TemplateResponse(request, "admin_colors.html", _colors_context(session, admin, error))
+    color.enabled = enabled
+    color.rolls_available = rolls_available
+    color.grams_available = grams
+    session.add(color)
+    log_event(
+        session, None, _admin_actor(admin), "color_updated",
+        detail=f"{color.name} (enabled={enabled}, rolls={rolls_available}, grams={grams})",
+    )
+    session.commit()
+    return RedirectResponse("/admin/colors", status_code=303)
+
+
+@router.post("/colors/{color_id}/delete")
+def delete_color(
+    request: Request,
+    color_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    color = _get_color_or_404(session, color_id)
+    log_event(session, None, _admin_actor(admin), "color_deleted", detail=color.name)
+    session.delete(color)
+    session.commit()
+    return RedirectResponse("/admin/colors", status_code=303)

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 import storage
 from auth import (
@@ -20,6 +20,7 @@ from jobs import (
     JobActionError,
     corrected_duration_estimate_s,
     delete_own_job,
+    filament_status,
     format_duration,
     jobs_for_user,
     log_event,
@@ -33,7 +34,7 @@ from jobs import (
     submit_draft,
 )
 from mesh import convert_obj_to_stl
-from models import DRAFT_STATUSES, Job, JobStatus, User
+from models import DRAFT_STATUSES, Color, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, MAX_ZIP_MODEL_FILES, scratch_stl_path
 from templates_env import templates
 from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
@@ -185,6 +186,16 @@ def update_settings(
     )
 
 
+def _enabled_colors(session: Session) -> list[Color]:
+    """What the color dropdown offers, both at upload and on a draft's
+    edit page - see models.Color's own docstring for the inventory this
+    draws from. An admin disabling a color only affects what's offered
+    going forward; it never touches a job that already selected it (see
+    edit_draft below for how that job's own current color still shows up
+    there even once it's no longer in this list)."""
+    return session.exec(select(Color).where(Color.enabled == True).order_by(Color.name)).all()  # noqa: E712
+
+
 def _dashboard_context(session: Session, user: User, flash_error: str | None = None):
     jobs = jobs_for_user(session, user.id)
     rows = []
@@ -199,6 +210,7 @@ def _dashboard_context(session: Session, user: User, flash_error: str | None = N
                 "duration_estimate_s": estimate_s,
                 "duration_display": format_duration(estimate_s) if estimate_s else None,
                 "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
+                "filament": filament_status(session, job),
             }
         )
     return {
@@ -207,6 +219,7 @@ def _dashboard_context(session: Session, user: User, flash_error: str | None = N
         "flash_error": flash_error,
         "support_styles": SUPPORT_STYLES,
         "max_zip_models": MAX_ZIP_MODEL_FILES,
+        "colors": _enabled_colors(session),
     }
 
 
@@ -279,18 +292,25 @@ def _create_job_from_model(
     stl_bytes: bytes,
     enable_supports: bool,
     support_style: str | None,
+    color_name: str | None,
 ) -> Job:
     """The actual job-creation body shared by a plain upload and each file
     extracted from a zip - `filename` is always what's shown as
     Job.original_filename (the *true* original name, e.g. "vase.obj",
     even though `stl_bytes` by this point is always real STL - see
-    _stl_bytes_from_upload above)."""
+    _stl_bytes_from_upload above).
+
+    color_name doesn't flow into slice_and_update below at all, unlike
+    enable_supports/support_style - it has zero effect on the actual
+    slice (see models.Job.color_name), so it's just set directly here,
+    not threaded through the background slicing task."""
     job = Job(
         user_id=user.id,
         original_filename=filename,
         status=JobStatus.submitted,
         supports_enabled=enable_supports,
         support_style=support_style if enable_supports else None,
+        color_name=color_name,
     )
     session.add(job)
     session.commit()
@@ -325,6 +345,7 @@ def upload(
     file: UploadFile = File(...),
     enable_supports: bool = Form(False),
     support_style: str = Form("default"),
+    color: str = Form(""),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
@@ -333,6 +354,16 @@ def upload(
     if support_style not in SUPPORT_STYLES:
         support_style = "default"
     style = support_style if enable_supports else None
+    # "" (the dropdown's own "Any available" option, per the user) means
+    # None - no specific color recorded at all, not a color literally
+    # named "Any available". Falls back to None rather than erroring out
+    # if this doesn't match a currently-enabled color at all (e.g. it was
+    # disabled/removed in the moment between loading this form and
+    # submitting it) - color is a best-effort convenience, not something
+    # worth blocking a real upload over.
+    color_name = color.strip() or None
+    if color_name is not None and color_name not in {c.name for c in _enabled_colors(session)}:
+        color_name = None
 
     def fail(message: str):
         request.session["flash_error"] = message
@@ -362,7 +393,7 @@ def upload(
                 skipped.append(f"{entry_name} ({e})")
                 continue
             _create_job_from_model(
-                session, background_tasks, user, entry_name, stl_bytes, enable_supports, style
+                session, background_tasks, user, entry_name, stl_bytes, enable_supports, style, color_name
             )
             created += 1
         if created == 0:
@@ -381,7 +412,7 @@ def upload(
     except ValueError as e:
         return fail(f"Couldn't use that file: {e}.")
 
-    _create_job_from_model(session, background_tasks, user, filename, stl_bytes, enable_supports, style)
+    _create_job_from_model(session, background_tasks, user, filename, stl_bytes, enable_supports, style, color_name)
     return RedirectResponse("/dashboard", status_code=303)
 
 
@@ -411,11 +442,51 @@ def edit_draft(
     if job.status not in DRAFT_STATUSES:
         return RedirectResponse("/dashboard", status_code=303)
     flash_error = request.session.pop("flash_error", None)
+    colors = _enabled_colors(session)
+    # This job's own currently-selected color still has to show up as an
+    # option even if an admin has since disabled or removed it - dropping
+    # it from the list would silently change what's selected the instant
+    # the page loads, before the user ever touched anything.
+    if job.color_name and job.color_name not in {c.name for c in colors}:
+        colors = colors + [Color(name=job.color_name, enabled=False)]
     return templates.TemplateResponse(
         request,
         "job_edit.html",
-        {"job": job, "support_styles": SUPPORT_STYLES, "flash_error": flash_error},
+        {
+            "job": job,
+            "support_styles": SUPPORT_STYLES,
+            "flash_error": flash_error,
+            "colors": colors,
+            "filament": filament_status(session, job),
+        },
     )
+
+
+@router.post("/jobs/{job_id}/color")
+def update_job_color(
+    job_id: int,
+    request: Request,
+    color: str = Form(""),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Deliberately separate from /reslice below, not one more field on
+    that same form - color has zero effect on the actual sliced file (see
+    models.Job.color_name), so changing it has no business paying for a
+    full re-slice (real CPU/memory cost on a Pi - see README.md's to-do
+    list) the way a genuine settings change does. Redirects back to the
+    same edit page either way, same as reslice does."""
+    job = _owned_job(session, user, job_id)
+    if job.status not in DRAFT_STATUSES:
+        return RedirectResponse("/dashboard", status_code=303)
+    color_name = color.strip() or None
+    valid_names = {c.name for c in _enabled_colors(session)}
+    if color_name is not None and color_name != job.color_name and color_name not in valid_names:
+        color_name = None
+    job.color_name = color_name
+    session.add(job)
+    session.commit()
+    return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 
 
 @router.post("/jobs/{job_id}/reslice")

@@ -17,11 +17,19 @@
     <p class="muted">Nothing submitted yet.</p>
   {% else %}
     <table>
-      <tr><th>File</th><th>Status</th><th>Details</th><th></th><th>Actions</th></tr>
+      <tr><th>File</th><th>Color</th><th>Status</th><th>Details</th><th></th><th>Actions</th></tr>
       {% for row in rows %}
         {% set job = row.job %}
         <tr>
           <td>{{ job.original_filename }}</td>
+          <td>
+            {{ job.color_name or "Any available" }}
+            {% if row.filament and not row.filament.enough %}
+              <br><span class="error" title="Best effort - the admin-tracked amount on hand may be out of date">
+                only {{ row.filament.available_g | round(1) }}g on hand
+              </span>
+            {% endif %}
+          </td>
           <td>{{ job.status.value }}</td>
           <td class="muted">
             {% if job.status.value == 'submitted' %}
