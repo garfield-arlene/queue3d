@@ -362,19 +362,17 @@ Managing user accounts:
   section for the full numbers.
 
 **Job review & feedback**
-- The "View 3D" page (`/jobs/{id}/preview`) is view-only today - no way to
-  resize a model or change its support settings (enable/style) from there,
-  only at initial upload, even though both exist elsewhere (the job-edit
-  page's resize/rotate controls, "Restore & edit" for an archived job) -
-  just noting where users will actually look for it: on the job's own
-  page, not just at upload time or after it's already failed/been
-  rejected. Open question this raises: for
-  a job that's still active (`queued`/`approved`, not yet released) should
-  changing something here re-slice it in place, keeping its position in
-  the queue, or does any edit count as a new submission that goes to the
-  end like a restored one does - those are different user expectations and
-  worth deciding deliberately rather than defaulting to whichever is
-  easier to build.
+- Done - the open question this item raised (does changing something on
+  an active `queued`/`approved` job re-slice in place, keeping its
+  queue position, or count as a new submission that goes to the end)
+  is resolved: a new submission, per the user - a fresh `queued_at`,
+  same as a genuinely new one. The job-edit page itself (not
+  `/jobs/{id}/preview`, which stays view-only) is now reachable from a
+  queued/approved job's own dashboard row, with full resize/rotate/
+  support editing identical to a draft's - see `app/README.md`'s "Full
+  editing for a queued/approved job" section for the real safety
+  question this raised (an admin must never be able to release a file
+  mid-re-slice) and how it's handled.
 - **Real bug found using auto-fit on an actual model (an F-35 fighter
   jet STL): "Auto-resize to fit build plate" could compute a scale that
   still didn't actually fit.** Root cause: auto-fit and the "too large"

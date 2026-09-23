@@ -2921,6 +2921,88 @@ erroring. Production's own migration (schema 6.2.0 - new `color` table,
 `Job.color_name`/`filament_grams`) re-confirmed separately once these
 changes were actually applied there.
 
+### Full editing for a queued/approved job, not just color
+
+A real course-correction, not the original design: the first version of
+"can a queued job's color be changed" reused `job_edit.html` but
+deliberately scoped it to color only for anything past draft status,
+reasoning that resize/rotate/supports all genuinely require a re-slice
+and a queued job shouldn't need one. Per the user, that was wrong -
+"Edit was supposed to be all edit capability... same as the edit before
+queuing" - it was this project's own assumption, made without
+confirming it, not something actually asked for.
+
+Reopening full editing for an already-queued job raises two real
+questions this project's own to-do list had already flagged as open
+(the "does editing an active job re-slice in place, or count as a new
+submission" question), and both were confirmed explicitly rather than
+guessed at:
+
+- **While it's mid-reslice** (a real background operation - can take
+  minutes, same as a draft's own first slice), the job is pulled out of
+  admin view/action entirely, not left approvable/releasable. Achieved
+  for free, no new status value needed: `jobs.start_reslice` puts a
+  queued/approved job into the exact same `'submitted'` status a brand
+  new upload already sits in while its first slice runs - not in
+  `models.QUEUE_STATUSES`, so `active_jobs()` (the admin dashboard's own
+  query) already excludes it automatically. It genuinely can never be
+  safe to let an admin release a file that's still being written to the
+  same path a background task is writing it to.
+- **On success, it rejoins the queue with a fresh `queued_at`** - any
+  edit sends it to the back of the line, the same as a genuinely new
+  submission, not the position it already held.
+
+Mechanically: `start_reslice` now accepts `queued`/`approved` as valid
+starting statuses too (alongside the existing `sliced`/`slice_failed`),
+and when it's one of those, moves the job's files from `queue/` back to
+`scratch/` first - the mirror image of what `submit_draft` does going
+the other way - before doing anything else, so every step downstream of
+that point can treat every starting status identically. It returns
+`(stl_path, was_queued)` rather than just `stl_path`, since by the time
+the background `slice_and_update` task actually runs, `job.status` has
+already been flipped to `'submitted'` and there's no way to recover
+"was this queued a moment ago" from the job itself any more - `was_queued`
+has to be threaded through explicitly (as `resubmit_to_queue`) from
+`routers/user.py`'s `reslice()` route into that task's own arguments.
+
+On success, `slice_and_update` checks `resubmit_to_queue`: if set, it
+moves the freshly-sliced files `scratch/` -> `queue/` inline (right
+there, not via a separate call to `submit_draft`) and sets
+`status = queued`, `queued_at = now()` - never back to `approved`, even
+if that's what it was a moment ago, since a materially different file
+hasn't been re-reviewed by anyone yet. If it's *not* set (an ordinary
+draft re-slice), behavior is completely unchanged: lands on `sliced`,
+waiting for the existing manual "Submit to queue" button. On failure,
+also unchanged either way: `slice_failed`, a draft, invisible to admins
+until fixed and resubmitted - for the queued case specifically, this
+means the job genuinely and correctly gives up its claim on a print
+slot until it can actually produce a valid file again, not a bug: an
+unprintable file has no business still holding a place in line.
+
+`job_edit.html` itself no longer branches on draft-vs-queued at all -
+the full settings form, 3D preview, and gizmo editor render identically
+regardless, exactly matching "the edit before queuing." The dashboard's
+existing "Edit" link now sits alongside a new "Change color" link -
+same page, same route, just anchored straight to its `#color` section
+(a plain HTML fragment, no new backend route) for anyone who only wants
+that without scrolling past the full settings form.
+
+**Verified end-to-end against the real slicing pipeline, not stubbed:**
+uploaded, sliced, and queued a real job; confirmed visible on the admin
+dashboard with the edit page showing the full settings form; triggered
+a real re-slice at 150% scale and confirmed, immediately, the job
+vanished from the admin dashboard and its files had genuinely moved to
+`scratch/`; after the real background slice completed, confirmed status
+back to `queued`, files genuinely back in `queue/`, `scale_factor`
+actually applied (`1.5`), `queued_at` strictly later than the original,
+the job reappeared on the admin dashboard, and the full audit trail
+(`submitted` -> `sliced` -> `queued` -> `reslice_started` -> `sliced` ->
+`queued`) was exactly right. Separately verified the failure path
+(stubbed `run_slice` for a deterministic, instant failure) correctly
+lands on `slice_failed` with the job still gone from the admin
+dashboard, and that the new "Change color" link renders with the
+correct `#color`-anchored `href`.
+
 ## 3D preview
 
 Two different views, both in `static/preview.js` (Three.js, vendored
