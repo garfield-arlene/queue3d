@@ -3131,15 +3131,58 @@ turning kept working while zooming made the model vanish. Confirmed via
 commit (`3592f35`), not a regression from anything built this session -
 the user just happened to hit it now.
 
-**Fixed** - `controls.minDistance`/`maxDistance` now scale with the
-same `radius` `near`/`far` already do, comfortably inside both (well
-past `near`, well short of `far`), set in the exact same code path that
-recomputes `near`/`far` on every (re)scale, not just the initial load -
-so the bound can never go stale after a resize, gizmo drag, or auto-fit.
-Not verified visually in this environment (no browser available
-headlessly here, and no automated test covers this viewer) - pending
-the user's own confirmation in real use before this is considered
-actually done, not just reasoned through.
+First fix (`controls.minDistance`/`maxDistance` scaled to the same
+`radius` `near`/`far` already use) turned out to be real but
+**incomplete** - the user's own follow-up screenshot (one mouse-wheel
+click zoomed in enough to fill the entire frame with a single flat
+close-up surface, camera essentially jammed against the model) didn't
+match "unbounded zoom eventually clips," it matched "one click jumped
+almost instantly to the closest point allowed." That pointed at the
+zoom *step* itself, not just the missing bounds.
+
+**The actual root cause, found by reading `OrbitControls.js`'s real
+dolly math rather than guessing again:** `getZoomScale()` computes
+`normalized_delta = |delta| / (100 * (window.devicePixelRatio | 0))`.
+`x | 0` truncates toward zero - so any `devicePixelRatio` below `1` (a
+browser zoomed under 100%, some display-scaling/remote-desktop setups)
+collapses the denominator to literal `0`, dividing by zero, giving
+`Infinity`, which collapses `Math.pow(0.95, Infinity)` to `0` - the
+zoom scale for *every* wheel event, not just large ones. One click was
+enough to send the camera essentially straight to whichever bound
+(`minDistance` or `maxDistance`, depending on scroll direction) was in
+place, rather than the intended gradual ~5%-per-click step.
+
+Patched the one line (`Math.max(window.devicePixelRatio, 1)` instead of
+the truncating `| 0`) directly in the vendored `OrbitControls.js` -
+consistent with this project's existing precedent of patching a
+vendored dependency in place when a real bug surfaces (see the vendored
+`mbotmake` bugfix) - since this file will never receive upstream
+updates anyway and the fix is minimal, well-understood, and doesn't
+change behavior for `devicePixelRatio >= 1` (the overwhelming common
+case). The `minDistance`/`maxDistance` bounds from the first fix stayed
+in place too, as a legitimate safety net independent of this root
+cause.
+
+**Verified directly, not just reasoned about - a real regression is
+worth a real test, not a second guess:** a throwaway Playwright
+install (never the project's own venv - cleaned up after, including
+the browser cache), with `device_scale_factor=0.75` specifically to
+reproduce the exact failure condition (confirmed via
+`page.evaluate("window.devicePixelRatio")` actually reading back
+`0.75`), driving a real page through the exact upload-preview code path
+(`previewFile` → `showModel` → `renderGeometry`, the same camera setup
+every viewer in this app shares) and a real simulated mouse-wheel
+click. With the patch: a single click produced a small, gradual
+zoom, exactly as intended - confirmed visually from the actual
+screenshots, not inferred. With the original unpatched line (reverted
+in this isolated copy only, to close the loop on the diagnosis itself):
+one click sent the camera rocketing to the opposite extreme instead
+(the cube shrank from filling the frame to a tiny distant speck) -
+the same underlying collapse-to-zero bug, manifesting as a jump to
+whichever bound the scroll direction pointed at, matching both the
+user's original report (zooming either direction made the model
+disappear) and this exact screenshot (one click, jammed up against the
+model) precisely.
 
 ## Security checks (CI)
 
