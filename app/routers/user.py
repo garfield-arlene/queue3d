@@ -202,9 +202,9 @@ def _colors_for_job(session: Session, job: Job) -> list[Color]:
     even if it's since been disabled or removed entirely - dropping it
     from the list the instant an admin changes something elsewhere would
     silently change what's selected before the user themselves ever
-    touched anything. Shared by every place a job's color is editable
-    (the draft edit page, and a queued/approved job's own dashboard row -
-    see COLOR_EDITABLE_STATUSES below for why both)."""
+    touched anything. Used by the shared /jobs/{id}/edit page - the one
+    place a job's color is ever changed from, whether it's still a draft
+    or already queued/approved (see COLOR_EDITABLE_STATUSES below)."""
     colors = _enabled_colors(session)
     if job.color_name and job.color_name not in {c.name for c in colors}:
         colors = colors + [Color(name=job.color_name, enabled=False)]
@@ -236,7 +236,6 @@ def _dashboard_context(session: Session, user: User, flash_error: str | None = N
                 "duration_display": format_duration(estimate_s) if estimate_s else None,
                 "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
                 "filament": filament_status(session, job),
-                "colors": _colors_for_job(session, job) if job.status in (JobStatus.queued, JobStatus.approved) else None,
             }
         )
     return {
@@ -459,13 +458,20 @@ def edit_draft(
     """Pick up working on a draft - the model with its currently selected
     support settings, previewed exactly like the job-preview page (same
     supports overlay), plus the settings themselves as an editable form
-    that re-slices in place. Not a thing once a job has actually been
-    submitted - there's nothing left to edit at that point, so send
-    anyone who lands here anyway (a stale link, or the row that put them
-    here has since moved on) back to the dashboard rather than showing an
-    edit form for a job it can no longer apply to."""
+    that re-slices in place. Also reachable for a queued/approved job
+    (see COLOR_EDITABLE_STATUSES) - per the user, after landing here
+    once already for a color change and expecting the same "Edit" link
+    slice_failed jobs already have, rather than a different, inline
+    control elsewhere - job_edit.html itself only shows the color form
+    for one of those (no re-slice settings, no 3D preview/gizmo editor;
+    see that template's own `is_draft` branching), since nothing else on
+    this page is safe or meaningful to change once a job's already
+    queued. Anything past COLOR_EDITABLE_STATUSES entirely (printing,
+    done, failed, ...) has nothing left to edit at all, so send anyone
+    who lands here anyway (a stale link, or the row that put them here
+    has since moved on) back to the dashboard."""
     job = _owned_job(session, user, job_id)
-    if job.status not in DRAFT_STATUSES:
+    if job.status not in COLOR_EDITABLE_STATUSES:
         return RedirectResponse("/dashboard", status_code=303)
     flash_error = request.session.pop("flash_error", None)
     return templates.TemplateResponse(
@@ -494,14 +500,14 @@ def update_job_color(
     models.Job.color_name), so changing it has no business paying for a
     full re-slice (real CPU/memory cost on a Pi - see README.md's to-do
     list) the way a genuine settings change does. Editable through
-    COLOR_EDITABLE_STATUSES - a draft (from its edit page) or a queued/
-    approved job (from its own dashboard row) - not just while still a
-    draft, per the user, after noticing a queued job's color couldn't be
-    changed at all despite there being no real reason it shouldn't be.
-    Redirects back to wherever it makes sense to keep looking at this job
-    next: the edit page for a draft (same as before), the dashboard for
-    anything already queued/approved, since there's no edit page for
-    those at all."""
+    COLOR_EDITABLE_STATUSES - a draft or a queued/approved job, both from
+    the same /jobs/{id}/edit page (see edit_draft above) - not just while
+    still a draft, per the user, after noticing a queued job's color
+    couldn't be changed at all despite there being no real reason it
+    shouldn't be. Redirects back to that same edit page either way, same
+    as /reslice does - there's now one single place a job's color is
+    ever changed from, not a second, different control living somewhere
+    else for a queued job specifically."""
     job = _owned_job(session, user, job_id)
     if job.status not in COLOR_EDITABLE_STATUSES:
         return RedirectResponse("/dashboard", status_code=303)
@@ -512,9 +518,7 @@ def update_job_color(
     job.color_name = color_name
     session.add(job)
     session.commit()
-    if job.status in DRAFT_STATUSES:
-        return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
-    return RedirectResponse("/dashboard", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 
 
 @router.post("/jobs/{job_id}/reslice")
