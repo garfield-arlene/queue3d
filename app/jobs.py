@@ -664,11 +664,70 @@ def delete_all_old_jobs(session: Session, admin: Admin, threshold_days: int) -> 
     return len(to_delete)
 
 
+def printer_currently_busy() -> dict | None:
+    """Live read of whatever the printer itself is actually doing right
+    now, independent of anything in our own database - the real
+    physical source of truth, not our own belief about it. Per the
+    user, after a real incident: a bed-adhesion failure was cancelled
+    and reprinted directly at the printer's own dial, entirely outside
+    the app, which had (and could have had) no idea it happened.
+
+    Returns the raw `current_process` dict if it's a genuinely
+    still-in-progress process - not yet `complete`/`cancelled`/`error`,
+    the same three-way check `check_and_finish_active_print` already
+    uses to know when a process needs action - or `None` if the printer
+    is free (no `current_process` at all) or it already resolved
+    (finished but not yet cleared by the printer itself - see that
+    function's own note on this happening).
+
+    Read-only and best-effort: an unreachable printer (`PrinterError`)
+    also returns `None` - this can't block anything on a check it
+    couldn't actually perform, and `release()`'s own `send_print_job`
+    call below will fail loudly on its own if the printer is genuinely
+    unreachable at that point anyway."""
+    try:
+        info = system_information()
+    except PrinterError:
+        return None
+    current = info.get("current_process")
+    if not current:
+        return None
+    if current.get("complete") or current.get("cancelled") or current.get("error"):
+        return None
+    return current
+
+
+def untracked_print_in_progress(session: Session) -> dict | None:
+    """The printer genuinely mid-print (see printer_currently_busy above)
+    while nothing in our own queue is marked 'printing' - meaning
+    whatever's running was started some other way, not released through
+    this app. Shared by release()'s own guard against sending a second
+    job onto a printer that's already busy this way, and by the admin
+    dashboard's live banner (routers/admin.py's _dashboard_context) -
+    checked fresh on every call, never cached, so it can't show stale."""
+    current = printer_currently_busy()
+    if current is None:
+        return None
+    already_tracked = session.exec(select(Job).where(Job.status == JobStatus.printing)).first()
+    if already_tracked is not None:
+        return None
+    return current
+
+
 def release(session: Session, job: Job, admin: Admin) -> Job:
     """Sends an approved job to the printer and marks it printing. Actually
     talks to the hardware (see printer.py) - only flips the status once
     the upload genuinely succeeds, so a failed send leaves the job
-    'approved' rather than claiming a print started that may not have."""
+    'approved' rather than claiming a print started that may not have.
+
+    Guards against two different ways the printer could already be busy:
+    a job this app itself already released (the database check, as
+    before), and - per the user, after the real dial-reprint incident
+    printer_currently_busy's own docstring describes - one started some
+    other way entirely, which the database alone could never catch since
+    it never went through the app at all. Physical reality is the actual
+    source of truth for "is the printer busy," not just this app's own
+    belief about it."""
     _require_status(job, JobStatus.approved)
     already_printing = session.exec(
         select(Job).where(Job.status == JobStatus.printing)
@@ -676,6 +735,14 @@ def release(session: Session, job: Job, admin: Admin) -> Job:
     if already_printing is not None:
         raise JobActionError(
             f"Job #{already_printing.id} is already printing - mark it done/failed first."
+        )
+    if printer_currently_busy() is not None:
+        raise JobActionError(
+            "The printer itself reports it's already mid-print, even though "
+            "nothing here is marked 'printing' - most likely started directly "
+            "from the printer's own controls rather than released through the "
+            "app. Let it finish (or stop it at the printer) before releasing "
+            "another job."
         )
     if not job.makerbot_path:
         raise JobActionError("This job has no sliced file to send.")
@@ -1060,12 +1127,51 @@ def check_and_finish_active_print(session: Session) -> Job | None:
 
 _AUTO_FINISH_POLL_INTERVAL_S = 15
 
+# Whether an untracked print (see untracked_print_in_progress above) has
+# already been logged for the episode currently in progress - module-level,
+# in-memory, not persisted, deliberately: this only exists to stop the
+# poller writing a fresh log entry every 15s for however long the same
+# untracked print keeps running, not to survive an app restart (a restart
+# mid-episode just logs it again once, which is fine - it's still true).
+_untracked_print_logged = False
+
+
+def _log_untracked_print_once(session: Session) -> None:
+    """Called every poll tick alongside check_and_finish_active_print -
+    unlike that function, this runs unconditionally rather than being
+    gated behind the app's own database already believing something is
+    printing, since catching exactly the case where it *doesn't* believe
+    that (but the printer disagrees) is the whole point - see
+    untracked_print_in_progress's own docstring for the real incident
+    this exists because of. Logs once when an episode starts, not
+    again until it's over (see _untracked_print_logged above) and a new
+    one begins - admin-visible immediately either way via the dashboard's
+    own live banner, which doesn't depend on this log entry at all."""
+    global _untracked_print_logged
+    current = untracked_print_in_progress(session)
+    if current is not None:
+        if not _untracked_print_logged:
+            _untracked_print_logged = True
+            log_event(
+                session, None, "system", "untracked_print_detected",
+                detail=(
+                    f"Printer reports actively printing "
+                    f"{current.get('filename') or 'an unknown file'!r} with no "
+                    "matching queue job - likely started directly from the "
+                    "printer's own controls, not released through the app."
+                ),
+            )
+            session.commit()
+    else:
+        _untracked_print_logged = False
+
 
 def _auto_finish_poll_loop():
     while True:
         try:
             with Session(engine) as session:
                 check_and_finish_active_print(session)
+                _log_untracked_print_once(session)
         except Exception:
             # Best-effort background loop - never let one bad tick (a
             # transient DB hiccup, an unexpected reply shape) kill the

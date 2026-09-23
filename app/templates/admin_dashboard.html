@@ -29,6 +29,17 @@
 
   {% include "_printer_status.html" %}
 
+  {% if untracked_print %}
+    <p class="error">
+      The printer itself reports it's actively printing
+      "{{ untracked_print.filename or "an unknown file" }}", but nothing
+      in the queue is marked as printing - it was most likely started
+      directly from the printer's own controls, not released through
+      here. Releasing another job right now will be blocked until this
+      one finishes (or is stopped at the printer).
+    </p>
+  {% endif %}
+
   {% if old_job_count %}
     <p class="notice">
       {{ old_job_count }} job{{ "s" if old_job_count != 1 else "" }} waiting

@@ -44,6 +44,7 @@ from jobs import (
     reject,
     release,
     requeue_job,
+    untracked_print_in_progress,
     user_has_active_jobs,
 )
 from models import Admin, Color, Job, Settings, User
@@ -131,6 +132,11 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
         "action_error": action_error,
         "printer_status": connection_status(),
         "pairing": pairing_status(),
+        # Live, not cached - checked fresh on every dashboard load, per
+        # the user, after a real dial-triggered reprint at the printer
+        # itself went completely unnoticed by the app. See
+        # jobs.untracked_print_in_progress's own docstring.
+        "untracked_print": untracked_print_in_progress(session),
     }
 
 
