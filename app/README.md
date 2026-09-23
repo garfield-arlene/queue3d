@@ -1353,6 +1353,29 @@ after the first cleared. Confirmed end-to-end over real HTTP too, not
 just at the function level: the dashboard banner rendered correctly and
 a real release attempt was actually blocked with the intended message.
 
+**The banner resolves the printer's raw filename back to a real job,
+not just a bare number.** Per the user, after seeing it originally show
+only "29.makerbot" and correctly guessing that number meant something:
+every file this app ever sends is named exactly `"<job id>.makerbot"`
+(see `storage.queue_paths`/`archive_paths`), and the printer's own
+on-device "reprint" option resends that exact same file - so the
+filename genuinely *is* the original job's id, not a meaningless
+string. `jobs._job_from_makerbot_filename` parses that id back out and
+looks the job up (regardless of its current status - by now it's most
+likely `done`/`failed`/whatever, never still `printing`, which is the
+whole point), and `untracked_print_in_progress` resolves its submitter
+alongside it. The dashboard banner now reads "job #4 ('bed_adhesion_
+test.stl', submitted by alex) - recorded here as 'failed'" with a link
+to that job's own log, rather than a number an admin would have had to
+go cross-reference by hand - in this feature's own real motivating
+incident, that "failed" status is exactly what confirms it's the same
+job being reprinted at the dial. Falls back to the raw filename,
+unchanged, if it doesn't parse as one of this app's ids at all or that
+id no longer exists. Verified directly (a real job resolves correctly,
+including through a directory-prefixed filename; an unrecognized name
+and a numeric-but-nonexistent id both correctly fall back to no match)
+and end-to-end over real HTTP, confirming the full rendered message.
+
 ### Printer camera
 
 **Why this exists:** per the user, both the submitting user and an admin
