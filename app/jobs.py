@@ -972,10 +972,21 @@ def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool
     that it failed (see routers/admin.py's mark_failed_job, which
     requires one from a manual "Mark failed" the same way reject()
     requires admin_note). Ignored on success: a 'done' job has nothing to
-    explain."""
+    explain.
+
+    `finished_at` is stamped *after* the photo attempt below, not before -
+    per the user, now that automatic detection (check_and_finish_active_print)
+    means this whole function typically runs within ~15s of the printer
+    actually reporting the print over, rather than depending on an admin
+    noticing and clicking by hand. A few extra seconds spent trying to
+    reach the camera is a small, bounded price (capture_photo's own
+    connect+capture timeouts cap it well under a minute even on total
+    failure - see printer.py) for finished_at reflecting the true end of
+    the whole "wrap this job up" sequence, not just the instant this
+    function happened to start - see _duration_correction_factor above,
+    which this timestamp directly feeds."""
     _require_status(job, JobStatus.printing)
     job.status = JobStatus.done if success else JobStatus.failed
-    job.finished_at = datetime.now(timezone.utc)
     if not success and reason:
         job.failure_reason = reason
     move_job_to_archive(job)
@@ -988,6 +999,7 @@ def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool
         photo_detail = "photo captured"
     except PrinterError as e:
         photo_detail = f"photo capture failed: {e}"
+    job.finished_at = datetime.now(timezone.utc)
     if reason:
         photo_detail = f"{reason}; {photo_detail}"
 
