@@ -434,9 +434,14 @@ Managing user accounts:
   is genuinely CPU/memory-heavy.
 
 **Print options**
-- Color selection for users - 1st/2nd/3rd preference, chosen from a
-  dropdown populated by an admin-managed list of colors (admins check or
-  uncheck which colors are currently available, based on inventory).
+- Done - a single color per job (not 1st/2nd/3rd preference, per the
+  user's own later, more specific spec superseding this item's original
+  wording), or "Any available" so an admin doesn't have to change
+  filament, chosen from a dropdown of whatever an admin currently has
+  enabled - plus a best-effort low-inventory notice, since it turned out
+  possible to read a job's actual filament use straight out of the real
+  sliced file. Full account in `app/README.md`'s "Filament color
+  selection" section.
 
 **Appearance**
 - More themes beyond "Default" - color changes, wallpaper, as their own

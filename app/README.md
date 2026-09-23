@@ -2737,6 +2737,72 @@ that was reported; the global log (`/admin/log`) shows entries from
 multiple different jobs and users interleaved in true most-recent-first
 order, not grouped by job.
 
+### Filament color selection, and a best-effort low-inventory notice
+
+Per the user's full spec: admins manage a color list (`/admin/colors` -
+add/remove, set rolls and grams on hand, enable/disable which ones
+users can currently pick from), a user picks exactly one color per job
+at upload time from whatever's currently enabled (or "Any available,"
+so an admin doesn't have to change filament for them) and can change it
+later from the job's edit page, and an admin sees a clear notice when a
+job's own recorded filament use exceeds what's tracked as available for
+its color. Explicitly **best effort**, stated in the UI itself (the
+colors page, the upload form) not just here: the printer has no way to
+report what's actually loaded or how much is left, so the whole
+low-inventory check is only ever as fresh as the last time an admin
+updated it by hand.
+
+Before building any of it, investigated whether "how much filament will
+this use" was even answerable at all, per the user's own conditional
+framing ("if this is possible, let's add that too") - real test slice,
+not assumed: OrcaSlicer's gcode already carries `; filament used [g] =
+5.67`-style comments, but the sliced `.makerbot`'s own `meta.json`
+(mbotmake's real output, the same file `read_makerbot_duration_s`
+already reads `duration_s` from) carries the identical number as
+`extrusion_mass_g` - no pipeline changes needed at all, just a new
+`storage.read_makerbot_filament_g` parallel to the existing duration
+reader. `jobs.slice_and_update` (and `reprint_job`, which copies an
+already-sliced `.makerbot` byte-for-byte) sets `Job.filament_grams` from
+it the same moment `duration_estimate_s` gets set.
+
+`Job.color_name` is a plain string snapshot - **not** a foreign key to
+the new `Color` table. An admin renaming or removing a color later must
+never silently change what an already-submitted job says it was printed
+in; that job's own history is whatever was actually selected, at the
+time it was selected, full stop. The tradeoff this accepts: once a
+color is deleted, there's no live row left to check a job's usage
+against any more, so `jobs.filament_status` (the shared helper behind
+both the admin queue's warning and the job-edit page's own display)
+just returns `None` for it - "nothing meaningful to compare," the same
+answer it gives for a job that selected "Any available," was never
+successfully sliced, or whose color was never given a gram total in the
+first place. None of those are treated as errors; they're all
+legitimate reasons there's simply nothing to check yet.
+
+Changing a job's color (`POST /jobs/{id}/color`, reachable from the
+edit page) is deliberately a separate, lightweight route from
+`/reslice`, not one more field bundled into that same form - color has
+zero effect on the actual sliced geometry, so routing a pure color
+change through a full OrcaSlicer+mbotmake re-slice would be pure wasted
+CPU/memory on a Pi for something that changes nothing about the print
+itself. Verified directly: `makerbot_path`/`filament_grams` are
+provably untouched by a color-only change (identical values before and
+after), confirming this path never re-slices.
+
+Verified end-to-end in an isolated instance before touching production,
+including the real slicing pipeline (not stubbed): a color's full add/
+update/delete lifecycle from the admin page; the user-facing dropdown
+actually reflecting only currently-enabled colors; a real upload with a
+color selected; `filament_grams` landing at the exact value the real
+`.makerbot`'s `meta.json` reported; the low-filament notice genuinely
+rendering on the admin dashboard once a color's tracked amount was set
+below what a real job needed; and, after deleting that color outright,
+the job's `color_name` still reading correctly while
+`jobs.filament_status` cleanly returned `None` for it rather than
+erroring. Production's own migration (schema 6.2.0 - new `color` table,
+`Job.color_name`/`filament_grams`) re-confirmed separately once these
+changes were actually applied there.
+
 ## 3D preview
 
 Two different views, both in `static/preview.js` (Three.js, vendored
