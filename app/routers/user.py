@@ -187,13 +187,38 @@ def update_settings(
 
 
 def _enabled_colors(session: Session) -> list[Color]:
-    """What the color dropdown offers, both at upload and on a draft's
-    edit page - see models.Color's own docstring for the inventory this
-    draws from. An admin disabling a color only affects what's offered
-    going forward; it never touches a job that already selected it (see
-    edit_draft below for how that job's own current color still shows up
-    there even once it's no longer in this list)."""
+    """What the color dropdown offers, both at upload and wherever a job's
+    color can be changed later - see models.Color's own docstring for the
+    inventory this draws from. An admin disabling a color only affects
+    what's offered going forward; it never touches a job that already
+    selected it (see _colors_for_job below for how that job's own current
+    color still shows up wherever it's editable, even once it's no
+    longer in this list)."""
     return session.exec(select(Color).where(Color.enabled == True).order_by(Color.name)).all()  # noqa: E712
+
+
+def _colors_for_job(session: Session, job: Job) -> list[Color]:
+    """Enabled colors, plus this one job's own currently-selected color
+    even if it's since been disabled or removed entirely - dropping it
+    from the list the instant an admin changes something elsewhere would
+    silently change what's selected before the user themselves ever
+    touched anything. Shared by every place a job's color is editable
+    (the draft edit page, and a queued/approved job's own dashboard row -
+    see COLOR_EDITABLE_STATUSES below for why both)."""
+    colors = _enabled_colors(session)
+    if job.color_name and job.color_name not in {c.name for c in colors}:
+        colors = colors + [Color(name=job.color_name, enabled=False)]
+    return colors
+
+
+# Color has zero effect on the actual sliced file (see models.Job.color_name),
+# so - unlike every other job setting - there's no reason changing it should
+# stop being possible just because a job has already been queued/approved,
+# the way re-slicing genuinely would need to. Stops at 'printing': the
+# physical filament actually loaded is fixed by then, and changing the
+# recorded color at that point would misrepresent what actually happened,
+# not just update a preference.
+COLOR_EDITABLE_STATUSES = DRAFT_STATUSES | {JobStatus.queued, JobStatus.approved}
 
 
 def _dashboard_context(session: Session, user: User, flash_error: str | None = None):
@@ -211,6 +236,7 @@ def _dashboard_context(session: Session, user: User, flash_error: str | None = N
                 "duration_display": format_duration(estimate_s) if estimate_s else None,
                 "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
                 "filament": filament_status(session, job),
+                "colors": _colors_for_job(session, job) if job.status in (JobStatus.queued, JobStatus.approved) else None,
             }
         )
     return {
@@ -442,13 +468,6 @@ def edit_draft(
     if job.status not in DRAFT_STATUSES:
         return RedirectResponse("/dashboard", status_code=303)
     flash_error = request.session.pop("flash_error", None)
-    colors = _enabled_colors(session)
-    # This job's own currently-selected color still has to show up as an
-    # option even if an admin has since disabled or removed it - dropping
-    # it from the list would silently change what's selected the instant
-    # the page loads, before the user ever touched anything.
-    if job.color_name and job.color_name not in {c.name for c in colors}:
-        colors = colors + [Color(name=job.color_name, enabled=False)]
     return templates.TemplateResponse(
         request,
         "job_edit.html",
@@ -456,7 +475,7 @@ def edit_draft(
             "job": job,
             "support_styles": SUPPORT_STYLES,
             "flash_error": flash_error,
-            "colors": colors,
+            "colors": _colors_for_job(session, job),
             "filament": filament_status(session, job),
         },
     )
@@ -474,10 +493,17 @@ def update_job_color(
     that same form - color has zero effect on the actual sliced file (see
     models.Job.color_name), so changing it has no business paying for a
     full re-slice (real CPU/memory cost on a Pi - see README.md's to-do
-    list) the way a genuine settings change does. Redirects back to the
-    same edit page either way, same as reslice does."""
+    list) the way a genuine settings change does. Editable through
+    COLOR_EDITABLE_STATUSES - a draft (from its edit page) or a queued/
+    approved job (from its own dashboard row) - not just while still a
+    draft, per the user, after noticing a queued job's color couldn't be
+    changed at all despite there being no real reason it shouldn't be.
+    Redirects back to wherever it makes sense to keep looking at this job
+    next: the edit page for a draft (same as before), the dashboard for
+    anything already queued/approved, since there's no edit page for
+    those at all."""
     job = _owned_job(session, user, job_id)
-    if job.status not in DRAFT_STATUSES:
+    if job.status not in COLOR_EDITABLE_STATUSES:
         return RedirectResponse("/dashboard", status_code=303)
     color_name = color.strip() or None
     valid_names = {c.name for c in _enabled_colors(session)}
@@ -486,7 +512,9 @@ def update_job_color(
     job.color_name = color_name
     session.add(job)
     session.commit()
-    return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
+    if job.status in DRAFT_STATUSES:
+        return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
+    return RedirectResponse("/dashboard", status_code=303)
 
 
 @router.post("/jobs/{job_id}/reslice")

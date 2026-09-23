@@ -23,7 +23,25 @@
         <tr>
           <td>{{ job.original_filename }}</td>
           <td>
-            {{ job.color_name or "Any available" }}
+            {% if row.colors is not none %}
+              {# Queued/approved - editable right here, not just on a
+                 draft's edit page (which doesn't exist for these
+                 anyway): color has zero effect on the sliced file, so
+                 there's no reason to stop being able to change it just
+                 because the job's already in the queue. #}
+              <form method="post" action="/jobs/{{ job.id }}/color" style="display:inline">
+                <select name="color" onchange="this.form.submit()">
+                  <option value="" {% if not job.color_name %}selected{% endif %}>Any available</option>
+                  {% for color in row.colors %}
+                    <option value="{{ color.name }}" {% if color.name == job.color_name %}selected{% endif %}>
+                      {{ color.name }}{% if not color.enabled %} (no longer offered){% endif %}
+                    </option>
+                  {% endfor %}
+                </select>
+              </form>
+            {% else %}
+              {{ job.color_name or "Any available" }}
+            {% endif %}
             {% if row.filament and not row.filament.enough %}
               <br><span class="error" title="Best effort - the admin-tracked amount on hand may be out of date">
                 only {{ row.filament.available_g | round(1) }}g on hand
