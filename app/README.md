@@ -3184,6 +3184,26 @@ user's original report (zooming either direction made the model
 disappear) and this exact screenshot (one click, jammed up against the
 model) precisely.
 
+**Even after that fix was genuinely pushed, the user kept reporting the
+identical broken behavior - a third real report, not the same one
+repeated.** Turned out the fix was correct both times; the browser was
+silently serving the *pre-fix* `OrbitControls.js` from its own cache the
+whole time, never even asking the server. `StaticFiles` sends no
+`Cache-Control` header at all by default, so browsers fall back to
+heuristic caching - especially aggressive for ES module imports like
+this one - with nothing forcing a revalidation on each load. A
+`@app.middleware("http")` in `main.py` now sets `Cache-Control: no-cache`
+on every `/static/` response - forces a round-trip to check with the
+server on every load, but doesn't disable caching or force a full
+re-download: `StaticFiles` already sends a real content-based `ETag`,
+so an unchanged file still comes back as a fast `304` either way.
+Verified directly: a fresh request carries the header, and a
+conditional request with a matching `ETag` still correctly returns
+`304`, not a full body. **The user's own next real-browser retest is
+what actually confirmed the zoom fix itself was right all along** -
+this caching fix exists so that confirmation loop can't cost this much
+back-and-forth again for any future change to a vendored/static asset.
+
 ## Security checks (CI)
 
 `.github/workflows/security.yml` runs on every push and pull request -
