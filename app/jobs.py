@@ -895,6 +895,7 @@ def slice_and_update(
     rotate_x: float = 0.0,
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
+    resubmit_to_queue: bool = False,
 ) -> None:
     """Runs slicing for a draft and records the outcome as 'sliced' (ready
     to preview and, if the user wants, submit) or 'slice_failed' - never
@@ -909,7 +910,26 @@ def slice_and_update(
 
     Output goes to scratch/, not queue/ - a draft's files stay in scratch/
     for as long as it's a draft, however many times it gets re-sliced;
-    only submit_draft moves anything into queue/.
+    only submit_draft moves anything into queue/. resubmit_to_queue is
+    the one exception: True only when this re-slice started from a job
+    that was already queued/approved a moment ago (see start_reslice's
+    own was_queued return value, threaded through from
+    routers/user.py's reslice()) - on success, that means immediately
+    rejoining the shared queue itself, moving scratch/ back to queue/
+    inline, right here, rather than landing on 'sliced' waiting for a
+    separate manual "Submit to queue" click it was never going to need
+    (it was already committed to the queue before this started). Always
+    resets to 'queued', never back to 'approved' even if that's what it
+    was a moment ago - a materially different file hasn't been
+    re-reviewed yet - with a *fresh* queued_at, per the user: any edit
+    sends it to the back of the line, the same as a genuinely new
+    submission, not the position it already held. On failure, nothing
+    special happens beyond the normal draft behavior: it lands on
+    'slice_failed', a draft, invisible to admins until the user fixes
+    and resubmits it - the job genuinely gives up its claim on a print
+    slot until it can actually produce a valid file again, which is
+    correct, not a bug: an unprintable file has no business still
+    holding a place in line.
 
     Any unexpected exception here (not just an ordinary slicer failure,
     which run_slice already reports as (False, detail)) still has to leave
@@ -932,7 +952,7 @@ def slice_and_update(
         if job is None:
             return
 
-        _scratch_stl, scratch_makerbot, scratch_supports = scratch_paths(job.id)
+        scratch_stl, scratch_makerbot, scratch_supports = scratch_paths(job.id)
         try:
             success, detail, used_rotate_x, used_rotate_y, used_rotate_z, auto_rotated = _slice_with_rotation_retry(
                 stl_path,
@@ -958,7 +978,29 @@ def slice_and_update(
                 job.supports_path = str(scratch_supports)
             else:
                 job.supports_path = None  # clear a stale one from a previous re-slice attempt
-            job.status = JobStatus.sliced
+
+            if resubmit_to_queue:
+                # Per the user: an already-queued job that gets re-sliced
+                # immediately rejoins the shared queue on success, rather
+                # than landing on 'sliced' waiting for a separate manual
+                # "Submit to queue" click it was never going to need - it
+                # was already committed to the queue before this started.
+                # Mirrors submit_draft's own scratch/->queue/ move, just
+                # inline here instead of a separate explicit action.
+                queue_stl, queue_makerbot, queue_supports = queue_paths(job.id)
+                if scratch_stl.exists():
+                    shutil.move(str(scratch_stl), str(queue_stl))
+                    job.stl_path = str(queue_stl)
+                shutil.move(str(scratch_makerbot), str(queue_makerbot))
+                job.makerbot_path = str(queue_makerbot)
+                if job.supports_path:  # just set above, still pointing at scratch/ if set at all
+                    shutil.move(job.supports_path, str(queue_supports))
+                    job.supports_path = str(queue_supports)
+                job.status = JobStatus.queued
+                job.queued_at = datetime.now(timezone.utc)
+            else:
+                job.status = JobStatus.sliced
+
             if auto_rotated:
                 job.rotate_x, job.rotate_y, job.rotate_z = used_rotate_x, used_rotate_y, used_rotate_z
                 job.slice_error = (
@@ -973,6 +1015,8 @@ def slice_and_update(
             else:
                 job.slice_error = None  # clear a stale one from a previous failed attempt
                 log_event(session, job.id, actor, "sliced")
+            if resubmit_to_queue:
+                log_event(session, job.id, actor, "queued", detail="automatic - rejoined the queue after a re-slice, with a fresh wait time")
         else:
             job.status = JobStatus.slice_failed
             job.slice_error = detail[-4000:]  # cap - slicer output can be long
@@ -995,22 +1039,55 @@ def start_reslice(
     rotate_x: float = 0.0,
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
-) -> Path:
+) -> tuple[Path, bool]:
     """Resets a draft to re-slice the same already-uploaded file with new
     settings - the whole point of splitting slicing from submitting: a
     user can freely iterate on support settings, scale, or now rotation
-    (see models.Job.rotate_x/y/z) before ever deciding to submit. Returns
-    the STL path to hand to slice_and_update (via a BackgroundTask, same
-    as the initial slice - see routers/user.py). No bounds check on the
-    rotation angles the way scale gets one - any float is a valid
-    rotation (sin/cos are periodic, so e.g. 370 degrees and 10 degrees
-    produce the identical result), there's no "too rotated" the way
-    there's a "too small/too large" for scale."""
-    _require_status(job, JobStatus.sliced, JobStatus.slice_failed)
+    (see models.Job.rotate_x/y/z) before ever deciding to submit.
+
+    Also reachable for an already-queued/approved job, per the user,
+    after "Edit was supposed to be all edit capability... same as the
+    edit before queuing" - not just color, which is all it was scoped to
+    right after that page first got reused for queued jobs. A queued
+    job's files already live in queue/, not scratch/ (see
+    storage.queue_paths vs scratch_paths) - this moves them back before
+    slicing touches anything, the mirror image of what submit_draft does
+    going the other way, so the rest of this function (and
+    slice_and_update below) can treat every case identically from here.
+    While it's mid-reslice, status is 'submitted' - the *same* status a
+    brand new upload sits in while its own first slice runs - which, as
+    a side effect with no special-casing needed, pulls it out of
+    active_jobs() (models.QUEUE_STATUSES doesn't include it) for exactly
+    as long as slicing takes: per the user, deliberately, so an admin
+    can never approve/release a file that's still being written.
+
+    Returns (stl_path, was_queued) - was_queued has to be threaded
+    through to slice_and_update's own BackgroundTask call (see
+    routers/user.py's reslice()), since by the time that task actually
+    runs, job.status here has already been flipped to 'submitted' and
+    there's no way to recover "was this queued a moment ago" from the
+    job itself any more.
+
+    No bounds check on the rotation angles the way scale gets one - any
+    float is a valid rotation (sin/cos are periodic, so e.g. 370 degrees
+    and 10 degrees produce the identical result), there's no "too
+    rotated" the way there's a "too small/too large" for scale."""
+    _require_status(job, JobStatus.sliced, JobStatus.slice_failed, JobStatus.queued, JobStatus.approved)
     if not (MIN_SCALE_FACTOR <= scale_factor <= MAX_SCALE_FACTOR):
         raise JobActionError(
             f"Scale must be between {MIN_SCALE_FACTOR * 100:.0f}% and {MAX_SCALE_FACTOR * 100:.0f}%."
         )
+    was_queued = job.status in (JobStatus.queued, JobStatus.approved)
+    if was_queued:
+        queue_stl, queue_makerbot, queue_supports = queue_paths(job.id)
+        scratch_stl, scratch_makerbot, scratch_supports = scratch_paths(job.id)
+        if queue_stl.exists():
+            shutil.move(str(queue_stl), str(scratch_stl))
+            job.stl_path = str(scratch_stl)
+        if queue_makerbot.exists():
+            shutil.move(str(queue_makerbot), str(scratch_makerbot))
+        if queue_supports.exists():
+            shutil.move(str(queue_supports), str(scratch_supports))
     job.supports_enabled = enable_supports
     job.support_style = support_style
     job.scale_factor = scale_factor
@@ -1029,10 +1106,11 @@ def start_reslice(
             if (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0)
             else ""
         )
+        + (" (was queued - temporarily left the queue while this re-slices)" if was_queued else "")
     )
     log_event(session, job.id, _user_actor(session, job.user_id), "reslice_started", detail=style_detail)
     session.commit()
-    return Path(job.stl_path)
+    return Path(job.stl_path), was_queued
 
 
 def submit_draft(session: Session, job: Job) -> Job:

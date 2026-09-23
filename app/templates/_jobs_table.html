@@ -69,12 +69,17 @@
             {% endif %}
           </td>
           <td>
-            {# Edit and View 3D aren't mutually exclusive any more now
-               that queued/approved jobs have an edit page too (color
-               only - see job_edit.html) - both show together for those,
-               same as they would if shown separately. #}
+            {# Edit is full edit capability (settings/re-slice included) -
+               reachable for a queued/approved job too now, same as a
+               draft (see job_edit.html, jobs.COLOR_EDITABLE_STATUSES).
+               "Change color" is the same page, just anchored straight
+               to its color section (#color) - a quick, separate link
+               for anyone who only wants that, not the whole settings
+               form. Neither is mutually exclusive with View 3D any
+               more, so all shown together where they apply. #}
             {% if job.status.value in ('submitted', 'sliced', 'slice_failed', 'queued', 'approved') %}
               <a href="/jobs/{{ job.id }}/edit">Edit</a>
+              <a href="/jobs/{{ job.id }}/edit#color">Change color</a>
             {% endif %}
             {% if job.stl_path %}
               <a href="/jobs/{{ job.id }}/preview">View 3D</a>

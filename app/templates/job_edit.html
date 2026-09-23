@@ -1,7 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Edit - queue3d{% endblock %}
 {% block content %}
-  {% set is_draft = job.status.value in ('submitted', 'sliced', 'slice_failed') %}
+  {# Reachable for a draft, or now (per the user - "Edit was supposed to
+     be all edit capability... same as the edit before queuing") an
+     already-queued/approved job too - see jobs.COLOR_EDITABLE_STATUSES,
+     edit_draft. Full editing either way, no reduced view: re-slicing an
+     already-queued job pulls it out of the shared queue for exactly as
+     long as slicing takes (status goes to 'submitted', same as a brand
+     new upload - see jobs.start_reslice) so an admin can never approve/
+     release a file that's still being written, then automatically
+     rejoins the queue on success with a fresh wait time (see
+     jobs.slice_and_update's resubmit_to_queue) rather than needing a
+     separate manual "Submit to queue" click it was never going to need. #}
   {% if job.status.value == 'submitted' %}
     <script>
       // Full-page reload, not htmx polling: this page hosts a live
@@ -48,24 +58,14 @@
        this job slices successfully at whatever orientation is actually
        requested at that point. #}
     <p class="muted">{{ job.slice_error }}</p>
-  {% elif not is_draft %}
-    {# Queued/approved - already in the shared queue, per
-       jobs.COLOR_EDITABLE_STATUSES. Everything below this point that's
-       actually editable for a draft (resize/rotate/supports, which all
-       require a real re-slice) intentionally isn't shown here at all -
-       only color, which has zero effect on the already-sliced file
-       sitting in queue/ and needs no re-slice to change. #}
-    <p class="muted">
-      Status: <strong>{{ job.status.value }}</strong>.
-      {% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}
-    </p>
+  {% elif job.status.value in ('queued', 'approved') %}
+    <p class="muted">Status: <strong>{{ job.status.value }}</strong>.</p>
   {% endif %}
 
-  {% if is_draft %}
-    <p class="muted">
-      Orange lines are generated support material (simplified - not the
-      exact print path, just roughly where supports will be).
-    </p>
+  <p class="muted">
+    Orange lines are generated support material (simplified - not the
+    exact print path, just roughly where supports will be).
+  </p>
     <p class="muted" id="snap-hint" hidden>
       Click a surface on the model above to stand it on that face.
     </p>
@@ -212,9 +212,8 @@
         snapHint.hidden = true;
       });
     </script>
-  {% endif %}
 
-  <h3>Color</h3>
+  <h3 id="color">Color</h3>
   {# Separate, lightweight form from the settings one below - a color
      change has zero effect on the actual sliced file (see
      models.Job.color_name), so it doesn't need to pay for a full
@@ -247,42 +246,47 @@
     </p>
   {% endif %}
 
-  {% if is_draft %}
-    <h3>Settings</h3>
-    <form method="post" action="/jobs/{{ job.id }}/reslice">
-      <label><input type="checkbox" name="enable_supports" {% if job.supports_enabled %}checked{% endif %}> Generate supports</label>
-      <label>Support style<br>
-        <select name="support_style">
-          {% for value, label in support_styles.items() %}
-            <option value="{{ value }}" {% if value == job.support_style %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Scale (%, keeps the model's proportions)<br>
-        <input type="number" id="scale-percent" name="scale_percent" min="1" max="1000" step="0.01"
-               value="{{ (job.scale_factor * 100) | round(2) }}">
-      </label>
-      <button type="button" id="auto-fit-btn">Auto-resize to fit build plate</button>
-      <button type="button" id="scale-gizmo-btn">Resize (drag)</button>
+  <h3 id="settings">Settings</h3>
+  <form method="post" action="/jobs/{{ job.id }}/reslice">
+    <label><input type="checkbox" name="enable_supports" {% if job.supports_enabled %}checked{% endif %}> Generate supports</label>
+    <label>Support style<br>
+      <select name="support_style">
+        {% for value, label in support_styles.items() %}
+          <option value="{{ value }}" {% if value == job.support_style %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Scale (%, keeps the model's proportions)<br>
+      <input type="number" id="scale-percent" name="scale_percent" min="1" max="1000" step="0.01"
+             value="{{ (job.scale_factor * 100) | round(2) }}">
+    </label>
+    <button type="button" id="auto-fit-btn">Auto-resize to fit build plate</button>
+    <button type="button" id="scale-gizmo-btn">Resize (drag)</button>
+    <p class="muted">
+      Rotation (degrees, applied X then Y then Z) - rotate freely, drag the
+      handles on the model above ("Rotate (drag)"), or click "Snap to
+      surface" below and then click a face on the model to stand it on
+      that face.
+    </p>
+    <label>Rotate X<br><input type="number" id="rotate-x" name="rotate_x" step="0.01" value="{{ job.rotate_x | round(2) }}"></label>
+    <label>Rotate Y<br><input type="number" id="rotate-y" name="rotate_y" step="0.01" value="{{ job.rotate_y | round(2) }}"></label>
+    <label>Rotate Z<br><input type="number" id="rotate-z" name="rotate_z" step="0.01" value="{{ job.rotate_z | round(2) }}"></label>
+    <button type="button" id="rotate-gizmo-btn">Rotate (drag)</button>
+    <button type="button" id="snap-btn">Snap to surface</button>
+    {% if job.status.value in ('queued', 'approved') %}
       <p class="muted">
-        Rotation (degrees, applied X then Y then Z) - rotate freely, drag the
-        handles on the model above ("Rotate (drag)"), or click "Snap to
-        surface" below and then click a face on the model to stand it on
-        that face.
+        Re-slicing an already-queued job temporarily pulls it out of the
+        queue while this runs, then automatically rejoins it with a
+        fresh wait time once done - no separate "Submit to queue" step.
       </p>
-      <label>Rotate X<br><input type="number" id="rotate-x" name="rotate_x" step="0.01" value="{{ job.rotate_x | round(2) }}"></label>
-      <label>Rotate Y<br><input type="number" id="rotate-y" name="rotate_y" step="0.01" value="{{ job.rotate_y | round(2) }}"></label>
-      <label>Rotate Z<br><input type="number" id="rotate-z" name="rotate_z" step="0.01" value="{{ job.rotate_z | round(2) }}"></label>
-      <button type="button" id="rotate-gizmo-btn">Rotate (drag)</button>
-      <button type="button" id="snap-btn">Snap to surface</button>
-      <button type="submit">Re-slice</button>
-    </form>
-
-    {% if job.status.value == 'sliced' %}
-      <form method="post" action="/jobs/{{ job.id }}/submit">
-        <button type="submit">Submit to queue</button>
-      </form>
     {% endif %}
+    <button type="submit">Re-slice</button>
+  </form>
+
+  {% if job.status.value == 'sliced' %}
+    <form method="post" action="/jobs/{{ job.id }}/submit">
+      <button type="submit">Submit to queue</button>
+    </form>
   {% endif %}
 
   <p><a href="/dashboard">&laquo; Back to dashboard</a></p>

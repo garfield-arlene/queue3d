@@ -537,10 +537,17 @@ def reslice(
 ):
     """Re-slices a draft's already-uploaded file with new settings -
     reachable from its edit page (job_edit.html); no new file needed, the
-    whole point of splitting slicing from submitting. Redirects back to
-    that same edit page (not the dashboard) either way, so re-slicing
-    repeatedly to try different settings stays a loop on one page, the
-    same as it would with a real slicer's own settings panel.
+    whole point of splitting slicing from submitting. Also reachable for
+    an already-queued/approved job now (see jobs.start_reslice/
+    COLOR_EDITABLE_STATUSES), per the user - not just color, which is
+    all this page was scoped to right after it first got reused for
+    queued jobs. Redirects back to that same edit page (not the
+    dashboard) either way, so re-slicing repeatedly to try different
+    settings stays a loop on one page, the same as it would with a real
+    slicer's own settings panel - including for the queued case, which
+    naturally shows the same "slicing..." auto-reloading view a brand
+    new upload does while this runs (see job_edit.html), since
+    start_reslice puts it in the identical 'submitted' status either way.
 
     scale_percent, not a raw factor, in the form itself - matches what
     the edit page actually shows/lets someone type (see job_edit.html).
@@ -551,7 +558,7 @@ def reslice(
         support_style = "default"
     scale_factor = scale_percent / 100
     try:
-        stl_path = start_reslice(
+        stl_path, resubmit_to_queue = start_reslice(
             session,
             job,
             enable_supports,
@@ -575,6 +582,7 @@ def reslice(
         rotate_x,
         rotate_y,
         rotate_z,
+        resubmit_to_queue,
     )
     return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 
