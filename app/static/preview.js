@@ -273,6 +273,17 @@ function renderGeometry(geometry) {
     camera.updateProjectionMatrix();
     camera.position.set(radius * 1.4, -radius * 1.6, radius * 1.3);
     controls.target.set(0, 0, size.z / 2);
+    // OrbitControls' own zoom (mouse wheel / pinch) has no limit by
+    // default (minDistance 0, maxDistance Infinity) - nothing stopped it
+    // scrolling the camera distance past near or far above, at which
+    // point the model just clips out of view entirely: turning still
+    // worked (orbit doesn't change distance), but zooming either
+    // direction far enough made the model disappear completely. Bounds
+    // tied to the same radius near/far are scaled from, comfortably
+    // inside both (well past near, well short of far) so the zoom range
+    // itself can never reach the clipping planes that broke this.
+    controls.minDistance = radius * 0.1;
+    controls.maxDistance = radius * 15;
     controls.update();
 
     if (infoEl) {
