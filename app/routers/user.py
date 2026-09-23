@@ -614,11 +614,13 @@ def delete_job(
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
-    """A user removing their own still-undecided model - see
-    jobs.delete_own_job. Genuinely deletes the job and its files, no
-    undo - reachable while queued/approved, or a slice_failed draft with
-    nowhere else to go; once released and printing, an admin is already
-    acting on it, so this button doesn't show any more (see
+    """A user removing their own model - see jobs.delete_own_job for the
+    exact allowed statuses (queued/approved, a slice_failed draft with
+    nowhere else to go, or a rejected one the user doesn't want to keep
+    around) and why. Genuinely deletes the job and its files, no undo;
+    once released and printing (or any other status past what
+    delete_own_job allows), an admin is already acting on it or it's
+    settled history, so this button doesn't show any more (see
     _jobs_table.html) and a request that somehow arrives anyway is
     rejected the same way any other already-moved-on action is."""
     job = _owned_job(session, user, job_id)

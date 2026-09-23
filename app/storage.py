@@ -21,7 +21,7 @@ import zipfile
 from pathlib import Path
 
 from db import DATA_DIR
-from models import DRAFT_STATUSES
+from models import DRAFT_STATUSES, TERMINAL_STATUSES
 
 SCRATCH_DIR = DATA_DIR / "scratch"
 QUEUE_DIR = DATA_DIR / "queue"
@@ -193,17 +193,29 @@ def delete_job_files(job) -> None:
     slice_failed draft never had any to begin with.
 
     Which directory to look in depends on the job's own status, not a
-    parameter the caller has to get right: DRAFT_STATUSES (originally
-    just slice_failed, per the user - see jobs.py's own allowed-statuses
-    comment) still live in scratch/, never having been submitted;
-    everything else this is ever called for is QUEUE_STATUSES, already
-    moved to queue/ by submit_draft."""
-    stl_path, makerbot_path, supports_path = (
-        scratch_paths(job.id) if job.status in DRAFT_STATUSES else queue_paths(job.id)
-    )
+    parameter the caller has to get right: DRAFT_STATUSES still live in
+    scratch/, never having been submitted; TERMINAL_STATUSES (originally
+    just 'rejected', per the user - "I don't want to keep rejected jobs
+    around" - see jobs.py's own allowed-statuses comment) already moved
+    to archive/ by reject()/mark_finished(); everything else this is ever
+    called for is QUEUE_STATUSES, moved to queue/ by submit_draft. Getting
+    this wrong for a terminal job wouldn't just be a cosmetic miss - it
+    would delete the database row while leaving the real files behind as
+    permanently orphaned, unreachable garbage in archive/, since nothing
+    else ever looks there for a job that no longer exists."""
+    if job.status in DRAFT_STATUSES:
+        stl_path, makerbot_path, supports_path = scratch_paths(job.id)
+    elif job.status in TERMINAL_STATUSES:
+        stl_path, makerbot_path, supports_path = archive_paths(job.id)
+    else:
+        stl_path, makerbot_path, supports_path = queue_paths(job.id)
     for path in (stl_path, makerbot_path, supports_path):
         if path.exists():
             path.unlink()
+    if job.status in TERMINAL_STATUSES:
+        photo_path = archive_photo_path(job.id)
+        if photo_path.exists():
+            photo_path.unlink()
 
 
 def read_makerbot_duration_s(makerbot_path: Path) -> float | None:

@@ -496,6 +496,22 @@ def delete_own_job(session: Session, job: Job, user: User) -> None:
     NOT extended to a plain sliced draft (successfully sliced, not yet
     submitted) - that one wasn't part of this ask, and already has its
     own path forward (submit it, or keep iterating on settings).
+
+    Also rejected, per the user - "I don't want to keep rejected jobs
+    around" - the same genuine no-undo delete, not another "Restore &
+    edit" copy, which already existed for this status but leaves the
+    original rejected record sitting there regardless. Deliberately NOT
+    extended to done/failed/expired here - only rejected was actually
+    asked for, and those three raise different questions (a done job is
+    a real completed-print record; a failed one might be worth keeping to
+    see why; an expired draft never even reached a decision) worth their
+    own consideration rather than bundling in by assumption.
+    delete_job_files() (see storage.py) has to know to look in archive/
+    for a rejected job's files, not queue/ - getting that wrong would
+    delete the database row while leaving the real files behind as
+    permanently orphaned garbage, so that was fixed there directly, not
+    worked around here.
+
     No "submitted by" clause in the log detail unlike delete_old_job()'s -
     the actor label (user:<name>) already says who, since here the actor
     and the submitter are always the same person."""
@@ -507,6 +523,7 @@ def delete_own_job(session: Session, job: Job, user: User) -> None:
         JobStatus.queued,
         JobStatus.approved,
         JobStatus.slice_failed,
+        JobStatus.rejected,
     )
 
 
