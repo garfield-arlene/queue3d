@@ -1299,6 +1299,60 @@ correctly got the clear "needs re-pairing" `PrinterError` rather than a
 confusing raw exception, since that process's connection attempt was
 inherently a second session against an already-spent token.
 
+### Detecting a print started outside the app entirely
+
+**A real incident, not a hypothetical:** after a bed-adhesion failure
+mid-print, the user paused and cancelled the job using the printer's
+own physical dial (triggering `check_and_finish_active_print`'s normal
+`cancelled` detection, correctly marking it `failed`), fixed the bed,
+then reprinted directly from the printer's own on-device menu - never
+touching the app at all. The app had no way to notice: `check_and_
+finish_active_print` only ever calls `system_information()` when its
+own database *already* believes a job is `printing` - a print started
+any other way was completely invisible to it, then and after.
+
+**`jobs.printer_currently_busy()`** breaks that assumption - it reads
+the printer's live `current_process` unconditionally, not gated behind
+the app's own belief about what's happening. Genuinely still in
+progress (not yet `complete`/`cancelled`/`error` - the same three-way
+read `check_and_finish_active_print` already uses) means busy,
+regardless of how it started. `jobs.untracked_print_in_progress()`
+layers the database on top of that: busy, but nothing in the queue is
+marked `printing` - it must have started some other way.
+
+**Two places this now matters, per the user** ("we should guard against
+sending a job while it's already mid-print"):
+- `release()` checks live printer state in addition to its existing
+  database-only "already printing" check - a second job can no longer
+  be sent while the printer is physically busy, even if nothing in the
+  app's own records says so. The existing DB check still runs first
+  (cheaper, and gives the more specific "job #N is already printing"
+  message when it applies); the live check only matters for exactly the
+  case the DB check can't see.
+- The admin dashboard shows a live banner - checked fresh on every
+  page load, never cached, so it can't show stale - whenever this
+  mismatch exists. The background poller (`_log_untracked_print_once`,
+  called alongside `check_and_finish_active_print` every 15s) also logs
+  it once per episode, not on every tick for however long it continues,
+  so it's in the permanent activity log too, not just visible while an
+  admin happens to have the dashboard open at the time.
+
+**Verified with a mocked printer reply, every real case, not just
+reasoned about:** a genuinely-printing reply, an idle one, a
+just-completed one, and an unreachable printer (`PrinterError`, which
+must fail open rather than block a release on a check it couldn't
+actually perform) all produced the correct busy/not-busy read;
+`release()` actually raised and left the job untouched (still
+`approved`) when the printer disagreed with the database, and still
+succeeded normally when genuinely idle; a job already correctly tracked
+as `printing` was never misidentified as "untracked" even though the
+printer legitimately reports busy for it; the poller logged exactly
+once when an untracked episode began, stayed silent through repeated
+ticks of the same episode, and logged again for a genuinely new one
+after the first cleared. Confirmed end-to-end over real HTTP too, not
+just at the function level: the dashboard banner rendered correctly and
+a real release attempt was actually blocked with the intended message.
+
 ### Printer camera
 
 **Why this exists:** per the user, both the submitting user and an admin
