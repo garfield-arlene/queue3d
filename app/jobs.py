@@ -263,37 +263,49 @@ def corrected_duration_estimate_s(session: Session, job: Job) -> float | None:
 
 
 def filament_status(session: Session, job: Job) -> dict | None:
-    """Best-effort comparison of this job's own recorded filament use
-    (job.filament_grams, read straight from the real sliced .makerbot -
-    see storage.read_makerbot_filament_g) against the *current* inventory
-    for whatever color it selected - None whenever there's nothing
-    meaningful to compare, not just when there's nothing wrong:
+    """This job's own recorded filament use (job.filament_grams, read
+    straight from the real sliced .makerbot - see
+    storage.read_makerbot_filament_g), plus - only when there's a
+    specific color with tracked inventory to check it against - a
+    best-effort comparison against how much of that color is on hand.
 
-    - never successfully sliced yet (filament_grams is None)
-    - "Any available" was selected (color_name is None) - there's no
-      specific color to check inventory for
-    - that color no longer exists (renamed/removed since this job was
-      submitted - see models.Color's own docstring for why a job's
-      color_name is a snapshot, never a live reference to it)
-    - an admin never entered a gram total for it (grams_available is
-      None) - tracking rolls without tracking grams is a legitimate,
-      supported choice, not an error
+    Returns None only when there's truly nothing to show at all: never
+    successfully sliced yet (filament_grams is None). That's the *only*
+    reason to hide this - per the user, after noticing the whole thing,
+    including the required-amount figure, was disappearing just because
+    "Any available" was picked (no specific color to check inventory
+    for) or that color simply had no gram total entered - neither of
+    those makes the required amount itself any less known, only the
+    inventory comparison genuinely impossible.
+
+    `available_g`/`enough` are None (not present in a meaningful sense)
+    rather than the whole result being None whenever a comparison can't
+    be made: no color selected ("Any available"), that color no longer
+    exists (renamed/removed since this job was submitted - see
+    models.Color's own docstring for why a job's color_name is a
+    snapshot, never a live reference to it), or an admin never entered a
+    gram total for it (tracking rolls without tracking grams is a
+    legitimate, supported choice, not an error). A caller must check
+    `enough is not None` before trusting it either way - `not
+    result["enough"]` alone would wrongly treat "unknown" the same as
+    "not enough."
 
     Per the user, this whole feature is "best effort": the printer has no
     way to report actual remaining filament, so `available_g` here is
     only ever as fresh as the last time an admin updated
     Color.grams_available by hand - a caller displaying `enough: False`
     should say so, not present this as a hard guarantee either way."""
-    if job.filament_grams is None or not job.color_name:
+    if job.filament_grams is None:
         return None
+    result = {"required_g": job.filament_grams, "available_g": None, "enough": None}
+    if not job.color_name:
+        return result
     color = session.exec(select(Color).where(Color.name == job.color_name)).first()
     if color is None or color.grams_available is None:
-        return None
-    return {
-        "required_g": job.filament_grams,
-        "available_g": color.grams_available,
-        "enough": color.grams_available >= job.filament_grams,
-    }
+        return result
+    result["available_g"] = color.grams_available
+    result["enough"] = color.grams_available >= job.filament_grams
+    return result
 
 
 def format_duration(seconds: float) -> str:

@@ -235,7 +235,11 @@
   {% if filament %}
     <p class="muted">
       This job uses about {{ filament.required_g | round(1) }}g of filament.
-      {% if not filament.enough %}
+      {# enough is None (not just falsy) whenever there's no specific
+         color/tracked inventory to compare against at all - "Any
+         available" was picked, say - which must not be shown as if it
+         meant "not enough". #}
+      {% if filament.enough == false %}
         <span class="error">Only {{ filament.available_g | round(1) }}g of
         {{ job.color_name }} on hand, per the admin-tracked inventory
         (best effort - may be out of date).</span>

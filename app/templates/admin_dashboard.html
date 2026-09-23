@@ -71,7 +71,10 @@
           <td><a href="/admin/jobs/{{ job.id }}/log">Log</a></td>
           <td>
             {{ job.color_name or "Any available" }}
-            {% if row.filament and not row.filament.enough %}
+            {# enough is None, not just falsy, when there's no specific
+               color/tracked inventory to compare against at all - must
+               not read as "not enough" in that case. #}
+            {% if row.filament and row.filament.enough == false %}
               <br><span class="error">
                 only {{ row.filament.available_g | round(1) }}g {{ job.color_name }} on
                 hand, needs ~{{ row.filament.required_g | round(1) }}g (best effort - see Colors)
