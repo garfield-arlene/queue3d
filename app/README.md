@@ -3114,6 +3114,33 @@ they agreed with each other. The only check that catches a systematic
 transform bug is comparing against an independent third source (here: the
 original STL's own dimensions) directly.
 
+### A real bug found by the user: zooming out (or in) far enough hid the model entirely
+
+**Orbit worked fine; only zoom showed the symptom - a real clue, not a
+coincidence.** `renderGeometry()`'s own camera framing scales
+`camera.near`/`camera.far` to each model's radius (needed so a tiny
+calibration cube and a bed-filling model both start in frame - a fixed
+far plane would clip a large model, a fixed near plane would swallow a
+small one - see the comment right above it), but `OrbitControls`' own
+zoom distance was never bounded to match. Its defaults (`minDistance`
+`0`, `maxDistance` `Infinity`) let the camera dolly straight past
+either clipping plane on a big-enough scroll/pinch - orbiting doesn't
+change distance at all, so it was never affected, which is exactly why
+turning kept working while zooming made the model vanish. Confirmed via
+`git blame`: a genuine pre-existing bug from the original centroid-fix
+commit (`3592f35`), not a regression from anything built this session -
+the user just happened to hit it now.
+
+**Fixed** - `controls.minDistance`/`maxDistance` now scale with the
+same `radius` `near`/`far` already do, comfortably inside both (well
+past `near`, well short of `far`), set in the exact same code path that
+recomputes `near`/`far` on every (re)scale, not just the initial load -
+so the bound can never go stale after a resize, gizmo drag, or auto-fit.
+Not verified visually in this environment (no browser available
+headlessly here, and no automated test covers this viewer) - pending
+the user's own confirmation in real use before this is considered
+actually done, not just reasoned through.
+
 ## Security checks (CI)
 
 `.github/workflows/security.yml` runs on every push and pull request -
