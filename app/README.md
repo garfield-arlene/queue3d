@@ -1207,6 +1207,28 @@ true` - including a filename-matched job's photo-capture attempt still
 running (and failing gracefully, exactly as the manual path already
 does) rather than being skipped for the automatic path.
 
+### `finished_at` now stamped after the photo attempt, not before
+
+Per the user, once the above meant `mark_finished()` typically runs
+within ~15s of the printer actually reporting a print over: there's no
+longer a real reason to stamp `Job.finished_at` at the very start of
+that function, before spending a few seconds trying to reach the
+camera, rather than letting the whole "wrap this job up" sequence
+(status, archiving, photo attempt) finish first. `capture_photo()`'s own
+connect+capture timeouts keep the worst case bounded - well under a
+minute even on total camera failure (see `printer.py`) - so this can't
+reintroduce anything close to the multi-minute drift a slow-to-notice
+manual "Mark done" click used to cause, which is what this timestamp's
+accuracy actually matters for: `_duration_correction_factor` feeds
+directly off `finished_at - released_at` for every future print's ETA.
+
+Verified directly, both outcomes, with a stubbed `capture_photo` rather
+than just reasoned about: a simulated 2s successful capture delayed the
+recorded `finished_at` by exactly ~2s; a simulated 1s failed capture
+(`PrinterError`) still correctly delayed it by ~1s while leaving
+`photo_path` `None` and `failure_reason` set - confirming the reorder
+changes *when* `finished_at` lands, not what else gets recorded.
+
 ### Persistent printer connection
 
 **Why this exists - a real, live-confirmed hardware limitation, not
