@@ -2870,13 +2870,32 @@ never silently change what an already-submitted job says it was printed
 in; that job's own history is whatever was actually selected, at the
 time it was selected, full stop. The tradeoff this accepts: once a
 color is deleted, there's no live row left to check a job's usage
-against any more, so `jobs.filament_status` (the shared helper behind
-both the admin queue's warning and the job-edit page's own display)
-just returns `None` for it - "nothing meaningful to compare," the same
-answer it gives for a job that selected "Any available," was never
-successfully sliced, or whose color was never given a gram total in the
-first place. None of those are treated as errors; they're all
-legitimate reasons there's simply nothing to check yet.
+against any more.
+
+**Real bug, caught by the user immediately after uploading a job with
+"Any available" selected: the required-filament figure itself was
+disappearing, not just the inventory comparison.** `jobs.filament_status`
+originally returned `None` outright - hiding the *entire* result,
+required amount included - the moment there was no specific color with
+a tracked gram total to compare against (no color selected, that color
+since deleted, or an admin simply never entered a gram total for it).
+That conflated two genuinely different things: the required amount
+(known the instant slicing succeeds, exactly like the duration estimate
+that kept showing fine right alongside it) needs neither a color nor
+any inventory data at all; only the *comparison* against how much is on
+hand does. Fixed: `filament_status` now returns `{required_g,
+available_g, enough}` in every case where the job's actually been
+sliced, with `available_g`/`enough` staying `None` (not the whole
+result) whenever there's nothing to compare against - "unknown," not
+"not enough." Every caller checking `.enough` had to change from `not
+X.enough` to `X.enough == false` accordingly, since `not None` is `True`
+in both Python and Jinja - the original check would have shown the
+"not enough" warning for precisely the "nothing to compare" case this
+fix exists for, the moment the required amount started rendering there
+too. Verified directly across all four real cases (no color, an
+untracked color, a tracked-but-short color, a tracked-and-sufficient
+one) landing on exactly `None`/`None`/`False`/`True`, and end-to-end
+over real HTTP confirming the rendered page.
 
 Changing a job's color (`POST /jobs/{id}/color`, reachable from the
 edit page) is deliberately a separate, lightweight route from
