@@ -697,6 +697,28 @@ def printer_currently_busy() -> dict | None:
     return current
 
 
+def _job_from_makerbot_filename(session: Session, filename: str | None) -> Job | None:
+    """Recovers the actual Job a raw printer-reported filename refers to,
+    if it matches this app's own "<job id>.makerbot" naming convention
+    (see storage.queue_paths/archive_paths - every file this app ever
+    sends is named exactly this way) - used by untracked_print_in_progress
+    below to turn a bare "29.makerbot" into something an admin can
+    actually recognize. Per the user, after noticing the banner showed
+    only the raw filename: the printer's own on-device "reprint" option
+    resends the exact same file that was originally sent, so its name
+    already carries the original job's id - there was no reason to
+    settle for a meaningless-looking number when the real job (and
+    everything about it) is one lookup away. None if the filename
+    doesn't parse as one of our ids at all, or that id no longer exists
+    (e.g. genuinely deleted since)."""
+    if not filename:
+        return None
+    stem = Path(filename).stem  # strips any directory prefix and the .makerbot extension in one step
+    if not stem.isdigit():
+        return None
+    return session.get(Job, int(stem))
+
+
 def untracked_print_in_progress(session: Session) -> dict | None:
     """The printer genuinely mid-print (see printer_currently_busy above)
     while nothing in our own queue is marked 'printing' - meaning
@@ -704,14 +726,28 @@ def untracked_print_in_progress(session: Session) -> dict | None:
     this app. Shared by release()'s own guard against sending a second
     job onto a printer that's already busy this way, and by the admin
     dashboard's live banner (routers/admin.py's _dashboard_context) -
-    checked fresh on every call, never cached, so it can't show stale."""
+    checked fresh on every call, never cached, so it can't show stale.
+
+    The returned dict is whatever printer_currently_busy provides, plus
+    two keys this function adds: 'job' (the actual Job the printer's own
+    filename resolves to via _job_from_makerbot_filename above, or None
+    if it doesn't match/no longer exists) and 'job_user_name' (that
+    job's submitter, resolved here rather than making a template do its
+    own database lookup)."""
     current = printer_currently_busy()
     if current is None:
         return None
     already_tracked = session.exec(select(Job).where(Job.status == JobStatus.printing)).first()
     if already_tracked is not None:
         return None
-    return current
+    result = dict(current)
+    job = _job_from_makerbot_filename(session, current.get("filename"))
+    result["job"] = job
+    result["job_user_name"] = None
+    if job is not None:
+        submitter = session.get(User, job.user_id)
+        result["job_user_name"] = submitter.name if submitter else None
+    return result
 
 
 def release(session: Session, job: Job, admin: Admin) -> Job:

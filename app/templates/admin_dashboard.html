@@ -32,7 +32,13 @@
   {% if untracked_print %}
     <p class="error">
       The printer itself reports it's actively printing
-      "{{ untracked_print.filename or "an unknown file" }}", but nothing
+      {% if untracked_print.job %}
+        <a href="/admin/jobs/{{ untracked_print.job.id }}/log">job #{{ untracked_print.job.id }}</a>
+        ("{{ untracked_print.job.original_filename }}"{% if untracked_print.job_user_name %}, submitted by {{ untracked_print.job_user_name }}{% endif %})
+        - recorded here as "{{ untracked_print.job.status.value }}"
+      {% else %}
+        "{{ untracked_print.filename or "an unknown file" }}"
+      {% endif %}, but nothing
       in the queue is marked as printing - it was most likely started
       directly from the printer's own controls, not released through
       here. Releasing another job right now will be blocked until this
