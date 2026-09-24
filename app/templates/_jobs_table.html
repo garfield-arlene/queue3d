@@ -114,23 +114,29 @@
             {% endif %}
           </td>
           <td>
+            {# Carries the current filter query string along on every
+               action (see routers/user.py's filters.filtered_redirect) -
+               so acting on a job from a filtered view lands back on
+               that same filtered view instead of silently resetting to
+               unfiltered, unless the action itself just emptied it. #}
+            {% set qs = ('?' + request.url.query) if request.url.query else '' %}
             {% if job.status.value == 'sliced' %}
-              <form method="post" action="/jobs/{{ job.id }}/submit" style="display:inline">
+              <form method="post" action="/jobs/{{ job.id }}/submit{{ qs }}" style="display:inline">
                 <button type="submit">Submit to queue</button>
               </form>
             {% elif job.status.value in ('queued', 'approved', 'slice_failed', 'rejected') %}
-              <form method="post" action="/jobs/{{ job.id }}/delete" style="display:inline"
+              <form method="post" action="/jobs/{{ job.id }}/delete{{ qs }}" style="display:inline"
                     onsubmit="return confirm('Permanently delete {{ job.original_filename }}? This cannot be undone.')">
                 <button type="submit">Delete</button>
               </form>
             {% endif %}
             {% if job.status.value in ('rejected', 'failed', 'expired', 'done') %}
-              <form method="post" action="/jobs/{{ job.id }}/restore" style="display:inline">
+              <form method="post" action="/jobs/{{ job.id }}/restore{{ qs }}" style="display:inline">
                 <button type="submit">Restore &amp; edit</button>
               </form>
             {% endif %}
             {% if job.status.value == 'done' %}
-              <form method="post" action="/jobs/{{ job.id }}/reprint" style="display:inline">
+              <form method="post" action="/jobs/{{ job.id }}/reprint{{ qs }}" style="display:inline">
                 <button type="submit">Reprint</button>
               </form>
             {% endif %}

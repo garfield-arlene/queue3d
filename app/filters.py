@@ -15,8 +15,48 @@ over client-side state (see e.g. the plain <form method=post> uploads).
 from datetime import date, datetime, time, timedelta
 from datetime import timezone as _utc
 
+from fastapi import Request
+from fastapi.responses import RedirectResponse
+
 import templates_env
 from models import Job, JobEvent, User
+
+
+def query_suffix(request: Request) -> str:
+    """"?a=b&c=d" for the current request's own query string, or "" if
+    there isn't one - appended to an action's redirect/form target so
+    acting on a row from a filtered view (any of routers/admin.py's
+    queue/user actions, or routers/user.py's own submit/delete/reprint)
+    lands back on that same filtered view, instead of silently resetting
+    to unfiltered the instant any action is taken. Shared by both
+    routers - not admin-specific - since a plain user's own dashboard has
+    exactly the same filter-form-above-a-table shape (see
+    _job_filters.html) and the exact same problem. See filtered_redirect
+    below and every action <form>'s own action= attribute in
+    admin_dashboard.html/admin_old_jobs.html/admin_users.html/
+    _jobs_table.html."""
+    return f"?{request.url.query}" if request.url.query else ""
+
+
+def filtered_redirect(path: str, request: Request, still_has_rows: bool) -> RedirectResponse:
+    """Redirects back to `path`, keeping the current request's own filter
+    query string only if that same filter would still show at least one
+    row after the action that was just performed - per the user:
+    "performing an action with the filter in place should keep the
+    filter in place, unless that action results in 0 records for that
+    filter." Deleting the *last* job matching a status/color/etc. filter
+    and landing back on a filtered view showing nothing, with the filter
+    values still sitting in the form and no obvious sign anything even
+    happened, would read as broken even though the action genuinely
+    succeeded - dropping the filter in that one case (only that case)
+    goes back to a real, populated view instead. `still_has_rows` is
+    computed by re-querying with the exact same filter right after the
+    action - a real count, not the pre-action row count minus one, which
+    would be wrong the moment the action changes something other rows
+    could match against too (e.g. approving a job that itself no longer
+    matches a `status=queued` filter, but leaves others that still do).
+    Shared by both routers (see query_suffix above)."""
+    return RedirectResponse(f"{path}{query_suffix(request) if still_has_rows else ''}", status_code=303)
 
 
 def local_date_bounds(date_from: str | None, date_to: str | None) -> tuple[datetime | None, datetime | None]:

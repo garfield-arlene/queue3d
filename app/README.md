@@ -2977,21 +2977,46 @@ place, unless that action results in 0 records for that filter." Keeping
 `?status=queued` after approving the *only* queued job matching it would
 land back on a real page that just looks broken - the filter's own
 fields still showing what was typed, the table showing nothing, with no
-obvious way back to everything else. `routers/admin.py`'s
-`_filtered_redirect(path, request, still_has_rows)` re-runs the exact
-same filtered query right after the action (a real, fresh count - not
-the pre-action count minus one, which would be wrong the instant the
-action itself changes whether another row matches too, not just removes
-the acted-on row some other way) and only keeps the query string if that
-still returns at least one row; every queue action and every user action
-(disable/enable/reset PIN/delete, including both "delete all" variants)
-goes through it now. Verified directly against a real queue with two
-jobs sharing a color: rejecting the first (one still matches) kept
-`?color=Red` on the redirect; rejecting the second (now the last match)
-redirected to the bare, unfiltered `/admin/dashboard` instead. Same
-confirmed on the users page: disabling the one remaining user matching
-`?status=active` dropped that filter on redirect, not kept it pointing
-at an empty table.
+obvious way back to everything else. `filters.filtered_redirect(path,
+request, still_has_rows)` (shared by both routers - see below) re-runs
+the exact same filtered query right after the action (a real, fresh
+count - not the pre-action count minus one, which would be wrong the
+instant the action itself changes whether another row matches too, not
+just removes the acted-on row some other way) and only keeps the query
+string if that still returns at least one row. Verified directly against
+a real queue with two jobs sharing a color: rejecting the first (one
+still matches) kept `?color=Red` on the redirect; rejecting the second
+(now the last match) redirected to the bare, unfiltered
+`/admin/dashboard` instead. Same confirmed on the users page: disabling
+the one remaining user matching `?status=active` dropped that filter on
+redirect, not kept it pointing at an empty table.
+
+**A real gap in the first version of this fix, caught by the user
+directly:** "The delete operation is not retaining the filter when there
+were 2 before the operation. The filter I'm using is `status=slice_failed`
+as a user." `filtered_redirect`/`query_suffix` had only been wired into
+`routers/admin.py` - the equivalent user-side actions
+(submit/delete/restore/reprint on `/dashboard`, and the reported one)
+were still doing a plain, unconditional `RedirectResponse("/dashboard")`
+with no filter carried at all, and `_jobs_table.html`'s own action
+`<form>`s (unlike `admin_dashboard.html`/`admin_old_jobs.html`/
+`admin_users.html`, all fixed the first time) never got a query-string
+suffix on their `action=` attribute either - meaning `request.query_params`
+would have been empty on those POSTs even if the redirect logic had been
+there. Fixed by moving `query_suffix`/`filtered_redirect` out of
+`routers/admin.py` into `filters.py` itself (both are generic - neither
+one ever referenced anything admin-specific), and wiring them into
+`routers/user.py`'s four dashboard-returning actions the same way, plus
+adding the missing `{{ qs }}` suffix to `_jobs_table.html`'s forms. The
+upload flow's client-side redirect (`user_dashboard.html`'s upload JS,
+which navigates on its own after the XHR completes rather than
+following the server's actual redirect target) got the equivalent fix -
+`window.location.search` appended - though with no "still has rows"
+check, since an upload only ever *adds* a job, never removes one a
+filter was already matching. Verified by reproducing the user's exact
+report: two `slice_failed` jobs, `?status=slice_failed` active - deleting
+the first (one still matches) kept the filter on redirect; deleting the
+second (now the last match) correctly dropped it.
 
 **"Delete all" bulk actions respect the active filter, not just the
 display:** `jobs.delete_all_old_jobs` and `delete_all_users` used to

@@ -26,8 +26,10 @@ from db import get_session
 from filters import (
     apply_user_filters,
     event_filter_params,
+    filtered_redirect as _filtered_redirect,
     job_filter_params,
     job_filters_from_query_params,
+    query_suffix as _query_suffix,
     user_filter_params,
 )
 from jobs import (
@@ -74,35 +76,6 @@ _QUEUE_STATUS_VALUES = [s.value for s in QUEUE_STATUSES]
 _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
 
 
-def _query_suffix(request: Request) -> str:
-    """"?a=b&c=d" for the current request's own query string, or "" if
-    there isn't one - appended to a queue action's redirect/form target
-    so approving/rejecting/releasing/etc. from a filtered view lands back
-    on that same filtered view, instead of silently resetting to
-    unfiltered the instant any action is taken. See _perform_action below
-    and every action <form>'s own action= attribute in
-    admin_dashboard.html/admin_old_jobs.html."""
-    return f"?{request.url.query}" if request.url.query else ""
-
-
-def _filtered_redirect(path: str, request: Request, still_has_rows: bool) -> RedirectResponse:
-    """Redirects back to `path`, keeping the current request's own filter
-    query string only if that same filter would still show at least one
-    row after the action that was just performed - per the user:
-    "performing an action with the filter in place should keep the
-    filter in place, unless that action results in 0 records for that
-    filter." Approving the *last* job matching a status/color/etc. filter
-    and landing back on a filtered view showing nothing, with the filter
-    values still sitting in the form and no obvious sign anything even
-    happened, would read as broken even though the action genuinely
-    succeeded - dropping the filter in that one case (only that case)
-    goes back to a real, populated view instead. `still_has_rows` is
-    computed by re-querying with the exact same filter right after the
-    action - a real count, not the pre-action row count minus one, which
-    would be wrong the moment the action changes something other rows
-    could match against too (e.g. approving a job that itself no longer
-    matches a `status=queued` filter, but leaves others that still do)."""
-    return RedirectResponse(f"{path}{_query_suffix(request) if still_has_rows else ''}", status_code=303)
 
 
 @router.get("/login")

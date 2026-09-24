@@ -118,7 +118,12 @@
       });
       xhr.addEventListener("load", () => {
         if (xhr.status >= 200 && xhr.status < 400) {
-          window.location.href = "/dashboard";
+          // Carries the current page's own filter query string along
+          // (see filters.filtered_redirect) - a fresh upload only ever
+          // *adds* a job, never removes one a filter was already
+          // matching, so there's no "did this just empty the filter"
+          // case to check here the way a delete/reject/etc. has.
+          window.location.href = "/dashboard" + window.location.search;
           return;
         }
         uploadProgress.hidden = true;

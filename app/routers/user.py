@@ -16,7 +16,7 @@ from auth import (
     verify_secret,
 )
 from db import get_session
-from filters import job_filter_params
+from filters import filtered_redirect, job_filter_params, job_filters_from_query_params
 from jobs import (
     JobActionError,
     corrected_duration_estimate_s,
@@ -617,6 +617,15 @@ def reslice(
     return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 
 
+def _still_has_rows(session: Session, user: User, filters: dict) -> bool:
+    """Whether the given filter would still show at least one of this
+    user's own jobs right now - see filters.filtered_redirect. Reuses
+    _dashboard_context wholesale (including its own "user"-key stripping
+    for jobs_for_user) rather than re-implementing the exact same filter
+    application a second time here."""
+    return bool(_dashboard_context(session, user, filters=filters)["rows"])
+
+
 @router.post("/jobs/{job_id}/submit")
 def submit(
     job_id: int,
@@ -628,13 +637,17 @@ def submit(
     Back to the dashboard either way: once submitted there's nothing left
     to edit, and a failure here means the job wasn't in a submittable
     state any more (e.g. a duplicate click), which the dashboard's own
-    status column already explains."""
+    status column already explains. Carries the current filter query
+    string back (see filters.filtered_redirect) - dropped only if it
+    would now show nothing (e.g. this was the last job matching
+    status=sliced, and submitting just moved it to queued)."""
     job = _owned_job(session, user, job_id)
+    filters = job_filters_from_query_params(request.query_params)
     try:
         submit_draft(session, job)
     except JobActionError as e:
         request.session["flash_error"] = str(e)
-    return RedirectResponse("/dashboard", status_code=303)
+    return filtered_redirect("/dashboard", request, _still_has_rows(session, user, filters))
 
 
 @router.post("/jobs/{job_id}/delete")
@@ -652,13 +665,17 @@ def delete_job(
     delete_own_job allows), an admin is already acting on it or it's
     settled history, so this button doesn't show any more (see
     _jobs_table.html) and a request that somehow arrives anyway is
-    rejected the same way any other already-moved-on action is."""
+    rejected the same way any other already-moved-on action is. Carries
+    the current filter query string back (see filters.filtered_redirect) -
+    dropped only if it would now show nothing (e.g. this was the last
+    job matching the current filter)."""
     job = _owned_job(session, user, job_id)
+    filters = job_filters_from_query_params(request.query_params)
     try:
         delete_own_job(session, job, user)
     except JobActionError as e:
         request.session["flash_error"] = str(e)
-    return RedirectResponse("/dashboard", status_code=303)
+    return filtered_redirect("/dashboard", request, _still_has_rows(session, user, filters))
 
 
 @router.post("/jobs/{job_id}/restore")
@@ -677,13 +694,16 @@ def restore(
     archived job's own settings rather than plain defaults - lands
     straight on the new draft's own edit page (not the dashboard, unlike
     upload()) since there's always exactly one resulting job, never a
-    zip's worth of several."""
+    zip's worth of several. On failure only, back to the dashboard - see
+    filters.filtered_redirect for why the current filter query string
+    carries through there too."""
     job = _owned_job(session, user, job_id)
     try:
         new_job = restore_job(session, job, user)
     except JobActionError as e:
         request.session["flash_error"] = str(e)
-        return RedirectResponse("/dashboard", status_code=303)
+        filters = job_filters_from_query_params(request.query_params)
+        return filtered_redirect("/dashboard", request, _still_has_rows(session, user, filters))
 
     background_tasks.add_task(
         slice_and_update,
@@ -711,10 +731,12 @@ def reprint(
     scoped to `done` only and skips slicing entirely (reusing the exact
     archived .makerbot). Lands back on the dashboard, same as a normal
     upload/submit - no background task to schedule here, unlike restore
-    above, since nothing needs slicing."""
+    above, since nothing needs slicing. Carries the current filter query
+    string back (see filters.filtered_redirect)."""
     job = _owned_job(session, user, job_id)
+    filters = job_filters_from_query_params(request.query_params)
     try:
         reprint_job(session, job, user)
     except JobActionError as e:
         request.session["flash_error"] = str(e)
-    return RedirectResponse("/dashboard", status_code=303)
+    return filtered_redirect("/dashboard", request, _still_has_rows(session, user, filters))
