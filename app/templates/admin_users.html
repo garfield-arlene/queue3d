@@ -14,9 +14,16 @@
   {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
   {% if flash_notice %}<p class="notice">{{ flash_notice }}</p>{% endif %}
 
+  {% include "_user_filters.html" %}
+
   {% if not users %}
     <p class="muted">No users yet.</p>
   {% else %}
+    {# Carries the current filter query string along on every action (see
+       routers/admin.py's _query_suffix) - so acting on a user from a
+       filtered view lands back on that same filtered view instead of
+       silently resetting to unfiltered. #}
+    {% set qs = ('?' + request.url.query) if request.url.query else '' %}
     <table>
       <tr><th>Name</th><th>Status</th><th>Created</th><th>Actions</th></tr>
       {% for user in users %}
@@ -26,19 +33,19 @@
           <td class="muted">{{ user.created_at | local_time('%Y-%m-%d') }}</td>
           <td>
             {% if user.disabled %}
-              <form method="post" action="/admin/users/{{ user.id }}/enable" style="display:inline">
+              <form method="post" action="/admin/users/{{ user.id }}/enable{{ qs }}" style="display:inline">
                 <button type="submit">Re-enable</button>
               </form>
             {% else %}
-              <form method="post" action="/admin/users/{{ user.id }}/disable" style="display:inline">
+              <form method="post" action="/admin/users/{{ user.id }}/disable{{ qs }}" style="display:inline">
                 <button type="submit">Disable</button>
               </form>
             {% endif %}
-            <form method="post" action="/admin/users/{{ user.id }}/reset_pin" style="display:inline"
+            <form method="post" action="/admin/users/{{ user.id }}/reset_pin{{ qs }}" style="display:inline"
                   onsubmit="return confirm('Reset {{ user.name }}\'s PIN? Their old PIN stops working immediately - the new one only shows once, right here.')">
               <button type="submit">Reset PIN</button>
             </form>
-            <form method="post" action="/admin/users/{{ user.id }}/delete" style="display:inline"
+            <form method="post" action="/admin/users/{{ user.id }}/delete{{ qs }}" style="display:inline"
                   onsubmit="return confirm('Permanently delete {{ user.name }}? This cannot be undone.')">
               <button type="submit">Delete</button>
             </form>
@@ -47,8 +54,8 @@
       {% endfor %}
     </table>
 
-    <form method="post" action="/admin/users/delete_all"
-          onsubmit="return confirm('Permanently delete ALL {{ users|length }} users? This cannot be undone, and will fail if any of them still have a job in the queue or printing.')">
+    <form method="post" action="/admin/users/delete_all{{ qs }}"
+          onsubmit="return confirm('Permanently delete ALL {{ users|length }} users shown here? This cannot be undone, and will fail if any of them still have a job in the queue or printing.')">
       <button type="submit">Delete all users</button>
     </form>
   {% endif %}

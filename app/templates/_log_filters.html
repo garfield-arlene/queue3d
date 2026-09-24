@@ -1,0 +1,32 @@
+{# GET-based filter form for the admin activity log - see
+   filters.apply_event_filters/jobs.all_events. Distinct from
+   _job_filters.html: this page isn't a Job listing at all (models.JobEvent),
+   so its own field set doesn't line up with that partial's - a filename/
+   detail substring, an actor substring, an exact-match action (a real
+   dropdown of what's actually been recorded - see jobs.distinct_event_actions),
+   and a date range on JobEvent.at.
+
+   Field order matches admin_log.html's own column order (When, File,
+   Actor, Action, Detail) left-to-right, per the user's explicit
+   preference - date first, then q, then actor, then action.
+
+   Included with the parent template's own context (admin_log.html sets
+   filter_action/filter_actions plus filter_q/actor/action/date_from/
+   date_to - see routers/admin.py's activity_log_page). #}
+<form method="get" action="{{ filter_action }}" class="filters">
+  <label class="muted">When
+    <input type="date" name="date_from" value="{{ filter_date_from or '' }}">
+    &ndash;
+    <input type="date" name="date_to" value="{{ filter_date_to or '' }}">
+  </label>
+  <input type="text" name="q" placeholder="Filename/detail contains..." value="{{ filter_q or '' }}" size="20">
+  <input type="text" name="actor" placeholder="Actor contains..." value="{{ filter_actor or '' }}" size="14">
+  <select name="action">
+    <option value="">Any action</option>
+    {% for value in filter_actions %}
+      <option value="{{ value }}" {% if filter_action_value == value %}selected{% endif %}>{{ value }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Filter</button>
+  <a href="{{ filter_action }}">Clear filters</a>
+</form>

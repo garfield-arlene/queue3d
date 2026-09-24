@@ -66,6 +66,15 @@
        since this is the only other place that needs any highlight at
        all beyond plain text or .error. */
     .notice { background: var(--detail-bg); border: 1px solid var(--border-strong); border-radius: 4px; padding: 0.5rem 0.75rem; }
+    /* Overrides the generic `form` rule above (a narrow, one-field-per-row
+       grid, right for a login/settings form) for the GET-based filter bar
+       above every job/log/user table (see _job_filters.html/
+       _log_filters.html/_user_filters.html) - several short fields meant
+       to sit in one horizontal row above a wide table, not stack
+       vertically in a 320px column. flex-wrap so a narrow viewport wraps
+       fields onto more than one line instead of overflowing. */
+    form.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; max-width: none; margin-bottom: 1rem; }
+    form.filters input, form.filters select { font-size: 0.9rem; padding: 0.3rem 0.4rem; }
     table { border-collapse: collapse; width: 100%; }
     th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
     .preview-container { width: 100%; max-width: 500px; height: 350px; border: 1px solid var(--border-strong); touch-action: none; }

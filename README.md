@@ -408,10 +408,11 @@ Managing user accounts:
   most-recent-first table across every job, which is the actual "admin
   log view"; `/admin/jobs/{id}/log` for one job's own history) - see
   Features below.
-- Filters for the global log (`/admin/log`) - by job, user/admin, action
-  type, date range. Explicitly deferred by the user rather than built
-  alongside the log itself; currently just capped at the 500 most recent
-  entries with no way to narrow that down.
+- Done - filters for the global log (`/admin/log`, by actor/action/date
+  range/filename or detail substring), and for every other job/user
+  listing in the app besides (substring, color, status, est. print time,
+  date range, and submitter where relevant) - see app/README.md's
+  "Filters, on every job/log/user listing" for the full design.
 
 **Backups & recovery**
 - Let admins see a list of backups taken and a manifest of what's actually

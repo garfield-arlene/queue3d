@@ -1,0 +1,61 @@
+{# Shared GET-based filter form for every job-listing table (user
+   dashboard, admin queue, old jobs, finished jobs) - see filters.py's
+   apply_job_filters, which every one of those routes runs its query
+   through. One shared partial rather than a near-duplicate form on each
+   page: every field here maps 1:1 onto a param apply_job_filters()
+   itself already understands.
+
+   Plain GET, not POST or htmx - a filtered view's URL is bookmarkable
+   and shareable, and works with zero JavaScript (see filters.py's own
+   docstring for the full reasoning). Included with the parent
+   template's own context (Jinja2's include default), which is expected
+   to set:
+     filter_action        - this page's own path (the form's target)
+     filter_q/color/status/min_minutes/max_minutes/date_from/date_to/user
+                           - current values, so the form keeps showing
+                             what's actually applied after a submit
+     filter_colors         - jobs.distinct_job_colors()
+     filter_statuses       - the raw JobStatus values this page's own
+                             status dropdown should offer (scoped per
+                             view - e.g. just queued/approved/printing
+                             on the admin queue, not every status that
+                             exists)
+     filter_date_label     - what this page's date range actually means
+                             ("Uploaded" / "Queued" / "Finished")
+     filter_show_user      - whether to offer the submitter-name field
+                             (admin views only; a user's own dashboard
+                             has no submitter column to filter on)
+
+   Field order matches each including page's own table column order
+   left-to-right, per the user's explicit preference. #}
+<form method="get" action="{{ filter_action }}" class="filters">
+  {% if filter_show_user %}
+    <input type="text" name="user" placeholder="Submitted by..." value="{{ filter_user or '' }}" size="14">
+  {% endif %}
+  <input type="text" name="q" placeholder="Filename contains..." value="{{ filter_q or '' }}" size="18">
+  <select name="color">
+    <option value="">Any color</option>
+    <option value="__any__" {% if filter_color == "__any__" %}selected{% endif %}>(no color set)</option>
+    {% for c in filter_colors %}
+      <option value="{{ c }}" {% if filter_color == c %}selected{% endif %}>{{ c }}</option>
+    {% endfor %}
+  </select>
+  <select name="status">
+    <option value="">Any status</option>
+    {% for value in filter_statuses %}
+      <option value="{{ value }}" {% if filter_status == value %}selected{% endif %}>{{ value }}</option>
+    {% endfor %}
+  </select>
+  <label class="muted">{{ filter_date_label }}
+    <input type="date" name="date_from" value="{{ filter_date_from or '' }}">
+    &ndash;
+    <input type="date" name="date_to" value="{{ filter_date_to or '' }}">
+  </label>
+  <label class="muted">Est. print time (min)
+    <input type="number" name="min_minutes" value="{{ filter_min_minutes if filter_min_minutes is not none else '' }}" min="0" step="1" size="4" placeholder="min">
+    &ndash;
+    <input type="number" name="max_minutes" value="{{ filter_max_minutes if filter_max_minutes is not none else '' }}" min="0" step="1" size="4" placeholder="max">
+  </label>
+  <button type="submit">Filter</button>
+  <a href="{{ filter_action }}">Clear filters</a>
+</form>

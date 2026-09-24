@@ -16,10 +16,12 @@ from auth import (
     verify_secret,
 )
 from db import get_session
+from filters import job_filter_params
 from jobs import (
     JobActionError,
     corrected_duration_estimate_s,
     delete_own_job,
+    distinct_job_colors,
     filament_status,
     format_duration,
     jobs_for_user,
@@ -221,8 +223,17 @@ def _colors_for_job(session: Session, job: Job) -> list[Color]:
 COLOR_EDITABLE_STATUSES = DRAFT_STATUSES | {JobStatus.queued, JobStatus.approved}
 
 
-def _dashboard_context(session: Session, user: User, flash_error: str | None = None):
-    jobs = jobs_for_user(session, user.id)
+def _dashboard_context(session: Session, user: User, flash_error: str | None = None, filters: dict | None = None):
+    filters = filters or {}
+    # "user" (a submitter-name filter) is part of the shared
+    # filters.job_filter_params dependency for every admin job-listing
+    # route, but meaningless here - this view is already scoped to one
+    # user, with no submitter column to filter on at all (see
+    # filter_show_user below) - jobs_for_user itself has no such
+    # parameter, so it's dropped before the call rather than passed
+    # through unused.
+    job_filters = {k: v for k, v in filters.items() if k != "user"}
+    jobs = jobs_for_user(session, user.id, **job_filters)
     rows = []
     for job in jobs:
         estimate_s = corrected_duration_estimate_s(session, job)
@@ -245,6 +256,19 @@ def _dashboard_context(session: Session, user: User, flash_error: str | None = N
         "support_styles": SUPPORT_STYLES,
         "max_zip_models": MAX_ZIP_MODEL_FILES,
         "colors": _enabled_colors(session),
+        # Filter form state - see templates/_job_filters.html. Every job
+        # this user has ever had can be in any status at all (unlike the
+        # admin queue/finished views, each scoped to one status subset),
+        # so the status dropdown offers every JobStatus value with no
+        # narrowing; "Uploaded" (created_at) is the closest thing this
+        # view has to one single "date" column, since a draft that's
+        # never been queued has no queued_at/finished_at yet at all.
+        "filter_action": "/dashboard",
+        "filter_colors": distinct_job_colors(session),
+        "filter_statuses": [s.value for s in JobStatus],
+        "filter_date_label": "Uploaded",
+        "filter_show_user": False,
+        **{f"filter_{k}": v for k, v in filters.items()},
     }
 
 
@@ -253,6 +277,7 @@ def dashboard(
     request: Request,
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
+    filters: dict = Depends(job_filter_params),
 ):
     # Flashed via session by upload()/reslice()/submit() below rather than
     # returned directly from that POST, so each can always redirect (a
@@ -264,7 +289,7 @@ def dashboard(
     # splice in the response body itself.
     flash_error = request.session.pop("flash_error", None)
     return templates.TemplateResponse(
-        request, "user_dashboard.html", _dashboard_context(session, user, flash_error)
+        request, "user_dashboard.html", _dashboard_context(session, user, flash_error, filters)
     )
 
 
@@ -273,11 +298,16 @@ def dashboard_jobs_table(
     request: Request,
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
+    filters: dict = Depends(job_filter_params),
 ):
     """Just the submissions table, for the htmx polling in
     templates/_jobs_table.html to re-fetch while a job is still slicing -
-    see that template for why polling stops on its own once none are."""
-    context = _dashboard_context(session, user)
+    see that template for why polling stops on its own once none are.
+    Takes the same filter query params as /dashboard (see
+    _job_filters.html's hx-get, which forwards the page's own current
+    query string) so a filtered view doesn't silently revert to
+    unfiltered every 2 seconds while something is still slicing."""
+    context = _dashboard_context(session, user, filters=filters)
     return templates.TemplateResponse(request, "_jobs_table.html", context)
 
 

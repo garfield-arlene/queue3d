@@ -2826,9 +2826,8 @@ Three views, kept separate on purpose (they answer different questions):
   below and linked to it from the queue/finished-jobs lists, which reads
   as "a log of each submission" - not what was being asked for, which was
   "what's been happening, at a glance," across everything. Filtering this
-  down (by job, user, action, date range) is explicitly deferred - "I
-  will ask for log filters later" - so for now it's just recent activity,
-  capped, not a complete searchable history yet.
+  down by actor/action/date range was explicitly deferred at the time
+  ("I will ask for log filters later") - now built, see "Filters" below.
 - **`/admin/jobs/{id}/log`** (`jobs.job_events`, oldest first) - one job's
   complete history in isolation, for when the global log's job link is
   clicked, or the "Log" link is followed straight from a queue/finished-
@@ -2863,6 +2862,152 @@ finished-jobs list as `rejected` with its note, closing the actual gap
 that was reported; the global log (`/admin/log`) shows entries from
 multiple different jobs and users interleaved in true most-recent-first
 order, not grouped by job.
+
+### Filters, on every job/log/user listing
+
+Per the user: "Let's add filters for all tables. The filters should be
+substrings, color, status, est print time, user (if admin), date/time
+range, action (activity log), etc." - and, when asked to clarify scope:
+"All tables should get filters. The filters that should be available are
+the ones that contain that data." Confirmed directly (not guessed): a
+plain GET query-param form, fields laid out left-to-right in the same
+order as the table's own columns, sitting on the same page directly
+above the table rather than a separate page - "no meaningful performance
+difference" between that and an htmx-based live-filter approach was
+confirmed too (the underlying SQL query cost is identical either way;
+only the response payload size differs, and negligibly at this app's
+realistic scale) - plus an explicit "Clear filters" link back to the
+bare, unfiltered URL on every one of these forms.
+
+**Why GET, not POST, and why query params at all:** a filtered view's URL
+is bookmarkable and shareable this way, and works with zero JavaScript -
+consistent with this app's general server-rendered-page philosophy (see
+e.g. the plain `<form method=post>` uploads elsewhere). It's also what
+makes "carry the current filter forward through an action" (below)
+possible at all: a query string is just part of the URL, so redirecting
+or re-rendering with it intact is a plain string operation, not session
+state to manage.
+
+**`app/filters.py`** is the shared layer every listing route builds on -
+built once here rather than a slightly different version in each of the
+six-plus routes that need some subset of it:
+
+- **`apply_job_filters(query, ...)`** - the workhorse, applied to a
+  `select(Job)`-based query by `jobs.jobs_for_user`/`active_jobs`/
+  `finished_jobs` alike. `q` (filename substring), `color` (exact match,
+  plus a `"__any__"` sentinel meaning "no color set at all" - a real
+  `Color.name` can never equal this), `status` (exact match), `min_minutes`/
+  `max_minutes` (compare against `Job.duration_estimate_s` converted from
+  stored seconds, matching what every duration this app displays is
+  already rendered in), a date range on whichever single timestamp
+  column that particular view already shows as its own "date" (
+  `created_at` for the user's own dashboard - the closest thing a draft
+  that's never been queued has; `queued_at` for the live queue and old-jobs
+  view, matching their "Queued" column; `finished_at` for finished jobs,
+  matching its "Finished" column), and `user` (a submitter-name
+  substring, admin views only - a user's own dashboard has no submitter
+  column to filter on at all).
+- **`local_date_bounds(date_from, date_to)`** - turns two plain
+  `YYYY-MM-DD` strings into the UTC instants bounding that whole range of
+  *local* calendar days, in the admin-configured display timezone (see
+  `templates_env.local_time`, and the new `get_display_timezone()`
+  accessor added alongside it) - not literal UTC midnight, which would
+  silently shift the filtered range by however many hours the display
+  timezone is offset from UTC. `date_to` is inclusive of the entire day
+  (bounded by the start of the *next* local day) - "through the end of
+  that day," matching what someone picking an end date actually means.
+- **`apply_event_filters(query, ...)`** - the activity log's own version,
+  since `JobEvent` isn't a `Job` listing at all: `q` matches either the
+  joined job's filename or the event's own `detail` text (an
+  account-lifecycle event has no job to match a filename against at
+  all), `actor` a substring, `action` an *exact* match (the log page
+  offers this as a dropdown of real recorded actions - see
+  `jobs.distinct_event_actions` - not a freeform field), plus the same
+  date-range handling as above, against `JobEvent.at`.
+- **`apply_user_filters(users, ...)`** - deliberately a plain in-Python
+  filter over an already-fetched `list[User]`, not a SQL `WHERE` builder
+  like the two above: the users table is realistically tiny for a
+  single-printer, single-school deployment (unlike `Job`/`JobEvent`,
+  exactly why those two got real indexes - see below), so there's no
+  performance reason to push this into SQL.
+- **`job_filter_params`/`event_filter_params`/`user_filter_params`** -
+  plain functions used as FastAPI dependencies (`Depends(...)`) on every
+  listing route, so the full set of query params a filter form can ever
+  submit is bound in exactly one shared place. `min_minutes`/
+  `max_minutes` are typed `str | None`, not `float | None`, on purpose -
+  a real bug caught before shipping: typing them as `float` let FastAPI's
+  own query-param coercion reject `""` with a 422, and a GET form submits
+  *every* one of its fields regardless of whether it has a value - so
+  leaving either field blank (the overwhelmingly common case) broke
+  *every* ordinary use of the filter form outright. Confirmed live
+  against a real running instance before and after the fix, not just
+  reasoned about - the failure mode isn't obvious from reading the code
+  alone, since a hand-built query string with only the params actually
+  wanted (exactly what manual testing tends to do first) never
+  reproduces it.
+- **`job_filters_from_query_params(request.query_params)`** - same
+  result as `job_filter_params`, but reading from a plain
+  `request.query_params` instead of FastAPI's own binding - needed by
+  `routers/admin.py`'s queue-action routes (approve/reject/release/...),
+  which are POSTs with no query-param dependency injection of their own.
+
+**Carrying a filter through an action, not just a page load:** a real
+gap caught before shipping, not just the read side - every admin queue
+action (approve/reject/release/mark done/mark failed/requeue/delete) is
+a `POST` to a fixed URL, and a plain `RedirectResponse("/admin/dashboard")`
+after one would silently drop back to unfiltered every single time, even
+though the action itself succeeded. Fixed two ways together:
+`routers/admin.py`'s `_query_suffix(request)` appends the current
+request's own query string to a redirect target, and every action
+`<form>`'s own `action=` attribute in `admin_dashboard.html`/
+`admin_old_jobs.html`/`admin_users.html` does the same, so the POST
+itself arrives carrying the filter along too (`request.query_params` is
+otherwise empty on a POST to a bare relative URL - a browser does *not*
+inherit the current page's query string into a form's `action` unless
+it's explicitly there). Verified directly, not assumed: approving a job
+from a `?color=Red`-filtered dashboard was confirmed (via a real request/
+response, not just reading the template) to redirect back to
+`/admin/dashboard?color=Red`, and triggering a real `JobActionError` from
+that same filtered view was confirmed to re-render with both the error
+*and* the filter's own submitted value still showing in the form.
+
+**"Delete all" bulk actions respect the active filter, not just the
+display:** `jobs.delete_all_old_jobs` and `delete_all_users` used to
+always operate on the *entire* backlog regardless of what a page
+happened to be showing. Once a filter could hide part of that backlog
+from view, an unfiltered "delete all" became a real trap - the button's
+own confirm() text already said "delete ALL N jobs/users **shown here**"
+(true before filters existed, since nothing could hide anything then),
+so leaving the underlying action unfiltered would have made that text a
+lie the moment someone actually used a filter. Both now take the same
+filter kwargs as the read side and only touch what's actually displayed.
+
+**Indexes (schema 6.3.0):** `Job.color_name`/`created_at`/`queued_at`/
+`finished_at` and `JobEvent.at`/`action` all gained `index=True` -
+`_migrate_to_6_3_0` in `db.py` is the migration, since `CREATE INDEX IF
+NOT EXISTS` still needs a real migration function even though it doesn't
+touch a column: `create_all()` happily builds every index a *new*
+database needs from the current model definitions, but (same limitation
+it has for columns) never retrofits one onto a table that already
+exists. `User`/`Admin`/`Color` were deliberately left unindexed - a
+realistic deployment's users/colors lists stay small for years, and nothing
+in the user's own filter description emphasized those tables the way it
+did "every job table." Verified in an isolated copy before touching the
+live database: a genuinely fresh database (the `create_all()` path) and
+a simulated pre-6.3.0 one (dropping the six indexes and rolling
+`schemaversion` back, to force the actual migration path to run) both
+produced the identical final index set, and running `init_db()` a second
+time changed nothing (`CREATE INDEX IF NOT EXISTS` is idempotent by
+construction) - confirmed live afterward too, not just in the isolated
+copy.
+
+Verified end-to-end against a real seeded database (several users, jobs
+across every status/color/duration/date combination, and a mix of job
+and account-lifecycle log events) on every one of the six filtered
+pages: substring, color (including the "no color set" sentinel), status,
+duration range, date range, and submitter each independently confirmed
+to narrow the result to exactly the expected rows - not just that the
+page returned 200.
 
 ### Filament color selection, and a best-effort low-inventory notice
 

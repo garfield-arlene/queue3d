@@ -13,6 +13,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from db import engine
+from filters import apply_event_filters, apply_job_filters
 from models import Admin, Color, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES, User
 from pipeline import run_slice
 from printer import PrinterError, capture_photo, send_print_job, system_information
@@ -58,37 +59,129 @@ def _admin_actor(admin: Admin) -> str:
     return f"admin:{admin.username}"
 
 
-def jobs_for_user(session: Session, user_id: int) -> list[Job]:
-    return session.exec(
-        select(Job).where(Job.user_id == user_id).order_by(Job.created_at.desc())
-    ).all()
+def jobs_for_user(
+    session: Session,
+    user_id: int,
+    *,
+    q: str | None = None,
+    color: str | None = None,
+    status: str | None = None,
+    min_minutes: float | None = None,
+    max_minutes: float | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[Job]:
+    """Every filter kwarg defaults to None (every call site pre-dating the
+    filters feature - see filters.py - keeps working unfiltered), applied
+    via apply_job_filters against created_at ("when uploaded" - the closest
+    thing this view has to its own single "date" column, since a draft
+    that's never been queued has no queued_at/finished_at at all yet)."""
+    query = select(Job).where(Job.user_id == user_id)
+    query = apply_job_filters(
+        query,
+        q=q,
+        color=color,
+        status=status,
+        min_minutes=min_minutes,
+        max_minutes=max_minutes,
+        date_from=date_from,
+        date_to=date_to,
+        date_column=Job.created_at,
+    )
+    return session.exec(query.order_by(Job.created_at.desc())).all()
 
 
-def active_jobs(session: Session) -> list[Job]:
+def active_jobs(
+    session: Session,
+    *,
+    q: str | None = None,
+    color: str | None = None,
+    status: str | None = None,
+    min_minutes: float | None = None,
+    max_minutes: float | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user: str | None = None,
+) -> list[Job]:
     """Everything actually in the shared queue, oldest-queued first - this
     is what a reviewing admin looks at. An explicit allow-list
     (models.QUEUE_STATUSES), not just "not terminal" - a sliced-but-
     unsubmitted draft is also not terminal, but must never show up here;
     see models.py's comment on the three-way status partition this and
-    user_has_active_jobs below both rely on."""
-    return session.exec(
-        select(Job)
-        .where(Job.status.in_(list(QUEUE_STATUSES)))
-        .order_by(Job.queued_at.asc())
-    ).all()
+    user_has_active_jobs below both rely on.
+
+    Filter kwargs default to None - see jobs_for_user above - and are
+    applied against queued_at, matching the "Queued" column both
+    admin_dashboard.html and admin_old_jobs.html already show for this
+    exact data. `status` further narrows *within* QUEUE_STATUSES (e.g.
+    queued vs. approved specifically); it isn't a way to reach anything
+    outside that allow-list, since the WHERE above already restricts to
+    it regardless of what's asked for here."""
+    query = select(Job).where(Job.status.in_(list(QUEUE_STATUSES)))
+    query = apply_job_filters(
+        query,
+        q=q,
+        color=color,
+        status=status,
+        min_minutes=min_minutes,
+        max_minutes=max_minutes,
+        date_from=date_from,
+        date_to=date_to,
+        date_column=Job.queued_at,
+        user=user,
+    )
+    return session.exec(query.order_by(Job.queued_at.asc())).all()
 
 
-def finished_jobs(session: Session) -> list[Job]:
+def finished_jobs(
+    session: Session,
+    *,
+    q: str | None = None,
+    color: str | None = None,
+    status: str | None = None,
+    min_minutes: float | None = None,
+    max_minutes: float | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user: str | None = None,
+) -> list[Job]:
     """Everything done with (models.TERMINAL_STATUSES - rejected/done/
     failed/expired), most-recently-finished first - the admin "browse
     finished jobs" view. Distinct from active_jobs() (the live queue) and
     from job_events() below (one job's full history, not a cross-job
-    list)."""
-    return session.exec(
-        select(Job)
-        .where(Job.status.in_(list(TERMINAL_STATUSES)))
-        .order_by(Job.finished_at.desc())
-    ).all()
+    list).
+
+    Filter kwargs default to None - see jobs_for_user above - applied
+    against finished_at, matching the "Finished" column
+    admin_finished_jobs.html already shows."""
+    query = select(Job).where(Job.status.in_(list(TERMINAL_STATUSES)))
+    query = apply_job_filters(
+        query,
+        q=q,
+        color=color,
+        status=status,
+        min_minutes=min_minutes,
+        max_minutes=max_minutes,
+        date_from=date_from,
+        date_to=date_to,
+        date_column=Job.finished_at,
+        user=user,
+    )
+    return session.exec(query.order_by(Job.finished_at.desc())).all()
+
+
+def distinct_job_colors(session: Session) -> list[str]:
+    """Every color name that's actually been recorded on some job, past or
+    present - for the color filter dropdown on every job-listing page.
+    Deliberately not _enabled_colors() (routers/user.py) - that's what's
+    *offered* to pick from going forward, not what's actually filterable
+    history; a color since disabled or renamed must still be findable
+    here for an old job that used it (see models.Color's own docstring on
+    why a job keeps its recorded name regardless of what happens to the
+    Color row later)."""
+    return sorted(
+        session.exec(select(Job.color_name).where(Job.color_name.is_not(None)).distinct()).all()
+    )
 
 
 def job_events(session: Session, job_id: int) -> list[JobEvent]:
@@ -98,7 +191,16 @@ def job_events(session: Session, job_id: int) -> list[JobEvent]:
     ).all()
 
 
-def all_events(session: Session, limit: int = 500) -> list[tuple[JobEvent, str, str | None]]:
+def all_events(
+    session: Session,
+    limit: int = 500,
+    *,
+    q: str | None = None,
+    actor: str | None = None,
+    action: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[tuple[JobEvent, str, str | None]]:
     """Every event across every job, most-recent first - the global admin
     activity log ("what's been happening, at a glance"), per the user:
     a single table of everything, not just reachable one job at a time.
@@ -114,16 +216,28 @@ def all_events(session: Session, limit: int = 500) -> list[tuple[JobEvent, str, 
     and should still show up here rather than silently vanishing from the
     query; original_filename/photo_path both come back None for those.
 
-    Capped at `limit` for now, not paginated - full filtering is a
-    separate, later to-do (per the user: "I will ask for log filters
-    later"), so this is deliberately just "show recent activity," not a
-    complete unbounded history browser yet."""
-    return session.exec(
+    Filter kwargs default to None (see jobs_for_user above), applied via
+    filters.apply_event_filters - this used to be capped at `limit` with
+    no way to narrow it further at all (per the user's own prior
+    "filters for narrowing this down are on the to-do list" - see
+    admin_log.html); now that filters exist, `limit` still caps the
+    *filtered* result the same way, so a broad query still can't return
+    an unbounded page."""
+    query = (
         select(JobEvent, Job.original_filename, Job.photo_path)
         .join(Job, JobEvent.job_id == Job.id, isouter=True)
-        .order_by(JobEvent.at.desc())
-        .limit(limit)
-    ).all()
+    )
+    query = apply_event_filters(query, q=q, actor=actor, action=action, date_from=date_from, date_to=date_to)
+    return session.exec(query.order_by(JobEvent.at.desc()).limit(limit)).all()
+
+
+def distinct_event_actions(session: Session) -> list[str]:
+    """Every distinct JobEvent.action value ever actually recorded - for
+    the activity log's action filter dropdown, a real list of what's
+    actually happened rather than a hand-maintained (and easily
+    out-of-date) list of every action string log_event() is ever called
+    with somewhere in this codebase."""
+    return sorted(session.exec(select(JobEvent.action).distinct()).all())
 
 
 def user_has_active_jobs(session: Session, user_id: int) -> bool:
@@ -673,7 +787,7 @@ def requeue_job(session: Session, job: Job, admin: Admin) -> Job:
     return job
 
 
-def delete_all_old_jobs(session: Session, admin: Admin, threshold_days: int) -> int:
+def delete_all_old_jobs(session: Session, admin: Admin, threshold_days: int, **filters) -> int:
     """Bulk version of delete_old_job() above, for clearing an entire
     backlog in one click rather than one job at a time - per the user.
     Re-checks is_old_job() itself against the current threshold rather
@@ -686,8 +800,16 @@ def delete_all_old_jobs(session: Session, admin: Admin, threshold_days: int) -> 
     job rather than a single batched commit, same as calling the
     single-job delete route N times by hand would do - simple over
     optimal for what's expected to be a handful of jobs at once, not
-    thousands. Returns how many were actually deleted."""
-    to_delete = [job for job in active_jobs(session) if is_old_job(job, threshold_days)]
+    thousands. Returns how many were actually deleted.
+
+    **filters (see filters.apply_job_filters) narrows this to whatever
+    the old-jobs page is currently filtered to when the button is
+    clicked - "delete all old jobs" must actually mean "delete every old
+    job *shown right now*," not silently reach past an active filter and
+    delete jobs the admin can't even currently see. Passing none (the
+    default) keeps deleting the entire backlog, same as before this
+    filters feature existed."""
+    to_delete = [job for job in active_jobs(session, **filters) if is_old_job(job, threshold_days)]
     for job in to_delete:
         delete_old_job(session, job, admin)
     return len(to_delete)

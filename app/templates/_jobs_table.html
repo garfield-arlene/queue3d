@@ -9,7 +9,11 @@
    asking. No separate "stop polling" signal needed. #}
 <div id="jobs-table"
   {% if rows | selectattr('job.status.value', 'equalto', 'submitted') | list %}
-    hx-get="/dashboard/jobs-table" hx-trigger="every 2s" hx-swap="outerHTML"
+    {# Forwards the page's own current filter query string (see
+       _job_filters.html) - without this, a filtered view would silently
+       revert to unfiltered every 2s while something is still slicing. #}
+    hx-get="/dashboard/jobs-table{% if request.url.query %}?{{ request.url.query }}{% endif %}"
+    hx-trigger="every 2s" hx-swap="outerHTML"
   {% endif %}
 >
   <h3>Your submissions</h3>
