@@ -21,7 +21,7 @@
     <p class="muted">Nothing submitted yet.</p>
   {% else %}
     <table>
-      <tr><th>File</th><th>Color</th><th>Status</th><th>Details</th><th></th><th>Actions</th></tr>
+      <tr><th>File</th><th>Color</th><th>Status</th><th>Date</th><th>Details</th><th></th><th>Actions</th></tr>
       {% for row in rows %}
         {% set job = row.job %}
         <tr>
@@ -42,6 +42,27 @@
           </td>
           <td>{{ job.status.value }}</td>
           <td class="muted">
+            {# The one timestamp that actually means something for this
+               row's *current* status - unlike the admin queue/finished
+               views (each already scoped to one status subset, so a
+               single "Queued"/"Finished" column heading always applies),
+               this table mixes every status a job can ever be in, so
+               "Date" alone doesn't say what it's showing without a
+               per-row label. created_at (never null) covers everything
+               before a job's ever been queued; queued_at from there;
+               finished_at once it's settled - the same three columns
+               filters.apply_job_filters already understands (see
+               _job_filters.html), just always shown here instead of
+               picked one-at-a-time by view. #}
+            {% if job.status.value in ('submitted', 'sliced', 'slice_failed') %}
+              uploaded {{ job.created_at | local_time }}
+            {% elif job.status.value in ('queued', 'approved', 'printing') %}
+              {% if job.queued_at %}queued {{ job.queued_at | local_time }}{% endif %}
+            {% elif job.status.value in ('rejected', 'done', 'failed', 'expired') %}
+              {% if job.finished_at %}finished {{ job.finished_at | local_time }}{% endif %}
+            {% endif %}
+          </td>
+          <td class="muted">
             {% if job.status.value == 'submitted' %}
               <progress></progress> slicing&hellip;
             {% elif job.status.value == 'sliced' %}
@@ -49,7 +70,7 @@
               {% if row.duration_display %} - est. {{ row.duration_display }} print{% endif %}
             {% elif job.status.value == 'queued' or job.status.value == 'approved' %}
               position {{ row.position }} in queue
-              {% if job.queued_at %} - queued {{ job.queued_at | local_time }}, waiting {{ row.queue_wait_display }}{% endif %}
+              {% if job.queued_at %} - waiting {{ row.queue_wait_display }}{% endif %}
               {% if row.duration_display %} - est. {{ row.duration_display }} print{% endif %}
             {% elif job.status.value == 'printing' %}
               printing now

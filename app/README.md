@@ -3009,6 +3009,29 @@ duration range, date range, and submitter each independently confirmed
 to narrow the result to exactly the expected rows - not just that the
 page returned 200.
 
+**The user's own dashboard table got a real "Date" column too**, per the
+user ("move the date/time stamp to its own column"). Before this, the
+only date/time ever actually shown on that table was `queued_at`, buried
+inline in the Details column's prose for a queued/approved row only
+(`"position N in queue - queued <timestamp>, waiting <duration>"`) -
+every other status showed no date at all. Unlike the admin queue/
+finished-jobs views (each scoped to one status subset, so a single
+"Queued"/"Finished" column heading always applies to every row), this
+table mixes every status a job can ever be in at once, so a bare "Date"
+heading needs a per-row label to say what it's actually showing:
+`created_at` ("uploaded", for submitted/sliced/slice_failed - the one
+timestamp that's never null, since these predate ever being queued),
+`queued_at` ("queued", for queued/approved/printing), or `finished_at`
+("finished", for rejected/done/failed/expired) - the same three columns
+`filters.apply_job_filters` already understands (see above), just always
+shown here per-row instead of picked one-at-a-time by view. The raw
+`queued_at` stamp is gone from the Details column now that it lives in
+its own; the computed "waiting `<duration>`" text stays there, since
+that's a derived duration, not the stamp itself. Verified against a real
+seeded job in each of the nine statuses: every row showed the correct
+label and timestamp for its own status, and the queued/approved Details
+text no longer repeated it.
+
 ### Filament color selection, and a best-effort low-inventory notice
 
 Per the user's full spec: admins manage a color list (`/admin/colors` -
