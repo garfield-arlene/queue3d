@@ -43,28 +43,47 @@ fi
 echo "Staging files on $TARGET:$STAGING_DIR ..."
 ssh "$TARGET" "mkdir -p $STAGING_DIR"
 
+# --info=progress2 (a single running total for the whole transfer, not a
+# per-file line) plus --no-i-r (computes the full file list up front, so
+# that total - and its percentage - is accurate from the very first line
+# instead of climbing as rsync discovers more files partway through) -
+# per the user, after this step alone was visibly taking a while with no
+# way to tell how far along it actually was. Needs rsync >= 3.1 - stock
+# macOS ships 2.6.9 (Apple stopped bundling anything past GPLv2, and 3.x
+# is GPLv3), which doesn't understand --info at all and would error out
+# on it; `brew install rsync` (or any newer build ahead of it on PATH)
+# fixes that on a Mac running this script. Every rsync call below shares
+# these two flags, even the tiny single-file ones - a fast transfer just
+# prints one line and finishes, so there's no real cost to it being
+# consistent everywhere rather than only on the two large ones.
+RSYNC_PROGRESS=(--info=progress2 --no-i-r)
+
 # The real application source - excludes match remote_install.sh's own
 # (data/.venv/__pycache__/tools are either regenerated on the Pi or never
 # meant to be overwritten by a deploy at all).
-rsync -az --delete \
+echo "  app/ ..."
+rsync -az "${RSYNC_PROGRESS[@]}" --delete \
   --exclude 'data' \
   --exclude '.venv' \
   --exclude '__pycache__' \
   ../app "$TARGET:$STAGING_DIR/"
-rsync -az --delete \
+echo "  slicing/ ..."
+rsync -az "${RSYNC_PROGRESS[@]}" --delete \
   --exclude 'tools' \
   --exclude '__pycache__' \
   ../slicing "$TARGET:$STAGING_DIR/"
 
 # The offline-install assets (wheels + OrcaSlicer) and the two scripts
 # that actually apply everything on the Pi side.
-rsync -az cache/wheels "$TARGET:$STAGING_DIR/"
-rsync -az cache/OrcaSlicer-aarch64-*.AppImage "$TARGET:$STAGING_DIR/"
-rsync -az queue3d.service "$TARGET:$STAGING_DIR/"
-rsync -az queue3d-backup.service queue3d-backup.timer "$TARGET:$STAGING_DIR/"
-rsync -az queue3d-cleanup.service queue3d-cleanup.timer "$TARGET:$STAGING_DIR/"
-rsync -az nginx-queue3d.conf "$TARGET:$STAGING_DIR/"
-rsync -az remote_install.sh "$TARGET:$STAGING_DIR/"
+echo "  wheels/ ..."
+rsync -az "${RSYNC_PROGRESS[@]}" cache/wheels "$TARGET:$STAGING_DIR/"
+echo "  OrcaSlicer AppImage ..."
+rsync -az "${RSYNC_PROGRESS[@]}" cache/OrcaSlicer-aarch64-*.AppImage "$TARGET:$STAGING_DIR/"
+rsync -az "${RSYNC_PROGRESS[@]}" queue3d.service "$TARGET:$STAGING_DIR/"
+rsync -az "${RSYNC_PROGRESS[@]}" queue3d-backup.service queue3d-backup.timer "$TARGET:$STAGING_DIR/"
+rsync -az "${RSYNC_PROGRESS[@]}" queue3d-cleanup.service queue3d-cleanup.timer "$TARGET:$STAGING_DIR/"
+rsync -az "${RSYNC_PROGRESS[@]}" nginx-queue3d.conf "$TARGET:$STAGING_DIR/"
+rsync -az "${RSYNC_PROGRESS[@]}" remote_install.sh "$TARGET:$STAGING_DIR/"
 
 echo "Running the install/upgrade on $TARGET (needs your sudo password there)..."
 ssh -t "$TARGET" "sudo bash $STAGING_DIR/remote_install.sh"
