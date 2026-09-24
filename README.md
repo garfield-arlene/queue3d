@@ -537,18 +537,23 @@ Managing user accounts:
   checkbox that MUST be checked before the user can register - signup
   currently only requires a name and PIN, with nothing about acceptable
   use presented or agreed to at all.
-- Extend account management (disable/re-enable/delete from the UI,
-  today's user-only) to admins managing *other admins* too, not just users -
-  deliberately left out of what was just built, since it raises a real
-  safety question the users-only version didn't: what stops an admin from
-  disabling or deleting the only remaining admin account, including
-  themselves, locking everyone out of admin access. Also open: does
-  "add an admin" mean creating a fresh admin credential (today's design -
-  a separate username+password, unrelated to any user account) or
-  promoting/converting an existing user's account, since those are two
-  different tables today; and what happens to a deleted admin's existing
-  references on past jobs (`reviewed_by_admin_id`/`admin_note`) - kept but
-  orphaned, or removed too.
+- Done - any signed-in admin can create another admin from `/admin/admins`
+  (a fresh username+password, same as `create_admin.py`'s own design, not
+  promoting/converting an existing user's account - those stay two
+  separate tables). Every admin created via `create_admin.py` itself is
+  permanently `unremovable` (schema 6.4.0) - the "what stops an admin from
+  locking everyone out by deleting every admin account" question this
+  used to raise is resolved by construction as long as at least one
+  admin was ever provisioned that way, which is required regardless
+  (it's the only way to get the very first admin at all). Admins created
+  through the new UI have no such protection and can be deleted by any
+  other admin (never by themselves, while signed in as that account).
+  Still open: no disable/reset-password for another admin yet (only
+  create/delete); no permission scoping between admins at all yet -
+  every one has identical, full access, "decided later" per the user;
+  and what happens to a deleted admin's existing references on past jobs
+  (`reviewed_by_admin_id`/`admin_note`) - kept but orphaned, or removed
+  too.
 
 **Deployment**
 - Done, on the real hardware: mDNS hostname, the full `deploy.sh`

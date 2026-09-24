@@ -273,6 +273,31 @@ def _migrate_to_6_3_0(conn):
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobevent_action ON jobevent (action)"))
 
 
+def _migrate_to_6_4_0(conn):
+    """New Admin.unremovable column - see that field's own docstring in
+    models.py for why it exists (the web UI for one admin creating
+    another - routers/admin.py's admins_page - is what first makes "can
+    this admin ever be deleted" a real question). Backfilled to 1/True
+    for every admin row that already exists at migration time, not left
+    at the column's own False default the way a purely additive column
+    normally would be here: every one of those rows was necessarily
+    created via create_admin.py, since the web UI this migration ships
+    alongside is the *only* other way an Admin row can ever come to
+    exist - there was no such thing as a non-CLI-created admin before
+    this exact migration runs. Per the user, directly: "mark the admin
+    created from the cmd we just did as unremovable" - backfilling every
+    pre-existing row this way satisfies that literally, with no need to
+    know which username(s) to single out by hand, and stays consistent
+    with the same rule create_admin.py itself now applies going forward.
+    A brand new admin created *after* this migration, through the new
+    web UI, still gets the column's real default (False) via create_all()
+    - only rows that predate the UI's existence get backfilled here."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(admin)")).fetchall()}
+    if "unremovable" not in cols:
+        conn.execute(text("ALTER TABLE admin ADD COLUMN unremovable BOOLEAN NOT NULL DEFAULT 0"))
+        conn.execute(text("UPDATE admin SET unremovable = 1"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -297,6 +322,7 @@ MIGRATIONS = {
     "5.6.0": _migrate_to_5_6_0,
     "6.2.0": _migrate_to_6_2_0,
     "6.3.0": _migrate_to_6_3_0,
+    "6.4.0": _migrate_to_6_4_0,
 }
 
 

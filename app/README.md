@@ -1910,6 +1910,82 @@ any other wrong PIN), the new one logs in successfully, and the activity
 log shows `admin:<username>` / `pin_reset` / the user's name - never the
 PIN value.
 
+### Admins creating other admins, and a permanently-unremovable bootstrap admin
+
+**Why this exists:** a real, direct need, not a planned feature landing
+on schedule - the user hit "No module named 'sqlmodel'" trying to run
+`create_admin.py` on the actual Pi (wrong Python - needed the app's own
+`.venv`, then needed to run as the `queue3d` service account with
+`QUEUE3D_DATA_DIR` set, since the real database lives on the external
+drive, owned by that account, not wherever a personal login happens to
+have write access), and doesn't want to repeat that whole process for
+every admin the site will ever need: "I will need to create 2 admin
+accounts when I deploy on site. I want existing admins to be able to
+successfully create other admin accounts."
+
+**`/admin/admins`** (`routers/admin.py`'s `admins_page`/`add_admin`/
+`delete_admin`, `templates/admin_admins.html`) - reachable from every
+admin page's nav, same as Users/Colors/etc. Any already-signed-in admin
+can create another one directly from here: username + password + confirm,
+the same validation `create_admin.py` itself applies (non-empty,
+not already taken, both password fields matching, 8+ characters).
+Deliberately still not *open* self-signup the way `/signup` is for
+users - reaching this page at all already requires `require_admin`, so
+this only ever grows the admin group from inside it, never from outside.
+No disable/reset-password for another admin here, unlike the Users page -
+not asked for, and every admin today has identical, full permissions
+with no scoping between them yet ("There may be other admin accounts
+later with limited permissions; but, that will be decided later," per
+the user - see README.md's to-do list).
+
+**`models.Admin.unremovable`** (schema 6.4.0) is what makes any of this
+safe to add at all - per the user, directly: "Let's mark the admin
+created from the cmd we just did as 'unremovable'. That means that other
+admins cannot delete this user at all." `create_admin.py` now sets it on
+every admin it creates; a fresh admin made through the new web UI gets
+the column's real default, `False`. Nothing anywhere can ever flip it
+in either direction through the UI - not an oversight, the whole point:
+since `create_admin.py` is the only way to get the very first admin at
+all (there's no UI yet to log into before that), at least one admin
+created that way has to exist for the deployment to be usable in the
+first place, so marking every one of them permanent means a deployment
+can never end up with zero surviving admins, no matter what happens to
+any admin created afterward. `delete_admin` checks this before anything
+else and refuses outright if it's set; separately (and for a completely
+different reason - not permission, just avoiding invalidating the very
+session the request is running under) it also refuses an admin deleting
+their own currently-signed-in account, full stop, regardless of
+`unremovable` - `admin_admins.html` doesn't even render a Delete button
+on an admin's own row for exactly that reason, though the route itself
+checks it too, not just the missing button.
+
+**The migration backfills every *existing* admin row to `unremovable=1`**,
+not the column's own `False` default the way a purely additive column
+normally would get here (`_migrate_to_6_4_0`, `db.py`) - deliberate,
+and it's the one migration in this project that isn't just "add the
+column": every Admin row that exists at the moment this migration runs
+was necessarily created via `create_admin.py`, since the web UI this
+ships alongside is the *only* other way one can ever come to exist -
+there was no such thing as a non-CLI-created admin before this exact
+migration. Backfilling this way satisfies the user's own request
+literally ("mark the admin created from the cmd we just did") with no
+need to know which username(s) to single out by hand, and stays exactly
+consistent with the rule `create_admin.py` applies going forward.
+
+Verified in an isolated copy before touching the live database, same
+methodology as every other migration: a genuinely fresh database (the
+`create_all()` path, a brand new admin correctly starts `unremovable=False`)
+and a simulated pre-6.4.0 one (an admin row inserted before adding the
+column, then the migration run for real) both produced the expected
+result - confirmed live afterward too. Then verified the actual feature
+end-to-end over real HTTP, not just the schema: created a second admin
+through the UI, confirmed it's listed with a working Delete button and
+`unremovable=0` in the database; confirmed deleting the original
+CLI-created admin is refused with a clear message; logged in *as* the
+new admin and confirmed it can't delete itself (no button shown, and the
+same request crafted directly against the real ID is still refused
+server-side); confirmed a *different* admin can still delete it.
+
 ### Duration estimates as days/hours/minutes
 
 **Why this exists:** raw total minutes reads badly once a print's

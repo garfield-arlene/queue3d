@@ -1,8 +1,10 @@
-"""Admin login/dashboard/queue actions. Deliberately no self-service signup
-here - admin accounts are provisioned out-of-band via create_admin.py, run
-by whoever controls the server. Approving/releasing print jobs is a
-position of trust over many users' shared printer time; open
-admin signup would defeat the whole point of the review gate."""
+"""Admin login/dashboard/queue actions. Deliberately no *open* self-service
+signup here - the very first admin account is provisioned out-of-band via
+create_admin.py, run by whoever controls the server; every one after that
+can be created from inside here (see the admin account management section
+below) by an admin who's already signed in, never by an outsider. Approving/
+releasing print jobs is a position of trust over many users' shared printer
+time; open admin signup would defeat the whole point of the review gate."""
 
 import zoneinfo
 from datetime import datetime, timezone
@@ -669,6 +671,119 @@ def delete_all_users(
     # Almost always empty at this point - see delete_all_old_jobs_route's
     # identical reasoning - but re-checked for real rather than assumed.
     return _filtered_redirect("/admin/users", request, _users_still_match(session, filters))
+
+
+# ---- admin account management ----
+# Per the user, directly: any already-signed-in admin can create another
+# admin from here - no separate "invite" step, no approval from a second
+# admin, nothing beyond being signed in at all. Deliberately NOT open
+# self-signup the way user registration is (routers/user.py's signup) -
+# reaching this page at all already requires require_admin below, so this
+# only ever grows the admin group from *inside* it, never from outside.
+# No disable/reset-password for another admin here (unlike the Users page
+# above) - not asked for; every admin today has identical, full
+# permissions with no scoping between them yet (see README.md's To do
+# list - "decided later," per the user), so there's nothing yet for a
+# lesser role to even mean.
+
+
+def _get_admin_or_404(session: Session, admin_id: int) -> Admin:
+    admin = session.get(Admin, admin_id)
+    if admin is None:
+        raise HTTPException(status_code=404, detail="No such admin")
+    return admin
+
+
+def _admins_context(session: Session, admin: Admin, error: str | None = None, username: str = ""):
+    admins = session.exec(select(Admin).order_by(Admin.username)).all()
+    return {
+        "admin": admin,
+        "admins": admins,
+        "action_error": error,
+        # Re-shown on a failed create so a typo in the username doesn't
+        # also cost re-typing it - never the password, same as
+        # user_signup.html never re-shows a submitted PIN on its own
+        # error path.
+        "username": username,
+    }
+
+
+@router.get("/admins")
+def admins_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin))
+
+
+@router.post("/admins/add")
+def add_admin(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Same validation create_admin.py itself applies (non-empty, not
+    already taken, both password fields typed the same, at least 8
+    characters) - kept independent of that script rather than shared,
+    same as routers/user.py's own signup() doesn't share user_by_name's
+    validation with anything either; this is a small, one-off check with
+    nowhere else it needs to live. The admin this creates is a normal,
+    deletable one (Admin.unremovable defaults to False) - only
+    create_admin.py's own CLI path ever sets that."""
+    username = username.strip()
+    error = None
+    if not username:
+        error = "Username can't be empty."
+    elif admin_by_username(session, username):
+        error = f"An admin named '{username}' already exists."
+    elif password != confirm_password:
+        error = "Passwords didn't match."
+    elif len(password) < 8:
+        error = "Use at least 8 characters."
+
+    if error:
+        return templates.TemplateResponse(
+            request, "admin_admins.html", _admins_context(session, admin, error, username)
+        )
+
+    new_admin = Admin(username=username, password_hash=hash_secret(password))
+    session.add(new_admin)
+    log_event(session, None, _admin_actor(admin), "admin_created", detail=username)
+    session.commit()
+    return RedirectResponse("/admin/admins", status_code=303)
+
+
+@router.post("/admins/{admin_id}/delete")
+def delete_admin(
+    request: Request,
+    admin_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Refuses two cases, checked before anything else: deleting an
+    Admin.unremovable account at all (see that field's own docstring -
+    every admin created via create_admin.py, permanently, by design), and
+    an admin deleting their own currently-signed-in account (not
+    permission-related - that account might not even be unremovable -
+    purely because it would immediately invalidate the session this very
+    request is running under, a confusing state to leave anyone in;
+    another admin can always delete it instead)."""
+    target = _get_admin_or_404(session, admin_id)
+    if target.unremovable:
+        error = f"'{target.username}' was created via create_admin.py and can't be deleted."
+        return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin, error))
+    if target.id == admin.id:
+        error = "Can't delete your own account while signed in as it - have another admin do it instead."
+        return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin, error))
+
+    log_event(session, None, _admin_actor(admin), "admin_deleted", detail=target.username)
+    session.delete(target)
+    session.commit()
+    return RedirectResponse("/admin/admins", status_code=303)
 
 
 # ---- settings ----

@@ -4,8 +4,12 @@ Two separate account types by design (see project memory `queue3d-purpose`
 for the deployment context that shaped this, without baking that context's
 own terminology in here) - regular users self-serve with a name + PIN (low
 friction for signing up on demand), admins get real accounts provisioned
-out-of-band (see create_admin.py), since admin approval is the hard gate
-before anything reaches the print queue.
+either out-of-band for the very first one (create_admin.py, run directly
+on the server - see that script) or by an already-signed-in admin
+afterward (routers/admin.py's admins_page) - never by open self-signup
+either way, since admin approval is the hard gate before anything reaches
+the print queue. See Admin.unremovable for what keeps the CLI path's own
+admin(s) permanent regardless of what happens to any admin created later.
 """
 
 import enum
@@ -64,6 +68,21 @@ class Admin(SQLModel, table=True):
     # too, not just the short-PIN case that motivated it.
     failed_login_attempts: int = Field(default=0)
     locked_until: datetime | None = Field(default=None)
+    # True only for an admin created via create_admin.py (the CLI, run
+    # directly on the server - see that script) - never settable through
+    # the web UI at all, in either direction. Per the user: every admin
+    # created this way is permanent, so routers/admin.py's delete_admin
+    # can refuse to ever delete one - schema 6.4.0, added alongside the
+    # web UI for admins creating *other* admins (see admins_page), which
+    # is exactly what makes "can this ever be deleted" a real question
+    # for the first time; every admin created *that* way is a normal,
+    # deletable account (unremovable=False, the default) instead. Since
+    # nothing anywhere can ever flip this once set, a deployment that
+    # provisions at least one admin via the CLI (the only way to get the
+    # very first admin at all, before any UI exists to log into) can
+    # never end up with zero surviving admins, no matter what happens to
+    # every other admin account created after it.
+    unremovable: bool = Field(default=False)
 
 
 class SchemaVersion(SQLModel, table=True):
