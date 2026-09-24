@@ -2971,6 +2971,28 @@ response, not just reading the template) to redirect back to
 that same filtered view was confirmed to re-render with both the error
 *and* the filter's own submitted value still showing in the form.
 
+**...unless the action itself empties that filter.** Per the user:
+"performing an action with the filter in place should keep the filter in
+place, unless that action results in 0 records for that filter." Keeping
+`?status=queued` after approving the *only* queued job matching it would
+land back on a real page that just looks broken - the filter's own
+fields still showing what was typed, the table showing nothing, with no
+obvious way back to everything else. `routers/admin.py`'s
+`_filtered_redirect(path, request, still_has_rows)` re-runs the exact
+same filtered query right after the action (a real, fresh count - not
+the pre-action count minus one, which would be wrong the instant the
+action itself changes whether another row matches too, not just removes
+the acted-on row some other way) and only keeps the query string if that
+still returns at least one row; every queue action and every user action
+(disable/enable/reset PIN/delete, including both "delete all" variants)
+goes through it now. Verified directly against a real queue with two
+jobs sharing a color: rejecting the first (one still matches) kept
+`?color=Red` on the redirect; rejecting the second (now the last match)
+redirected to the bare, unfiltered `/admin/dashboard` instead. Same
+confirmed on the users page: disabling the one remaining user matching
+`?status=active` dropped that filter on redirect, not kept it pointing
+at an empty table.
+
 **"Delete all" bulk actions respect the active filter, not just the
 display:** `jobs.delete_all_old_jobs` and `delete_all_users` used to
 always operate on the *entire* backlog regardless of what a page

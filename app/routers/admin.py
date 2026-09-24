@@ -85,6 +85,26 @@ def _query_suffix(request: Request) -> str:
     return f"?{request.url.query}" if request.url.query else ""
 
 
+def _filtered_redirect(path: str, request: Request, still_has_rows: bool) -> RedirectResponse:
+    """Redirects back to `path`, keeping the current request's own filter
+    query string only if that same filter would still show at least one
+    row after the action that was just performed - per the user:
+    "performing an action with the filter in place should keep the
+    filter in place, unless that action results in 0 records for that
+    filter." Approving the *last* job matching a status/color/etc. filter
+    and landing back on a filtered view showing nothing, with the filter
+    values still sitting in the form and no obvious sign anything even
+    happened, would read as broken even though the action genuinely
+    succeeded - dropping the filter in that one case (only that case)
+    goes back to a real, populated view instead. `still_has_rows` is
+    computed by re-querying with the exact same filter right after the
+    action - a real count, not the pre-action row count minus one, which
+    would be wrong the moment the action changes something other rows
+    could match against too (e.g. approving a job that itself no longer
+    matches a `status=queued` filter, but leaves others that still do)."""
+    return RedirectResponse(f"{path}{_query_suffix(request) if still_has_rows else ''}", status_code=303)
+
+
 @router.get("/login")
 def login_form(request: Request):
     return templates.TemplateResponse(request, "admin_login.html", {})
@@ -292,12 +312,15 @@ def _perform_action(
     inline (failure) - e.g. releasing a job that isn't approved, or
     rejecting without a note.
 
-    Either way, carries the request's own current query string along
-    (see _query_suffix) - every action <form> on a filtered
-    admin_dashboard.html/admin_old_jobs.html posts to a URL built with
-    that same suffix (see those templates), so approving/rejecting/
-    releasing/etc. from a filtered view lands back on that identical
-    filtered view rather than silently resetting to unfiltered. Read
+    On success, carries the request's own current query string along
+    (see _filtered_redirect/_query_suffix) - every action <form> on a
+    filtered admin_dashboard.html/admin_old_jobs.html posts to a URL
+    built with that same suffix (see those templates), so approving/
+    rejecting/releasing/etc. from a filtered view lands back on that
+    identical filtered view rather than silently resetting to unfiltered -
+    *unless* that same filter would now show zero rows (see
+    _filtered_redirect's own docstring), in which case it's dropped
+    instead of leaving the admin on a real but empty-looking page. Read
     straight from request.query_params (not FastAPI-bound the way the
     GET pages' own `filters: dict = Depends(job_filter_params)` is) since
     this is a POST route - there's no query-param dependency to inject
@@ -310,7 +333,8 @@ def _perform_action(
         action_fn(session, job, *args)
     except JobActionError as e:
         return templates.TemplateResponse(request, template_name, context_fn(session, admin, str(e), filters))
-    return RedirectResponse(f"{return_to}{_query_suffix(request)}", status_code=303)
+    still_has_rows = bool(context_fn(session, admin, None, filters)["rows"])
+    return _filtered_redirect(return_to, request, still_has_rows)
 
 
 @router.post("/jobs/{job_id}/approve")
@@ -439,7 +463,8 @@ def delete_job_route(
         return templates.TemplateResponse(
             request, "admin_old_jobs.html", _old_jobs_context(session, admin, str(e), filters)
         )
-    return RedirectResponse(f"/admin/jobs/old{_query_suffix(request)}", status_code=303)
+    still_has_rows = bool(_old_jobs_context(session, admin, filters=filters)["rows"])
+    return _filtered_redirect("/admin/jobs/old", request, still_has_rows)
 
 
 @router.post("/jobs/{job_id}/requeue")
@@ -463,7 +488,8 @@ def requeue_job_route(
         return templates.TemplateResponse(
             request, "admin_old_jobs.html", _old_jobs_context(session, admin, str(e), filters)
         )
-    return RedirectResponse(f"/admin/jobs/old{_query_suffix(request)}", status_code=303)
+    still_has_rows = bool(_old_jobs_context(session, admin, filters=filters)["rows"])
+    return _filtered_redirect("/admin/jobs/old", request, still_has_rows)
 
 
 @router.post("/jobs/old/delete_all")
@@ -484,7 +510,12 @@ def delete_all_old_jobs_route(
     threshold_days = get_settings(session).old_job_threshold_days
     filters = job_filters_from_query_params(request.query_params)
     delete_all_old_jobs(session, admin, threshold_days, **filters)
-    return RedirectResponse(f"/admin/jobs/old{_query_suffix(request)}", status_code=303)
+    # Almost always empty at this point - "delete all" just removed every
+    # old job the active filter could possibly match - but re-checked for
+    # real (see _filtered_redirect) rather than assumed, in case something
+    # new started matching in the moment between the query above and now.
+    still_has_rows = bool(_old_jobs_context(session, admin, filters=filters)["rows"])
+    return _filtered_redirect("/admin/jobs/old", request, still_has_rows)
 
 
 # ---- user account management ----
@@ -541,6 +572,23 @@ def _get_user_or_404(session: Session, user_id: int) -> User:
     return user
 
 
+def _user_filters_from_request(request: Request) -> dict:
+    """Same idea as jobs.py's job_filters_from_query_params - reads
+    user_filter_params' own fields straight from request.query_params for
+    a POST route with no dependency injection of its own."""
+    return user_filter_params(**{k: request.query_params.get(k) for k in ("q", "status", "date_from", "date_to")})
+
+
+def _users_still_match(session: Session, filters: dict) -> bool:
+    """Whether the given filter would still show at least one user right
+    now - see _filtered_redirect. A real, fresh count each time (not the
+    pre-action count minus one): disabling/enabling a user, in
+    particular, can itself change whether *that exact user* still matches
+    a `status=active`/`status=disabled` filter, not just remove them from
+    the list some other way."""
+    return bool(apply_user_filters(session.exec(select(User)).all(), **filters))
+
+
 @router.post("/users/{user_id}/disable")
 def disable_user(
     request: Request,
@@ -549,11 +597,12 @@ def disable_user(
     session: Session = Depends(get_session),
 ):
     user = _get_user_or_404(session, user_id)
+    filters = _user_filters_from_request(request)
     user.disabled = True
     session.add(user)
     log_event(session, None, _admin_actor(admin), "user_disabled", detail=user.name)
     session.commit()
-    return RedirectResponse(f"/admin/users{_query_suffix(request)}", status_code=303)
+    return _filtered_redirect("/admin/users", request, _users_still_match(session, filters))
 
 
 @router.post("/users/{user_id}/enable")
@@ -564,11 +613,12 @@ def enable_user(
     session: Session = Depends(get_session),
 ):
     user = _get_user_or_404(session, user_id)
+    filters = _user_filters_from_request(request)
     user.disabled = False
     session.add(user)
     log_event(session, None, _admin_actor(admin), "user_enabled", detail=user.name)
     session.commit()
-    return RedirectResponse(f"/admin/users{_query_suffix(request)}", status_code=303)
+    return _filtered_redirect("/admin/users", request, _users_still_match(session, filters))
 
 
 @router.post("/users/{user_id}/reset_pin")
@@ -587,13 +637,14 @@ def reset_user_pin(
     activity log records that a reset happened and who did it, same as
     disable/enable/delete, not the credential itself."""
     user = _get_user_or_404(session, user_id)
+    filters = _user_filters_from_request(request)
     new_pin = generate_pin()
     user.pin_hash = hash_secret(new_pin)
     session.add(user)
     log_event(session, None, _admin_actor(admin), "pin_reset", detail=user.name)
     session.commit()
     request.session["flash_notice"] = f"New PIN for {user.name}: {new_pin} - give it to them now, it won't be shown again."
-    return RedirectResponse(f"/admin/users{_query_suffix(request)}", status_code=303)
+    return _filtered_redirect("/admin/users", request, _users_still_match(session, filters))
 
 
 @router.post("/users/{user_id}/delete")
@@ -604,7 +655,7 @@ def delete_user(
     session: Session = Depends(get_session),
 ):
     user = _get_user_or_404(session, user_id)
-    filters = user_filter_params(**{k: request.query_params.get(k) for k in ("q", "status", "date_from", "date_to")})
+    filters = _user_filters_from_request(request)
     if user_has_active_jobs(session, user.id):
         error = f"Can't delete {user.name} - they still have a job in the queue or printing. Resolve it first."
         return templates.TemplateResponse(
@@ -613,7 +664,7 @@ def delete_user(
     log_event(session, None, _admin_actor(admin), "user_deleted", detail=user.name)
     session.delete(user)
     session.commit()
-    return RedirectResponse(f"/admin/users{_query_suffix(request)}", status_code=303)
+    return _filtered_redirect("/admin/users", request, _users_still_match(session, filters))
 
 
 @router.post("/users/delete_all")
@@ -627,11 +678,10 @@ def delete_all_users(
     and jobs.delete_all_old_jobs' identical reasoning) so this can't
     reach past a filter and delete someone the admin can't currently
     see."""
-    filters = user_filter_params(**{k: request.query_params.get(k) for k in ("q", "status", "date_from", "date_to")})
+    filters = _user_filters_from_request(request)
     users = apply_user_filters(session.exec(select(User)).all(), **filters)
     blocked = [u.name for u in users if user_has_active_jobs(session, u.id)]
     if blocked:
-        filters = user_filter_params(**{k: request.query_params.get(k) for k in ("q", "status", "date_from", "date_to")})
         error = (
             "Didn't delete anyone - these users still have a job in the queue or "
             f"printing: {', '.join(blocked)}. Resolve those first."
@@ -643,7 +693,9 @@ def delete_all_users(
         log_event(session, None, _admin_actor(admin), "user_deleted", detail=user.name)
         session.delete(user)
     session.commit()
-    return RedirectResponse(f"/admin/users{_query_suffix(request)}", status_code=303)
+    # Almost always empty at this point - see delete_all_old_jobs_route's
+    # identical reasoning - but re-checked for real rather than assumed.
+    return _filtered_redirect("/admin/users", request, _users_still_match(session, filters))
 
 
 # ---- settings ----
