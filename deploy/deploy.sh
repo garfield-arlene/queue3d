@@ -58,7 +58,20 @@ ssh "$TARGET" "mkdir -p $STAGING_DIR"
 # rsync happens to be on PATH, rather than requiring everyone running
 # this to go install a newer one first. `brew install rsync` (or
 # anything newer ahead of the stock one on PATH) gets the nicer bar.
-rsync_version="$(rsync --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+# The `|| true` at the end is load-bearing, not decoration: under
+# `set -euo pipefail` (top of this script), grep finding no match on
+# whatever this particular rsync's --version banner actually looks like
+# exits 1, pipefail propagates that as the whole command substitution's
+# exit status, and set -e then kills the *entire deploy* right here -
+# silently, no error message at all, immediately after the "Staging
+# files" line above. Confirmed as a real, reproducible bug, not a
+# hypothetical: a real report of the script doing exactly that (stopping
+# dead right after that line, nothing after it, no error text) traced
+# back to exactly this. `|| true` makes "couldn't parse a version
+# number" a normal, survivable outcome - rsync_version simply ends up
+# empty, and every use of it below already defaults safely to 0 via
+# ${var:-0} for exactly that case.
+rsync_version="$(rsync --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1 || true)"
 rsync_major="${rsync_version%%.*}"
 rsync_minor="${rsync_version#*.}"
 if [ "${rsync_major:-0}" -gt 3 ] || { [ "${rsync_major:-0}" -eq 3 ] && [ "${rsync_minor:-0}" -ge 1 ]; }; then
