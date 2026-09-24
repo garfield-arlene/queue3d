@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 from auth import (
     admin_by_username,
     check_lockout,
+    generate_password,
     generate_pin,
     hash_secret,
     record_failed_login,
@@ -107,6 +108,12 @@ def login(
             request,
             "admin_login.html",
             {"error": "Username and password didn't match.", "username": username},
+        )
+    if admin.disabled:
+        return templates.TemplateResponse(
+            request,
+            "admin_login.html",
+            {"error": "This admin account has been disabled. Contact another admin.", "username": username},
         )
 
     record_successful_login(session, admin)
@@ -694,7 +701,13 @@ def _get_admin_or_404(session: Session, admin_id: int) -> Admin:
     return admin
 
 
-def _admins_context(session: Session, admin: Admin, error: str | None = None, username: str = ""):
+def _admins_context(
+    session: Session,
+    admin: Admin,
+    error: str | None = None,
+    username: str = "",
+    flash_notice: str | None = None,
+):
     admins = session.exec(select(Admin).order_by(Admin.username)).all()
     return {
         "admin": admin,
@@ -705,6 +718,7 @@ def _admins_context(session: Session, admin: Admin, error: str | None = None, us
         # user_signup.html never re-shows a submitted PIN on its own
         # error path.
         "username": username,
+        "flash_notice": flash_notice,
     }
 
 
@@ -714,7 +728,14 @@ def admins_page(
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin))
+    # Popped, not just read - same one-time-reveal pattern as
+    # users_page's own flash_notice (reset_admin_password below sets
+    # this the same way reset_user_pin does) - a page refresh must not
+    # keep re-showing a credential that's already been relayed.
+    flash_notice = request.session.pop("flash_notice", None)
+    return templates.TemplateResponse(
+        request, "admin_admins.html", _admins_context(session, admin, flash_notice=flash_notice)
+    )
 
 
 @router.post("/admins/add")
@@ -783,6 +804,92 @@ def delete_admin(
     log_event(session, None, _admin_actor(admin), "admin_deleted", detail=target.username)
     session.delete(target)
     session.commit()
+    return RedirectResponse("/admin/admins", status_code=303)
+
+
+@router.post("/admins/{admin_id}/disable")
+def disable_admin(
+    request: Request,
+    admin_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Refuses the same two cases delete_admin does, for the same two
+    reasons - an Admin.unremovable target (disabling one is a
+    functionally-identical way around the whole reason unremovable
+    exists: it doesn't delete the account, but it locks it out just as
+    completely - see models.Admin.disabled's own docstring), and your own
+    currently-signed-in account (this would log out the very session
+    running the request - see auth.get_current_admin)."""
+    target = _get_admin_or_404(session, admin_id)
+    if target.unremovable:
+        error = f"'{target.username}' was created via create_admin.py and can't be disabled."
+        return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin, error))
+    if target.id == admin.id:
+        error = "Can't disable your own account while signed in as it."
+        return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin, error))
+
+    target.disabled = True
+    session.add(target)
+    log_event(session, None, _admin_actor(admin), "admin_disabled", detail=target.username)
+    session.commit()
+    return RedirectResponse("/admin/admins", status_code=303)
+
+
+@router.post("/admins/{admin_id}/enable")
+def enable_admin(
+    request: Request,
+    admin_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """No unremovable/self checks needed here, unlike disable/delete above -
+    re-enabling can't lock anyone out of anything, so there's nothing to
+    guard against."""
+    target = _get_admin_or_404(session, admin_id)
+    target.disabled = False
+    session.add(target)
+    log_event(session, None, _admin_actor(admin), "admin_enabled", detail=target.username)
+    session.commit()
+    return RedirectResponse("/admin/admins", status_code=303)
+
+
+@router.post("/admins/{admin_id}/reset_password")
+def reset_admin_password(
+    request: Request,
+    admin_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Same unremovable protection as disable/delete above (resetting an
+    unremovable admin's password out from under them, without their
+    consent, is just as much a way to lock them out as either of those)
+    - no self-check needed though, unlike those two: an admin resetting
+    their *own* password this way doesn't lock out the current session
+    (it doesn't touch request.session at all), and admin_admins.html
+    points that case at the dedicated self-service change-password form
+    on /admin/settings instead (see update_admin_password below), which
+    - unlike this route - requires the current password rather than
+    generating a random replacement.
+
+    Generates a random password rather than taking one from a form, same
+    as reset_user_pin does for a user's PIN and for the same reasons:
+    nothing for the acting admin to type or get wrong, and it's shown
+    back exactly once for them to relay in person - never logged in
+    plaintext, same as a user's reset PIN."""
+    target = _get_admin_or_404(session, admin_id)
+    if target.unremovable:
+        error = f"'{target.username}' was created via create_admin.py - only they can change their own password."
+        return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin, error))
+
+    new_password = generate_password()
+    target.password_hash = hash_secret(new_password)
+    session.add(target)
+    log_event(session, None, _admin_actor(admin), "admin_password_reset", detail=target.username)
+    session.commit()
+    request.session["flash_notice"] = (
+        f"New password for {target.username}: {new_password} - give it to them now, it won't be shown again."
+    )
     return RedirectResponse("/admin/admins", status_code=303)
 
 
@@ -888,6 +995,50 @@ def update_admin_theme(
         admin.theme = theme
         admin.theme_mode = mode
         session.add(admin)
+        session.commit()
+    return templates.TemplateResponse(
+        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
+    )
+
+
+@router.post("/settings/change_password")
+def update_admin_password(
+    request: Request,
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Self-service - per the user: "all users (admins included) should
+    be able to reset their own password." The only place an admin
+    changes their *own* password without another admin's involvement at
+    all - contrast reset_admin_password above, which is a *different*,
+    already-signed-in admin doing it for them (generates a random
+    replacement, needs no current password at all, since that other
+    admin's own session is already the trust boundary). This route is
+    reachable by anyone with an open, unattended session on this
+    account, not just its real owner in person - requiring the current
+    password first is the actual thing standing between that and a
+    silent takeover, which reset_admin_password doesn't need since it's
+    gated behind a *different* account's session instead. Works
+    regardless of Admin.unremovable - that flag only ever restricts what
+    *other* admins can do to this account, never what it can do to
+    itself."""
+    error = None
+    if not verify_secret(current_password, admin.password_hash):
+        error = "Current password didn't match."
+    elif new_password != confirm_password:
+        error = "New passwords didn't match."
+    elif len(new_password) < 8:
+        error = "Use at least 8 characters."
+    else:
+        admin.password_hash = hash_secret(new_password)
+        session.add(admin)
+        # No detail beyond who did it - same reasoning reset_user_pin/
+        # reset_admin_password already follow: the activity log records
+        # that a change happened, never the credential itself, old or new.
+        log_event(session, None, _admin_actor(admin), "password_changed")
         session.commit()
     return templates.TemplateResponse(
         request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)

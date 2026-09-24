@@ -1986,6 +1986,99 @@ new admin and confirmed it can't delete itself (no button shown, and the
 same request crafted directly against the real ID is still refused
 server-side); confirmed a *different* admin can still delete it.
 
+### Disable/reset-password for other admins, and self-service for everyone
+
+**Why this exists:** the very next question after the previous section
+shipped, per the user, directly: "Add reset-password, disable/enable for
+other admins (not permanent) now. Also, all users (admins included)
+should be able to reset their own password."
+
+**`Admin.disabled`** (schema 6.5.0) is the same idea as `User.disabled`,
+added for the same reason and enforced the same way: `auth.get_current_admin`
+checks it on every request, not just at login, so disabling someone logs
+them out of an already-open session immediately - confirmed live, not
+just reasoned about (logged in as a second admin, disabled that same
+account from another session, the next request from the disabled one's
+own session bounced straight to `/admin/login`). The admin login route
+also refuses a disabled account outright, same wording pattern as the
+user login route's own "This account has been disabled" message.
+
+**"(not permanent)" - `disable_admin`/`reset_admin_password` both refuse
+an `Admin.unremovable` target**, exactly like `delete_admin` already
+does, and for the identical reason: disabling (or silently resetting the
+password out from under) a permanent admin is a functionally-equivalent
+way around the whole point of `unremovable` - it doesn't delete the
+account, but it locks it out just as completely. `enable_admin` has no
+such check (or a self-check) - re-enabling someone can't lock anyone out
+of anything, so there's nothing to guard against.
+
+**Self-targeting is split across three different rules, not one,
+because each route has a different actual reason to care:**
+- `delete_admin`/`disable_admin` both refuse your own currently-signed-in
+  account outright, full stop - not a permission question (that account
+  might not even be `unremovable`), purely because either action would
+  invalidate the very session the request is running under.
+  `admin_admins.html` doesn't even render the buttons on your own row for
+  either, though both routes check it server-side too, not just the
+  missing button (confirmed directly: a request crafted against the real
+  ID from that same session is still refused, not just hidden from the
+  UI).
+- `reset_admin_password` (another admin generating a random replacement
+  for you) has **no** self-check - it doesn't touch `request.session` at
+  all, so it can't lock anyone out - but `admin_admins.html` still hides
+  the button on your own row anyway, pointing at the dedicated
+  self-service form instead (see below), since resetting your own known
+  password to a random one you'd have to go read off a flash message is
+  just worse than picking your own.
+- The self-service change-password/change-PIN routes below work
+  regardless of `unremovable`, on purpose - that flag only ever
+  restricts what *other* accounts can do to this one, never what it can
+  do to itself.
+
+**Self-service, for real this time:** `POST /settings/change_pin`
+(`routers/user.py`) and `POST /admin/settings/change_password`
+(`routers/admin.py`) - a new form on each account type's own Settings
+page. Both require the *current* credential before accepting a new one,
+unlike an admin resetting someone *else's* (`reset_user_pin`/
+`reset_admin_password`, both pre-existing or added just above) - that
+distinction is the actual point, not an inconsistency: an admin acting on
+someone else's account is already gated behind a *different*, currently-
+authenticated admin's own session, so there's nothing more to prove; this
+route is reachable by anyone with an open, unattended session on the
+account being changed, so proving the current PIN/password first is the
+real security boundary standing between that and a silent takeover.
+Logged the same minimal way as every other credential-change event in
+this app (`pin_changed`/`password_changed`, no detail beyond who did
+it) - the log records that a change happened, never the credential
+itself, old or new, matching `pin_reset`/`admin_password_reset`.
+
+**`auth.generate_password(length=12)`** is `generate_pin`'s admin-password
+counterpart, for `reset_admin_password` - letters and digits only
+(no punctuation, and no visually-ambiguous characters: no `0`/`O`,
+`1`/`l`/`I`), since this is relayed in person off a screen or a
+handwritten note, not pasted from a password manager. Comfortably clears
+`create_admin.py`'s own 8-character minimum.
+
+Verified in an isolated copy: fresh-DB and simulated-pre-6.5.0-migration
+paths both produce the correct `Admin.disabled` schema (the migration
+itself does *not* backfill anything, unlike 6.4.0's `unremovable` -
+every existing admin simply reads as "not disabled," which was already
+implicitly true of all of them). Then the full flow over real HTTP:
+disabling/resetting an `unremovable` admin refused with a clear message;
+a regular admin disabled, confirmed refused at login, confirmed an
+already-open session for that same account is kicked to `/admin/login`
+on its very next request; re-enabled and logged in again; password reset
+by another admin, the generated password shown once via the same
+one-time flash pattern `reset_user_pin` already uses, confirmed gone on
+a second page load; self-service password change confirmed to reject a
+wrong current password, reject mismatched new passwords, reject a too-
+short new password, then succeed and take effect immediately (the old
+password rejected, the new one accepted) - all mirrored for a user's own
+PIN change on the user side. Every new action type
+(`admin_disabled`/`admin_enabled`/`admin_password_reset`/
+`password_changed`/`pin_changed`) confirmed showing up correctly in the
+activity log.
+
 ### Duration estimates as days/hours/minutes
 
 **Why this exists:** raw total minutes reads badly once a print's

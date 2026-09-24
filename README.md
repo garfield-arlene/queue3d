@@ -548,8 +548,16 @@ Managing user accounts:
   (it's the only way to get the very first admin at all). Admins created
   through the new UI have no such protection and can be deleted by any
   other admin (never by themselves, while signed in as that account).
-  Still open: no disable/reset-password for another admin yet (only
-  create/delete); no permission scoping between admins at all yet -
+  Done, too - disable/re-enable and password reset for another (not
+  `unremovable`) admin, from that same page (schema 6.5.0's
+  `Admin.disabled`); a disabled admin is logged out of an already-open
+  session immediately, same as a disabled user. Also done: every account
+  type can now change its own credential itself, without another
+  admin's help - `/settings` (a user's own PIN) and `/admin/settings`
+  (an admin's own password) both require the *current* credential first,
+  unlike an admin resetting someone else's, which doesn't (a different,
+  already-authenticated admin's own session is the trust boundary there
+  instead). Still open: no permission scoping between admins at all yet -
   every one has identical, full access, "decided later" per the user;
   and what happens to a deleted admin's existing references on past jobs
   (`reviewed_by_admin_id`/`admin_note`) - kept but orphaned, or removed

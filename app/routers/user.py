@@ -188,6 +188,47 @@ def update_settings(
     )
 
 
+@router.post("/settings/change_pin")
+def update_pin(
+    request: Request,
+    current_pin: str = Form(...),
+    new_pin: str = Form(...),
+    confirm_pin: str = Form(...),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Self-service - per the user: "all users (admins included) should
+    be able to reset their own password [PIN, for a User account]."
+    Before this, the only way a user's PIN ever changed was an admin
+    resetting it for them (routers/admin.py's reset_user_pin, which
+    generates a random replacement and needs no current PIN at all,
+    since a different, already-authenticated admin's own session is the
+    trust boundary there). This route is reachable by anyone with an
+    open, unattended session on this account, not just its real owner in
+    person, so requiring the current PIN first is the actual thing
+    standing between that and a silent takeover - same reasoning
+    routers/admin.py's update_admin_password applies for an admin
+    account."""
+    error = None
+    if not verify_secret(current_pin, user.pin_hash):
+        error = "Current PIN didn't match."
+    elif new_pin != confirm_pin:
+        error = "New PINs didn't match."
+    elif len(new_pin) < 4:
+        error = "PIN must be at least 4 digits."
+    else:
+        user.pin_hash = hash_secret(new_pin)
+        session.add(user)
+        # No detail beyond who did it - same reasoning as every other
+        # credential-change event in this app: the log records that it
+        # happened, never the PIN itself, old or new.
+        log_event(session, None, f"user:{user.name}", "pin_changed")
+        session.commit()
+    return templates.TemplateResponse(
+        request, "user_settings.html", _user_settings_context(user, error, error is None)
+    )
+
+
 def _enabled_colors(session: Session) -> list[Color]:
     """What the color dropdown offers, both at upload and wherever a job's
     color can be changed later - see models.Color's own docstring for the

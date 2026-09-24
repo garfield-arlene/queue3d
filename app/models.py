@@ -68,6 +68,17 @@ class Admin(SQLModel, table=True):
     # too, not just the short-PIN case that motivated it.
     failed_login_attempts: int = Field(default=0)
     locked_until: datetime | None = Field(default=None)
+    # Same meaning as User.disabled above (schema 6.5.0) - blocked from
+    # logging in, and from an already-open session immediately (see
+    # auth.get_current_admin), without deleting the account or its
+    # history. Reversible, unlike delete - and unlike delete, this alone
+    # doesn't need the unremovable check below to still make sense on its
+    # own; routers/admin.py's disable_admin enforces that restriction at
+    # the route level instead (disabling an unremovable admin would
+    # otherwise be a functionally-identical way around the whole reason
+    # unremovable exists - it doesn't delete the account, but it locks it
+    # out just as completely).
+    disabled: bool = Field(default=False)
     # True only for an admin created via create_admin.py (the CLI, run
     # directly on the server - see that script) - never settable through
     # the web UI at all, in either direction. Per the user: every admin

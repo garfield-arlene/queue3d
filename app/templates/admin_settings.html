@@ -72,4 +72,12 @@
     <p class="muted">Yours alone - follows your admin account across logins, not shared with other admins.</p>
     <button type="submit">Save</button>
   </form>
+
+  <h3>Change your password</h3>
+  <form method="post" action="/admin/settings/change_password">
+    <label>Current password<br><input name="current_password" type="password" required></label>
+    <label>New password (8+ characters)<br><input name="new_password" type="password" minlength="8" required></label>
+    <label>Confirm new password<br><input name="confirm_password" type="password" minlength="8" required></label>
+    <button type="submit">Change password</button>
+  </form>
 {% endblock %}

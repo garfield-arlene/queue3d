@@ -298,6 +298,20 @@ def _migrate_to_6_4_0(conn):
         conn.execute(text("UPDATE admin SET unremovable = 1"))
 
 
+def _migrate_to_6_5_0(conn):
+    """New Admin.disabled column - see that field's own docstring in
+    models.py. Purely additive/nullable-in-spirit (defaults to 0/False,
+    same as create_all() would give a brand new admin), and unlike
+    6.4.0's unremovable column just above, deliberately NOT backfilled to
+    anything else here - an existing admin simply reads as "not
+    disabled," exactly what was already implicitly true of every admin
+    before this column existed (there was no way to disable one at all
+    yet)."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(admin)")).fetchall()}
+    if "disabled" not in cols:
+        conn.execute(text("ALTER TABLE admin ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT 0"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -323,6 +337,7 @@ MIGRATIONS = {
     "6.2.0": _migrate_to_6_2_0,
     "6.3.0": _migrate_to_6_3_0,
     "6.4.0": _migrate_to_6_4_0,
+    "6.5.0": _migrate_to_6_5_0,
 }
 
 
