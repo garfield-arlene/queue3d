@@ -48,15 +48,26 @@ ssh "$TARGET" "mkdir -p $STAGING_DIR"
 # that total - and its percentage - is accurate from the very first line
 # instead of climbing as rsync discovers more files partway through) -
 # per the user, after this step alone was visibly taking a while with no
-# way to tell how far along it actually was. Needs rsync >= 3.1 - stock
-# macOS ships 2.6.9 (Apple stopped bundling anything past GPLv2, and 3.x
-# is GPLv3), which doesn't understand --info at all and would error out
-# on it; `brew install rsync` (or any newer build ahead of it on PATH)
-# fixes that on a Mac running this script. Every rsync call below shares
-# these two flags, even the tiny single-file ones - a fast transfer just
-# prints one line and finishes, so there's no real cost to it being
-# consistent everywhere rather than only on the two large ones.
-RSYNC_PROGRESS=(--info=progress2 --no-i-r)
+# way to tell how far along it actually was. Needs rsync >= 3.1, which
+# --info itself didn't exist before - stock macOS ships 2.6.9 (Apple
+# stopped bundling anything past GPLv2, and 3.x is GPLv3) and would
+# error out on an unrecognized option, confirmed directly against a real
+# Mac hitting exactly that. Detected here rather than just documented,
+# so this script keeps working (falling back to plain -v - at least
+# each filename as it goes, if not a single running total) on whatever
+# rsync happens to be on PATH, rather than requiring everyone running
+# this to go install a newer one first. `brew install rsync` (or
+# anything newer ahead of the stock one on PATH) gets the nicer bar.
+rsync_version="$(rsync --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+rsync_major="${rsync_version%%.*}"
+rsync_minor="${rsync_version#*.}"
+if [ "${rsync_major:-0}" -gt 3 ] || { [ "${rsync_major:-0}" -eq 3 ] && [ "${rsync_minor:-0}" -ge 1 ]; }; then
+  RSYNC_PROGRESS=(--info=progress2 --no-i-r)
+else
+  echo "Note: local rsync $rsync_version doesn't support --info=progress2 (needs 3.1+)" >&2
+  echo "- falling back to -v for at least per-file progress. 'brew install rsync' gets the nicer bar." >&2
+  RSYNC_PROGRESS=(-v)
+fi
 
 # The real application source - excludes match remote_install.sh's own
 # (data/.venv/__pycache__/tools are either regenerated on the Pi or never
