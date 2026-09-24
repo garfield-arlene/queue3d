@@ -246,9 +246,13 @@ class JobEvent(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     job_id: int | None = Field(default=None, foreign_key="job.id", index=True)
-    at: datetime = Field(default_factory=utcnow)
+    # Indexed (schema 6.3.0) for the global activity log's own filters
+    # (routers/admin.py's activity_log_page) - date range on `at`, actor
+    # substring doesn't use an index (LIKE '%...%' can't), action is an
+    # exact-match dropdown that benefits from one.
+    at: datetime = Field(default_factory=utcnow, index=True)
     actor: str
-    action: str  # short verb: "submitted", "sliced", "slice_failed", "reslice_started", "queued", "approved", "rejected", "released", "done", "failed", "expired"
+    action: str = Field(index=True)  # short verb: "submitted", "sliced", "slice_failed", "reslice_started", "queued", "approved", "rejected", "released", "done", "failed", "expired"
     detail: str = ""  # e.g. the rejection note, or a truncated slice error
 
 
@@ -295,18 +299,21 @@ class Job(SQLModel, table=True):
     # When this row was created (upload time) - NOT when it joined the
     # queue, which may be much later or never (see queued_at below). Used
     # to order a user's own submissions list and to age out abandoned
-    # drafts (cleanup_drafts.py), not for queue fairness.
-    created_at: datetime = Field(default_factory=utcnow)
+    # drafts (cleanup_drafts.py), not for queue fairness. Indexed (schema
+    # 6.3.0) for the user dashboard's own date-range filter (filters.py).
+    created_at: datetime = Field(default_factory=utcnow, index=True)
     # When submit_draft() actually moved this job into the queue - None
     # until then. This, not created_at, is what queue_position() orders
     # by: a draft someone sat on for hours before submitting must not cut
     # ahead of everyone who submitted straight away in the meantime.
-    queued_at: datetime | None = Field(default=None)
+    # Indexed (schema 6.3.0) for the admin queue/old-jobs date filters.
+    queued_at: datetime | None = Field(default=None, index=True)
     reviewed_at: datetime | None = Field(default=None)
     reviewed_by_admin_id: int | None = Field(default=None, foreign_key="admin.id")
     admin_note: str | None = Field(default=None)
     released_at: datetime | None = Field(default=None)
-    finished_at: datetime | None = Field(default=None)
+    # Indexed (schema 6.3.0) for the admin finished-jobs date filter.
+    finished_at: datetime | None = Field(default=None, index=True)
     # Why a 'failed' job failed - shown to the submitter, not just an
     # admin (see jobs.mark_finished). Always set automatically when the
     # background poller detects the failure itself ("cancelled at the
@@ -334,8 +341,9 @@ class Job(SQLModel, table=True):
     # selected, full stop. See jobs.filament_status for how this is
     # looked up against the *current* Color table anyway, best-effort,
     # purely for the low-filament warning - that's a live check, not
-    # something this snapshot itself needs to stay valid for.
-    color_name: str | None = Field(default=None)
+    # something this snapshot itself needs to stay valid for. Indexed
+    # (schema 6.3.0) for every job table's own color filter (filters.py).
+    color_name: str | None = Field(default=None, index=True)
     # Grams of filament this job actually used, read straight out of the
     # sliced .makerbot's own meta.json (mbotmake's real computed
     # extrusion mass - see storage.read_makerbot_filament_g) the moment

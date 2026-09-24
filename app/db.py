@@ -249,6 +249,30 @@ def _migrate_to_6_2_0(conn):
         conn.execute(text("ALTER TABLE job ADD COLUMN filament_grams FLOAT"))
 
 
+def _migrate_to_6_3_0(conn):
+    """New indexes for the job/log filtering feature (filters.py) - per
+    the user, filters everywhere the underlying data exists, across
+    several tables that can realistically grow over years of school use.
+    Unlike every migration above, this doesn't add/rename a column -
+    `CREATE INDEX IF NOT EXISTS` works directly against an existing
+    SQLite table with no rebuild needed, so this is here only because
+    create_all() below has the exact same limitation for indexes as it
+    does for columns: it happily creates every index a *new* database
+    needs from the current model definitions, but never retrofits one
+    onto a table that already exists. Named to match SQLAlchemy's own
+    default index-naming convention (ix_<table>_<column>) exactly, so a
+    brand-new database's create_all()-generated indexes and an existing
+    database's migration-created ones end up identical - nothing here is
+    a "different index with the same job," just the same one arriving by
+    two different paths depending on how old the database is."""
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_color_name ON job (color_name)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_created_at ON job (created_at)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_queued_at ON job (queued_at)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_finished_at ON job (finished_at)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobevent_at ON jobevent (at)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobevent_action ON jobevent (action)"))
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -272,6 +296,7 @@ MIGRATIONS = {
     "5.5.0": _migrate_to_5_5_0,
     "5.6.0": _migrate_to_5_6_0,
     "6.2.0": _migrate_to_6_2_0,
+    "6.3.0": _migrate_to_6_3_0,
 }
 
 
