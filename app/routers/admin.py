@@ -1,18 +1,22 @@
-"""Admin login/dashboard/queue actions. Deliberately no self-service signup
-here - admin accounts are provisioned out-of-band via create_admin.py, run
-by whoever controls the server. Approving/releasing print jobs is a
-position of trust over many users' shared printer time; open
-admin signup would defeat the whole point of the review gate."""
+"""Admin login/dashboard/queue actions. Deliberately no *open* self-service
+signup here - the very first admin account is provisioned out-of-band via
+create_admin.py, run by whoever controls the server; every one after that
+can be created from inside here (see the admin account management section
+below) by an admin who's already signed in, never by an outsider. Approving/
+releasing print jobs is a position of trust over many users' shared printer
+time; open admin signup would defeat the whole point of the review gate."""
 
 import zoneinfo
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlmodel import Session, select
 
 from auth import (
     admin_by_username,
     check_lockout,
+    generate_password,
     generate_pin,
     hash_secret,
     record_failed_login,
@@ -22,6 +26,15 @@ from auth import (
 )
 from backup import get_last_successful_backup, is_stale
 from db import get_session
+from filters import (
+    apply_user_filters,
+    event_filter_params,
+    filtered_redirect as _filtered_redirect,
+    job_filter_params,
+    job_filters_from_query_params,
+    query_suffix as _query_suffix,
+    user_filter_params,
+)
 from jobs import (
     JobActionError,
     _admin_actor,
@@ -31,6 +44,9 @@ from jobs import (
     corrected_duration_estimate_s,
     delete_all_old_jobs,
     delete_old_job,
+    distinct_event_actions,
+    distinct_job_colors,
+    filament_status,
     finished_jobs,
     format_duration,
     is_old_job,
@@ -42,14 +58,27 @@ from jobs import (
     reject,
     release,
     requeue_job,
+    untracked_print_in_progress,
     user_has_active_jobs,
 )
-from models import Admin, Job, Settings, User
+from models import Admin, Color, Job, QUEUE_STATUSES, Settings, TERMINAL_STATUSES, User
 from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
+from support_bundle import build_support_bundle
 from templates_env import is_valid_timezone, set_display_timezone, templates
 from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
 
 router = APIRouter(prefix="/admin")
+
+# Every JobStatus that can actually appear in active_jobs()/finished_jobs()
+# respectively - the status dropdown on each filtered view (see
+# templates/_job_filters.html) only ever offers a value that view's own
+# query could actually return, not every JobStatus that exists (a draft
+# status, e.g., can never show up on the admin queue or finished-jobs
+# pages at all - see models.py's three-way status partition).
+_QUEUE_STATUS_VALUES = [s.value for s in QUEUE_STATUSES]
+_TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
+
+
 
 
 @router.get("/login")
@@ -80,6 +109,12 @@ def login(
             "admin_login.html",
             {"error": "Username and password didn't match.", "username": username},
         )
+    if admin.disabled:
+        return templates.TemplateResponse(
+            request,
+            "admin_login.html",
+            {"error": "This admin account has been disabled. Contact another admin.", "username": username},
+        )
 
     record_successful_login(session, admin)
     request.session["admin_id"] = admin.id
@@ -92,17 +127,23 @@ def logout(request: Request):
     return RedirectResponse("/admin/login", status_code=303)
 
 
-def _dashboard_context(session: Session, admin: Admin, action_error: str | None = None):
+def _dashboard_context(session: Session, admin: Admin, action_error: str | None = None, filters: dict | None = None):
+    filters = filters or {}
     last_backup = get_last_successful_backup(session)
     threshold_days = get_settings(session).old_job_threshold_days
+    # Always the *true*, unfiltered count - this banner is a global
+    # backlog indicator ("go look at /admin/jobs/old"), not a "how many
+    # of what you're currently filtering for are old" figure. Computing
+    # it from a filtered query would make a real backlog silently
+    # disappear from view just because the current filter happens not to
+    # match any of it.
+    old_job_count = sum(1 for job in active_jobs(session) if is_old_job(job, threshold_days))
     rows = []
-    old_job_count = 0
-    for job in active_jobs(session):
+    for job in active_jobs(session, **filters):
         # Split out, not just shown-alongside - an old, still-undecided
         # job moves to /admin/jobs/old entirely (see that route below),
         # per the user: "mutually exclusive, not shown in both."
         if is_old_job(job, threshold_days):
-            old_job_count += 1
             continue
         user = session.get(User, job.user_id)
         estimate_s = corrected_duration_estimate_s(session, job)
@@ -115,6 +156,7 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
                 "duration_estimate_s": estimate_s,
                 "duration_display": format_duration(estimate_s) if estimate_s else None,
                 "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
+                "filament": filament_status(session, job),
             }
         )
     return {
@@ -127,6 +169,20 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
         "action_error": action_error,
         "printer_status": connection_status(),
         "pairing": pairing_status(),
+        # Live, not cached - checked fresh on every dashboard load, per
+        # the user, after a real dial-triggered reprint at the printer
+        # itself went completely unnoticed by the app. See
+        # jobs.untracked_print_in_progress's own docstring.
+        "untracked_print": untracked_print_in_progress(session),
+        # Filter form state - see templates/_job_filters.html. Scoped to
+        # QUEUE_STATUSES only (queued/approved/printing) - nothing else
+        # can ever appear in this view's own query to begin with.
+        "filter_action": "/admin/dashboard",
+        "filter_colors": distinct_job_colors(session),
+        "filter_statuses": _QUEUE_STATUS_VALUES,
+        "filter_date_label": "Queued",
+        "filter_show_user": True,
+        **{f"filter_{k}": v for k, v in filters.items()},
     }
 
 
@@ -135,9 +191,10 @@ def dashboard(
     request: Request,
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
+    filters: dict = Depends(job_filter_params),
 ):
     return templates.TemplateResponse(
-        request, "admin_dashboard.html", _dashboard_context(session, admin)
+        request, "admin_dashboard.html", _dashboard_context(session, admin, filters=filters)
     )
 
 
@@ -211,8 +268,14 @@ def _get_job_or_404(session: Session, job_id: int) -> Job:
 # every pre-existing form (which never sends this field) keeps working
 # unchanged.
 _RETURN_TARGETS = {
-    "/admin/dashboard": ("admin_dashboard.html", lambda session, admin, error: _dashboard_context(session, admin, error)),
-    "/admin/jobs/old": ("admin_old_jobs.html", lambda session, admin, error: _old_jobs_context(session, admin, error)),
+    "/admin/dashboard": (
+        "admin_dashboard.html",
+        lambda session, admin, error, filters: _dashboard_context(session, admin, error, filters),
+    ),
+    "/admin/jobs/old": (
+        "admin_old_jobs.html",
+        lambda session, admin, error, filters: _old_jobs_context(session, admin, error, filters),
+    ),
 }
 
 
@@ -229,14 +292,31 @@ def _perform_action(
     requested transition, and either redirect (success) or re-render
     wherever the action was actually submitted from with the error
     inline (failure) - e.g. releasing a job that isn't approved, or
-    rejecting without a note."""
+    rejecting without a note.
+
+    On success, carries the request's own current query string along
+    (see _filtered_redirect/_query_suffix) - every action <form> on a
+    filtered admin_dashboard.html/admin_old_jobs.html posts to a URL
+    built with that same suffix (see those templates), so approving/
+    rejecting/releasing/etc. from a filtered view lands back on that
+    identical filtered view rather than silently resetting to unfiltered -
+    *unless* that same filter would now show zero rows (see
+    _filtered_redirect's own docstring), in which case it's dropped
+    instead of leaving the admin on a real but empty-looking page. Read
+    straight from request.query_params (not FastAPI-bound the way the
+    GET pages' own `filters: dict = Depends(job_filter_params)` is) since
+    this is a POST route - there's no query-param dependency to inject
+    filters through here, only whatever a form's own action= happened to
+    carry along."""
     job = _get_job_or_404(session, job_id)
     template_name, context_fn = _RETURN_TARGETS.get(return_to, _RETURN_TARGETS["/admin/dashboard"])
+    filters = job_filters_from_query_params(request.query_params)
     try:
         action_fn(session, job, *args)
     except JobActionError as e:
-        return templates.TemplateResponse(request, template_name, context_fn(session, admin, str(e)))
-    return RedirectResponse(return_to, status_code=303)
+        return templates.TemplateResponse(request, template_name, context_fn(session, admin, str(e), filters))
+    still_has_rows = bool(context_fn(session, admin, None, filters)["rows"])
+    return _filtered_redirect(return_to, request, still_has_rows)
 
 
 @router.post("/jobs/{job_id}/approve")
@@ -294,10 +374,11 @@ def mark_failed_job(
     return _perform_action(request, session, admin, job_id, mark_finished, admin, False, reason)
 
 
-def _old_jobs_context(session: Session, admin: Admin, action_error: str | None = None):
+def _old_jobs_context(session: Session, admin: Admin, action_error: str | None = None, filters: dict | None = None):
+    filters = filters or {}
     threshold_days = get_settings(session).old_job_threshold_days
     rows = []
-    for job in active_jobs(session):
+    for job in active_jobs(session, **filters):
         if not is_old_job(job, threshold_days):
             continue
         user = session.get(User, job.user_id)
@@ -316,6 +397,15 @@ def _old_jobs_context(session: Session, admin: Admin, action_error: str | None =
         "rows": rows,
         "threshold_days": threshold_days,
         "action_error": action_error,
+        # Filter form state - see _dashboard_context above (identical
+        # reasoning: same status universe, same "Queued" date meaning -
+        # this page is just the old-backlog slice of that exact query).
+        "filter_action": "/admin/jobs/old",
+        "filter_colors": distinct_job_colors(session),
+        "filter_statuses": _QUEUE_STATUS_VALUES,
+        "filter_date_label": "Queued",
+        "filter_show_user": True,
+        **{f"filter_{k}": v for k, v in filters.items()},
     }
 
 
@@ -324,12 +414,15 @@ def old_jobs_page(
     request: Request,
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
+    filters: dict = Depends(job_filter_params),
 ):
     """Queued/approved jobs that have been waiting at least
     Settings.old_job_threshold_days - split entirely out of the normal
     /admin/dashboard queue (see jobs.is_old_job / _dashboard_context
     above), not just flagged alongside everything else there."""
-    return templates.TemplateResponse(request, "admin_old_jobs.html", _old_jobs_context(session, admin))
+    return templates.TemplateResponse(
+        request, "admin_old_jobs.html", _old_jobs_context(session, admin, filters=filters)
+    )
 
 
 @router.post("/jobs/{job_id}/delete")
@@ -345,13 +438,15 @@ def delete_job_route(
     only meaningful for a job still queued/approved there - not a
     general "delete any job" action."""
     job = _get_job_or_404(session, job_id)
+    filters = job_filters_from_query_params(request.query_params)
     try:
         delete_old_job(session, job, admin)
     except JobActionError as e:
         return templates.TemplateResponse(
-            request, "admin_old_jobs.html", _old_jobs_context(session, admin, str(e))
+            request, "admin_old_jobs.html", _old_jobs_context(session, admin, str(e), filters)
         )
-    return RedirectResponse("/admin/jobs/old", status_code=303)
+    still_has_rows = bool(_old_jobs_context(session, admin, filters=filters)["rows"])
+    return _filtered_redirect("/admin/jobs/old", request, still_has_rows)
 
 
 @router.post("/jobs/{job_id}/requeue")
@@ -368,13 +463,15 @@ def requeue_job_route(
     exists), and by definition the job won't show up there any more
     once its wait clock has been reset."""
     job = _get_job_or_404(session, job_id)
+    filters = job_filters_from_query_params(request.query_params)
     try:
         requeue_job(session, job, admin)
     except JobActionError as e:
         return templates.TemplateResponse(
-            request, "admin_old_jobs.html", _old_jobs_context(session, admin, str(e))
+            request, "admin_old_jobs.html", _old_jobs_context(session, admin, str(e), filters)
         )
-    return RedirectResponse("/admin/jobs/old", status_code=303)
+    still_has_rows = bool(_old_jobs_context(session, admin, filters=filters)["rows"])
+    return _filtered_redirect("/admin/jobs/old", request, still_has_rows)
 
 
 @router.post("/jobs/old/delete_all")
@@ -383,14 +480,24 @@ def delete_all_old_jobs_route(
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    """Clears the entire old-jobs backlog in one click - see
-    jobs.delete_all_old_jobs. No JobActionError case to handle here
-    unlike the single-job route above: every job this touches was just
-    re-selected by is_old_job() itself, so there's nothing left that
-    could fail _require_status's check inside delete_old_job()."""
+    """Clears the old-jobs backlog *currently shown* in one click - see
+    jobs.delete_all_old_jobs. Scoped to whatever filter is active (same
+    as the confirm() text on admin_old_jobs.html's own button already
+    says - "shown here," not "every old job that exists") so this can't
+    reach past a filter and delete something the admin can't currently
+    see. No JobActionError case to handle here unlike the single-job
+    route above: every job this touches was just re-selected by
+    is_old_job() itself, so there's nothing left that could fail
+    _require_status's check inside delete_old_job()."""
     threshold_days = get_settings(session).old_job_threshold_days
-    delete_all_old_jobs(session, admin, threshold_days)
-    return RedirectResponse("/admin/jobs/old", status_code=303)
+    filters = job_filters_from_query_params(request.query_params)
+    delete_all_old_jobs(session, admin, threshold_days, **filters)
+    # Almost always empty at this point - "delete all" just removed every
+    # old job the active filter could possibly match - but re-checked for
+    # real (see _filtered_redirect) rather than assumed, in case something
+    # new started matching in the moment between the query above and now.
+    still_has_rows = bool(_old_jobs_context(session, admin, filters=filters)["rows"])
+    return _filtered_redirect("/admin/jobs/old", request, still_has_rows)
 
 
 # ---- user account management ----
@@ -406,13 +513,19 @@ def _users_context(
     admin: Admin,
     action_error: str | None = None,
     flash_notice: str | None = None,
+    filters: dict | None = None,
 ):
+    filters = filters or {}
     users = session.exec(select(User).order_by(User.name)).all()
+    users = apply_user_filters(users, **filters)
     return {
         "admin": admin,
         "users": users,
         "action_error": action_error,
         "flash_notice": flash_notice,
+        # Filter form state - see templates/_user_filters.html.
+        "filter_action": "/admin/users",
+        **{f"filter_{k}": v for k, v in filters.items()},
     }
 
 
@@ -421,6 +534,7 @@ def users_page(
     request: Request,
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
+    filters: dict = Depends(user_filter_params),
 ):
     # Popped, not just read - see reset_user_pin below: the new PIN is
     # shown here exactly once, right after the redirect that follows
@@ -429,7 +543,7 @@ def users_page(
     # was already relayed.
     flash_notice = request.session.pop("flash_notice", None)
     return templates.TemplateResponse(
-        request, "admin_users.html", _users_context(session, admin, flash_notice=flash_notice)
+        request, "admin_users.html", _users_context(session, admin, flash_notice=flash_notice, filters=filters)
     )
 
 
@@ -440,6 +554,23 @@ def _get_user_or_404(session: Session, user_id: int) -> User:
     return user
 
 
+def _user_filters_from_request(request: Request) -> dict:
+    """Same idea as jobs.py's job_filters_from_query_params - reads
+    user_filter_params' own fields straight from request.query_params for
+    a POST route with no dependency injection of its own."""
+    return user_filter_params(**{k: request.query_params.get(k) for k in ("q", "status", "date_from", "date_to")})
+
+
+def _users_still_match(session: Session, filters: dict) -> bool:
+    """Whether the given filter would still show at least one user right
+    now - see _filtered_redirect. A real, fresh count each time (not the
+    pre-action count minus one): disabling/enabling a user, in
+    particular, can itself change whether *that exact user* still matches
+    a `status=active`/`status=disabled` filter, not just remove them from
+    the list some other way."""
+    return bool(apply_user_filters(session.exec(select(User)).all(), **filters))
+
+
 @router.post("/users/{user_id}/disable")
 def disable_user(
     request: Request,
@@ -448,11 +579,12 @@ def disable_user(
     session: Session = Depends(get_session),
 ):
     user = _get_user_or_404(session, user_id)
+    filters = _user_filters_from_request(request)
     user.disabled = True
     session.add(user)
     log_event(session, None, _admin_actor(admin), "user_disabled", detail=user.name)
     session.commit()
-    return RedirectResponse("/admin/users", status_code=303)
+    return _filtered_redirect("/admin/users", request, _users_still_match(session, filters))
 
 
 @router.post("/users/{user_id}/enable")
@@ -463,11 +595,12 @@ def enable_user(
     session: Session = Depends(get_session),
 ):
     user = _get_user_or_404(session, user_id)
+    filters = _user_filters_from_request(request)
     user.disabled = False
     session.add(user)
     log_event(session, None, _admin_actor(admin), "user_enabled", detail=user.name)
     session.commit()
-    return RedirectResponse("/admin/users", status_code=303)
+    return _filtered_redirect("/admin/users", request, _users_still_match(session, filters))
 
 
 @router.post("/users/{user_id}/reset_pin")
@@ -486,13 +619,14 @@ def reset_user_pin(
     activity log records that a reset happened and who did it, same as
     disable/enable/delete, not the credential itself."""
     user = _get_user_or_404(session, user_id)
+    filters = _user_filters_from_request(request)
     new_pin = generate_pin()
     user.pin_hash = hash_secret(new_pin)
     session.add(user)
     log_event(session, None, _admin_actor(admin), "pin_reset", detail=user.name)
     session.commit()
     request.session["flash_notice"] = f"New PIN for {user.name}: {new_pin} - give it to them now, it won't be shown again."
-    return RedirectResponse("/admin/users", status_code=303)
+    return _filtered_redirect("/admin/users", request, _users_still_match(session, filters))
 
 
 @router.post("/users/{user_id}/delete")
@@ -503,13 +637,16 @@ def delete_user(
     session: Session = Depends(get_session),
 ):
     user = _get_user_or_404(session, user_id)
+    filters = _user_filters_from_request(request)
     if user_has_active_jobs(session, user.id):
         error = f"Can't delete {user.name} - they still have a job in the queue or printing. Resolve it first."
-        return templates.TemplateResponse(request, "admin_users.html", _users_context(session, admin, error))
+        return templates.TemplateResponse(
+            request, "admin_users.html", _users_context(session, admin, error, filters=filters)
+        )
     log_event(session, None, _admin_actor(admin), "user_deleted", detail=user.name)
     session.delete(user)
     session.commit()
-    return RedirectResponse("/admin/users", status_code=303)
+    return _filtered_redirect("/admin/users", request, _users_still_match(session, filters))
 
 
 @router.post("/users/delete_all")
@@ -518,19 +655,254 @@ def delete_all_users(
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    users = session.exec(select(User)).all()
+    """Deletes every user *currently shown* - scoped to whatever filter
+    is active (see admin_users.html's own "shown here" confirm() text
+    and jobs.delete_all_old_jobs' identical reasoning) so this can't
+    reach past a filter and delete someone the admin can't currently
+    see."""
+    filters = _user_filters_from_request(request)
+    users = apply_user_filters(session.exec(select(User)).all(), **filters)
     blocked = [u.name for u in users if user_has_active_jobs(session, u.id)]
     if blocked:
         error = (
             "Didn't delete anyone - these users still have a job in the queue or "
             f"printing: {', '.join(blocked)}. Resolve those first."
         )
-        return templates.TemplateResponse(request, "admin_users.html", _users_context(session, admin, error))
+        return templates.TemplateResponse(
+            request, "admin_users.html", _users_context(session, admin, error, filters=filters)
+        )
     for user in users:
         log_event(session, None, _admin_actor(admin), "user_deleted", detail=user.name)
         session.delete(user)
     session.commit()
-    return RedirectResponse("/admin/users", status_code=303)
+    # Almost always empty at this point - see delete_all_old_jobs_route's
+    # identical reasoning - but re-checked for real rather than assumed.
+    return _filtered_redirect("/admin/users", request, _users_still_match(session, filters))
+
+
+# ---- admin account management ----
+# Per the user, directly: any already-signed-in admin can create another
+# admin from here - no separate "invite" step, no approval from a second
+# admin, nothing beyond being signed in at all. Deliberately NOT open
+# self-signup the way user registration is (routers/user.py's signup) -
+# reaching this page at all already requires require_admin below, so this
+# only ever grows the admin group from *inside* it, never from outside.
+# No disable/reset-password for another admin here (unlike the Users page
+# above) - not asked for; every admin today has identical, full
+# permissions with no scoping between them yet (see README.md's To do
+# list - "decided later," per the user), so there's nothing yet for a
+# lesser role to even mean.
+
+
+def _get_admin_or_404(session: Session, admin_id: int) -> Admin:
+    admin = session.get(Admin, admin_id)
+    if admin is None:
+        raise HTTPException(status_code=404, detail="No such admin")
+    return admin
+
+
+def _admins_context(
+    session: Session,
+    admin: Admin,
+    error: str | None = None,
+    username: str = "",
+    flash_notice: str | None = None,
+):
+    admins = session.exec(select(Admin).order_by(Admin.username)).all()
+    return {
+        "admin": admin,
+        "admins": admins,
+        "action_error": error,
+        # Re-shown on a failed create so a typo in the username doesn't
+        # also cost re-typing it - never the password, same as
+        # user_signup.html never re-shows a submitted PIN on its own
+        # error path.
+        "username": username,
+        "flash_notice": flash_notice,
+    }
+
+
+@router.get("/admins")
+def admins_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    # Popped, not just read - same one-time-reveal pattern as
+    # users_page's own flash_notice (reset_admin_password below sets
+    # this the same way reset_user_pin does) - a page refresh must not
+    # keep re-showing a credential that's already been relayed.
+    flash_notice = request.session.pop("flash_notice", None)
+    return templates.TemplateResponse(
+        request, "admin_admins.html", _admins_context(session, admin, flash_notice=flash_notice)
+    )
+
+
+@router.post("/admins/add")
+def add_admin(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Same validation create_admin.py itself applies (non-empty, not
+    already taken, both password fields typed the same, at least 8
+    characters) - kept independent of that script rather than shared,
+    same as routers/user.py's own signup() doesn't share user_by_name's
+    validation with anything either; this is a small, one-off check with
+    nowhere else it needs to live. The admin this creates is a normal,
+    deletable one (Admin.unremovable defaults to False) - only
+    create_admin.py's own CLI path ever sets that."""
+    username = username.strip()
+    error = None
+    if not username:
+        error = "Username can't be empty."
+    elif admin_by_username(session, username):
+        error = f"An admin named '{username}' already exists."
+    elif password != confirm_password:
+        error = "Passwords didn't match."
+    elif len(password) < 8:
+        error = "Use at least 8 characters."
+
+    if error:
+        return templates.TemplateResponse(
+            request, "admin_admins.html", _admins_context(session, admin, error, username)
+        )
+
+    new_admin = Admin(username=username, password_hash=hash_secret(password))
+    session.add(new_admin)
+    log_event(session, None, _admin_actor(admin), "admin_created", detail=username)
+    session.commit()
+    return RedirectResponse("/admin/admins", status_code=303)
+
+
+@router.post("/admins/{admin_id}/delete")
+def delete_admin(
+    request: Request,
+    admin_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Refuses two cases, checked before anything else: deleting an
+    Admin.unremovable account at all (see that field's own docstring -
+    every admin created via create_admin.py, permanently, by design), and
+    an admin deleting their own currently-signed-in account (not
+    permission-related - that account might not even be unremovable -
+    purely because it would immediately invalidate the session this very
+    request is running under, a confusing state to leave anyone in;
+    another admin can always delete it instead).
+
+    Before the row itself is actually deleted, rewrites every Job this
+    admin ever reviewed (Job.reviewed_by_admin_id) so that history
+    doesn't go silently orphaned - see Job.reviewed_by_name's own
+    docstring. Per the user: "replaced with admin's name as a string
+    with deleted in parentheses.\""""
+    target = _get_admin_or_404(session, admin_id)
+    if target.unremovable:
+        error = f"'{target.username}' was created via create_admin.py and can't be deleted."
+        return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin, error))
+    if target.id == admin.id:
+        error = "Can't delete your own account while signed in as it - have another admin do it instead."
+        return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin, error))
+
+    reviewed_jobs = session.exec(select(Job).where(Job.reviewed_by_admin_id == target.id)).all()
+    for job in reviewed_jobs:
+        job.reviewed_by_name = f"{target.username} (deleted)"
+        job.reviewed_by_admin_id = None
+        session.add(job)
+
+    log_event(session, None, _admin_actor(admin), "admin_deleted", detail=target.username)
+    session.delete(target)
+    session.commit()
+    return RedirectResponse("/admin/admins", status_code=303)
+
+
+@router.post("/admins/{admin_id}/disable")
+def disable_admin(
+    request: Request,
+    admin_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Refuses the same two cases delete_admin does, for the same two
+    reasons - an Admin.unremovable target (disabling one is a
+    functionally-identical way around the whole reason unremovable
+    exists: it doesn't delete the account, but it locks it out just as
+    completely - see models.Admin.disabled's own docstring), and your own
+    currently-signed-in account (this would log out the very session
+    running the request - see auth.get_current_admin)."""
+    target = _get_admin_or_404(session, admin_id)
+    if target.unremovable:
+        error = f"'{target.username}' was created via create_admin.py and can't be disabled."
+        return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin, error))
+    if target.id == admin.id:
+        error = "Can't disable your own account while signed in as it."
+        return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin, error))
+
+    target.disabled = True
+    session.add(target)
+    log_event(session, None, _admin_actor(admin), "admin_disabled", detail=target.username)
+    session.commit()
+    return RedirectResponse("/admin/admins", status_code=303)
+
+
+@router.post("/admins/{admin_id}/enable")
+def enable_admin(
+    request: Request,
+    admin_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """No unremovable/self checks needed here, unlike disable/delete above -
+    re-enabling can't lock anyone out of anything, so there's nothing to
+    guard against."""
+    target = _get_admin_or_404(session, admin_id)
+    target.disabled = False
+    session.add(target)
+    log_event(session, None, _admin_actor(admin), "admin_enabled", detail=target.username)
+    session.commit()
+    return RedirectResponse("/admin/admins", status_code=303)
+
+
+@router.post("/admins/{admin_id}/reset_password")
+def reset_admin_password(
+    request: Request,
+    admin_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Same unremovable protection as disable/delete above (resetting an
+    unremovable admin's password out from under them, without their
+    consent, is just as much a way to lock them out as either of those)
+    - no self-check needed though, unlike those two: an admin resetting
+    their *own* password this way doesn't lock out the current session
+    (it doesn't touch request.session at all), and admin_admins.html
+    points that case at the dedicated self-service change-password form
+    on /admin/settings instead (see update_admin_password below), which
+    - unlike this route - requires the current password rather than
+    generating a random replacement.
+
+    Generates a random password rather than taking one from a form, same
+    as reset_user_pin does for a user's PIN and for the same reasons:
+    nothing for the acting admin to type or get wrong, and it's shown
+    back exactly once for them to relay in person - never logged in
+    plaintext, same as a user's reset PIN."""
+    target = _get_admin_or_404(session, admin_id)
+    if target.unremovable:
+        error = f"'{target.username}' was created via create_admin.py - only they can change their own password."
+        return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin, error))
+
+    new_password = generate_password()
+    target.password_hash = hash_secret(new_password)
+    session.add(target)
+    log_event(session, None, _admin_actor(admin), "admin_password_reset", detail=target.username)
+    session.commit()
+    request.session["flash_notice"] = (
+        f"New password for {target.username}: {new_password} - give it to them now, it won't be shown again."
+    )
+    return RedirectResponse("/admin/admins", status_code=303)
 
 
 # ---- settings ----
@@ -641,6 +1013,50 @@ def update_admin_theme(
     )
 
 
+@router.post("/settings/change_password")
+def update_admin_password(
+    request: Request,
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Self-service - per the user: "all users (admins included) should
+    be able to reset their own password." The only place an admin
+    changes their *own* password without another admin's involvement at
+    all - contrast reset_admin_password above, which is a *different*,
+    already-signed-in admin doing it for them (generates a random
+    replacement, needs no current password at all, since that other
+    admin's own session is already the trust boundary). This route is
+    reachable by anyone with an open, unattended session on this
+    account, not just its real owner in person - requiring the current
+    password first is the actual thing standing between that and a
+    silent takeover, which reset_admin_password doesn't need since it's
+    gated behind a *different* account's session instead. Works
+    regardless of Admin.unremovable - that flag only ever restricts what
+    *other* admins can do to this account, never what it can do to
+    itself."""
+    error = None
+    if not verify_secret(current_password, admin.password_hash):
+        error = "Current password didn't match."
+    elif new_password != confirm_password:
+        error = "New passwords didn't match."
+    elif len(new_password) < 8:
+        error = "Use at least 8 characters."
+    else:
+        admin.password_hash = hash_secret(new_password)
+        session.add(admin)
+        # No detail beyond who did it - same reasoning reset_user_pin/
+        # reset_admin_password already follow: the activity log records
+        # that a change happened, never the credential itself, old or new.
+        log_event(session, None, _admin_actor(admin), "password_changed")
+        session.commit()
+    return templates.TemplateResponse(
+        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
+    )
+
+
 # ---- finished jobs + audit log ----
 # Two distinct views (see README.md's To do list, "Audit log" and
 # "Job review & feedback" sections, for why they're kept separate rather
@@ -657,13 +1073,28 @@ def finished_jobs_page(
     request: Request,
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
+    filters: dict = Depends(job_filter_params),
 ):
     rows = []
-    for job in finished_jobs(session):
+    for job in finished_jobs(session, **filters):
         user = session.get(User, job.user_id)
         rows.append({"job": job, "user_name": user.name if user else "?"})
     return templates.TemplateResponse(
-        request, "admin_finished_jobs.html", {"admin": admin, "rows": rows}
+        request,
+        "admin_finished_jobs.html",
+        {
+            "admin": admin,
+            "rows": rows,
+            # Filter form state - see templates/_job_filters.html.
+            # Scoped to TERMINAL_STATUSES only - nothing else can appear
+            # in this view's own query at all.
+            "filter_action": "/admin/jobs/finished",
+            "filter_colors": distinct_job_colors(session),
+            "filter_statuses": _TERMINAL_STATUS_VALUES,
+            "filter_date_label": "Finished",
+            "filter_show_user": True,
+            **{f"filter_{k}": v for k, v in filters.items()},
+        },
     )
 
 
@@ -701,13 +1132,170 @@ def activity_log_page(
     request: Request,
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
+    filters: dict = Depends(event_filter_params),
 ):
     rows = [
         {"event": event, "filename": filename, "photo_path": photo_path}
-        for event, filename, photo_path in all_events(session, limit=ACTIVITY_LOG_LIMIT)
+        for event, filename, photo_path in all_events(session, limit=ACTIVITY_LOG_LIMIT, **filters)
     ]
     return templates.TemplateResponse(
         request,
         "admin_log.html",
-        {"admin": admin, "rows": rows, "limit": ACTIVITY_LOG_LIMIT},
+        {
+            "admin": admin,
+            "rows": rows,
+            "limit": ACTIVITY_LOG_LIMIT,
+            # Filter form state - see templates/_log_filters.html.
+            # filter_action (this page's own GET target, "/admin/log")
+            # and filter_action_value (the JobEvent.action filter's
+            # *current value*) are named apart deliberately - both
+            # otherwise being called "filter_action" collided the moment
+            # this was written the same way _job_filters.html's context
+            # is (spreading filters.items() straight into filter_<key>),
+            # since event_filter_params' own field is itself named
+            # "action" - silently overwriting the form's real target
+            # with whatever the action filter happened to be.
+            "filter_action": "/admin/log",
+            "filter_actions": distinct_event_actions(session),
+            "filter_q": filters["q"],
+            "filter_actor": filters["actor"],
+            "filter_action_value": filters["action"],
+            "filter_date_from": filters["date_from"],
+            "filter_date_to": filters["date_to"],
+        },
     )
+
+
+@router.get("/support-bundle")
+def download_support_bundle(
+    background_tasks: BackgroundTasks,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """On-demand diagnostic bundle for offline bugfixing with zero
+    internet access - see support_bundle.py's own docstring for exactly
+    what's in it and why. Written to a temp file (support_bundle.build_
+    support_bundle already needs one internally for the safe DB copy, so
+    this just reuses the same shape) and deleted via a BackgroundTask
+    once the response has actually gone out - not before, or the
+    download would be truncated."""
+    bundle_path = build_support_bundle(session)
+    background_tasks.add_task(bundle_path.unlink, missing_ok=True)
+    filename = f"queue3d-support-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.tar.gz"
+    return FileResponse(bundle_path, media_type="application/gzip", filename=filename)
+
+
+# ---- colors ----
+# The admin-managed filament color list (see models.Color) - add/remove
+# colors, set rolls/grams on hand, enable/disable which ones users can
+# currently pick from. Deliberately no "still in use, can't delete" guard
+# like users/admins get above - a job's color is a plain string snapshot,
+# never a live reference to this table (see Color's own docstring), so
+# deleting one here can never leave any job in a broken state.
+
+
+def _colors_context(session: Session, admin: Admin, error: str | None = None):
+    colors = session.exec(select(Color).order_by(Color.name)).all()
+    return {"admin": admin, "colors": colors, "action_error": error}
+
+
+def _parse_grams(raw: str) -> tuple[float | None, str | None]:
+    """Shared by add/update below - grams_available is optional (a color
+    can exist with only its roll count tracked), so this has to
+    distinguish "left blank" (fine, means None/unknown) from "typed
+    something that isn't a real non-negative number" (a real error, not
+    silently coerced to None) - returns (value, error)."""
+    raw = raw.strip()
+    if not raw:
+        return None, None
+    try:
+        grams = float(raw)
+    except ValueError:
+        return None, "Grams available must be a number."
+    if grams < 0:
+        return None, "Grams available can't be negative."
+    return grams, None
+
+
+@router.get("/colors")
+def colors_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    return templates.TemplateResponse(request, "admin_colors.html", _colors_context(session, admin))
+
+
+@router.post("/colors/add")
+def add_color(
+    request: Request,
+    name: str = Form(...),
+    rolls_available: int = Form(0),
+    grams_available: str = Form(""),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    name = name.strip()
+    grams, error = _parse_grams(grams_available)
+    if not name:
+        error = "Color name can't be empty."
+    elif session.exec(select(Color).where(Color.name == name)).first() is not None:
+        error = f'"{name}" already exists.'
+    elif rolls_available < 0:
+        error = "Rolls on hand can't be negative."
+    if error:
+        return templates.TemplateResponse(request, "admin_colors.html", _colors_context(session, admin, error))
+    color = Color(name=name, rolls_available=rolls_available, grams_available=grams)
+    session.add(color)
+    log_event(session, None, _admin_actor(admin), "color_added", detail=name)
+    session.commit()
+    return RedirectResponse("/admin/colors", status_code=303)
+
+
+def _get_color_or_404(session: Session, color_id: int) -> Color:
+    color = session.get(Color, color_id)
+    if color is None:
+        raise HTTPException(status_code=404, detail="No such color")
+    return color
+
+
+@router.post("/colors/{color_id}/update")
+def update_color(
+    request: Request,
+    color_id: int,
+    enabled: bool = Form(False),
+    rolls_available: int = Form(0),
+    grams_available: str = Form(""),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    color = _get_color_or_404(session, color_id)
+    grams, error = _parse_grams(grams_available)
+    if error is None and rolls_available < 0:
+        error = "Rolls on hand can't be negative."
+    if error:
+        return templates.TemplateResponse(request, "admin_colors.html", _colors_context(session, admin, error))
+    color.enabled = enabled
+    color.rolls_available = rolls_available
+    color.grams_available = grams
+    session.add(color)
+    log_event(
+        session, None, _admin_actor(admin), "color_updated",
+        detail=f"{color.name} (enabled={enabled}, rolls={rolls_available}, grams={grams})",
+    )
+    session.commit()
+    return RedirectResponse("/admin/colors", status_code=303)
+
+
+@router.post("/colors/{color_id}/delete")
+def delete_color(
+    request: Request,
+    color_id: int,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    color = _get_color_or_404(session, color_id)
+    log_event(session, None, _admin_actor(admin), "color_deleted", detail=color.name)
+    session.delete(color)
+    session.commit()
+    return RedirectResponse("/admin/colors", status_code=303)

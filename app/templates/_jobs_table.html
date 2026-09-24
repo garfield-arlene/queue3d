@@ -9,7 +9,11 @@
    asking. No separate "stop polling" signal needed. #}
 <div id="jobs-table"
   {% if rows | selectattr('job.status.value', 'equalto', 'submitted') | list %}
-    hx-get="/dashboard/jobs-table" hx-trigger="every 2s" hx-swap="outerHTML"
+    {# Forwards the page's own current filter query string (see
+       _job_filters.html) - without this, a filtered view would silently
+       revert to unfiltered every 2s while something is still slicing. #}
+    hx-get="/dashboard/jobs-table{% if request.url.query %}?{{ request.url.query }}{% endif %}"
+    hx-trigger="every 2s" hx-swap="outerHTML"
   {% endif %}
 >
   <h3>Your submissions</h3>
@@ -17,12 +21,47 @@
     <p class="muted">Nothing submitted yet.</p>
   {% else %}
     <table>
-      <tr><th>File</th><th>Status</th><th>Details</th><th></th><th>Actions</th></tr>
+      <tr><th>File</th><th>Color</th><th>Status</th><th>Date</th><th>Details</th><th></th><th>Actions</th></tr>
       {% for row in rows %}
         {% set job = row.job %}
         <tr>
           <td>{{ job.original_filename }}</td>
+          <td>
+            {{ job.color_name or "Any available" }}
+            {% if row.filament %}
+              <br><span class="muted">{{ row.filament.required_g | round(1) }}g needed</span>
+              {# enough is None, not just falsy, when there's no specific
+                 color/tracked inventory to compare against at all - must
+                 not read as "not enough" in that case. #}
+              {% if row.filament.enough == false %}
+                <br><span class="error" title="Best effort - the admin-tracked amount on hand may be out of date">
+                  only {{ row.filament.available_g | round(1) }}g on hand
+                </span>
+              {% endif %}
+            {% endif %}
+          </td>
           <td>{{ job.status.value }}</td>
+          <td class="muted">
+            {# The one timestamp that actually means something for this
+               row's *current* status - unlike the admin queue/finished
+               views (each already scoped to one status subset, so a
+               single "Queued"/"Finished" column heading always applies),
+               this table mixes every status a job can ever be in, so
+               "Date" alone doesn't say what it's showing without a
+               per-row label. created_at (never null) covers everything
+               before a job's ever been queued; queued_at from there;
+               finished_at once it's settled - the same three columns
+               filters.apply_job_filters already understands (see
+               _job_filters.html), just always shown here instead of
+               picked one-at-a-time by view. #}
+            {% if job.status.value in ('submitted', 'sliced', 'slice_failed') %}
+              uploaded {{ job.created_at | local_time }}
+            {% elif job.status.value in ('queued', 'approved', 'printing') %}
+              {% if job.queued_at %}queued {{ job.queued_at | local_time }}{% endif %}
+            {% elif job.status.value in ('rejected', 'done', 'failed', 'expired') %}
+              {% if job.finished_at %}finished {{ job.finished_at | local_time }}{% endif %}
+            {% endif %}
+          </td>
           <td class="muted">
             {% if job.status.value == 'submitted' %}
               <progress></progress> slicing&hellip;
@@ -31,7 +70,7 @@
               {% if row.duration_display %} - est. {{ row.duration_display }} print{% endif %}
             {% elif job.status.value == 'queued' or job.status.value == 'approved' %}
               position {{ row.position }} in queue
-              {% if job.queued_at %} - queued {{ job.queued_at | local_time }}, waiting {{ row.queue_wait_display }}{% endif %}
+              {% if job.queued_at %} - waiting {{ row.queue_wait_display }}{% endif %}
               {% if row.duration_display %} - est. {{ row.duration_display }} print{% endif %}
             {% elif job.status.value == 'printing' %}
               printing now
@@ -55,9 +94,19 @@
             {% endif %}
           </td>
           <td>
-            {% if job.status.value in ('submitted', 'sliced', 'slice_failed') %}
+            {# Edit is full edit capability (settings/re-slice included) -
+               reachable for a queued/approved job too now, same as a
+               draft (see job_edit.html, jobs.COLOR_EDITABLE_STATUSES).
+               "Change color" is the same page, just anchored straight
+               to its color section (#color) - a quick, separate link
+               for anyone who only wants that, not the whole settings
+               form. Neither is mutually exclusive with View 3D any
+               more, so all shown together where they apply. #}
+            {% if job.status.value in ('submitted', 'sliced', 'slice_failed', 'queued', 'approved') %}
               <a href="/jobs/{{ job.id }}/edit">Edit</a>
-            {% elif job.stl_path %}
+              <a href="/jobs/{{ job.id }}/edit#color">Change color</a>
+            {% endif %}
+            {% if job.stl_path %}
               <a href="/jobs/{{ job.id }}/preview">View 3D</a>
             {% endif %}
             {% if job.photo_path %}
@@ -65,23 +114,29 @@
             {% endif %}
           </td>
           <td>
+            {# Carries the current filter query string along on every
+               action (see routers/user.py's filters.filtered_redirect) -
+               so acting on a job from a filtered view lands back on
+               that same filtered view instead of silently resetting to
+               unfiltered, unless the action itself just emptied it. #}
+            {% set qs = ('?' + request.url.query) if request.url.query else '' %}
             {% if job.status.value == 'sliced' %}
-              <form method="post" action="/jobs/{{ job.id }}/submit" style="display:inline">
+              <form method="post" action="/jobs/{{ job.id }}/submit{{ qs }}" style="display:inline">
                 <button type="submit">Submit to queue</button>
               </form>
-            {% elif job.status.value in ('queued', 'approved', 'slice_failed') %}
-              <form method="post" action="/jobs/{{ job.id }}/delete" style="display:inline"
+            {% elif job.status.value in ('queued', 'approved', 'slice_failed', 'rejected') %}
+              <form method="post" action="/jobs/{{ job.id }}/delete{{ qs }}" style="display:inline"
                     onsubmit="return confirm('Permanently delete {{ job.original_filename }}? This cannot be undone.')">
                 <button type="submit">Delete</button>
               </form>
             {% endif %}
             {% if job.status.value in ('rejected', 'failed', 'expired', 'done') %}
-              <form method="post" action="/jobs/{{ job.id }}/restore" style="display:inline">
+              <form method="post" action="/jobs/{{ job.id }}/restore{{ qs }}" style="display:inline">
                 <button type="submit">Restore &amp; edit</button>
               </form>
             {% endif %}
             {% if job.status.value == 'done' %}
-              <form method="post" action="/jobs/{{ job.id }}/reprint" style="display:inline">
+              <form method="post" action="/jobs/{{ job.id }}/reprint{{ qs }}" style="display:inline">
                 <button type="submit">Reprint</button>
               </form>
             {% endif %}

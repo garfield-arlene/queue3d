@@ -1,0 +1,22 @@
+[Unit]
+Description=queue3d draft-expiry cleanup
+# Unlike queue3d-backup.service, this always needs the one live-data
+# drive specifically (it moves expired drafts within it) - same
+# unconditional guard as queue3d.service itself.
+RequiresMountsFor=/mnt/queue3d-data
+After=queue3d.service
+
+[Service]
+Type=oneshot
+User=queue3d
+Group=queue3d
+WorkingDirectory=/opt/queue3d/app
+Environment=QUEUE3D_DATA_DIR=/mnt/queue3d-data
+ExecStart=/opt/queue3d/app/.venv/bin/python3 /opt/queue3d/app/cleanup_drafts.py
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/mnt/queue3d-data
+CapabilityBoundingSet=

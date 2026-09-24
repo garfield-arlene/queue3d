@@ -2,6 +2,8 @@
 {% block title %}Admin - queue3d{% endblock %}
 {% block nav %}
   <a href="/admin/users">Users</a>
+  <a href="/admin/admins">Admins</a>
+  <a href="/admin/colors">Colors</a>
   <a href="/admin/jobs/finished">Finished jobs</a>
   <a href="/admin/jobs/old">Old jobs</a>
   <a href="/admin/log">Activity log</a>
@@ -20,7 +22,30 @@
     {% endif %}
   </p>
 
+  <p class="muted">
+    <a href="/admin/support-bundle">Download support bundle</a> - a
+    .tar.gz of the database, activity log, and any model that ever hit
+    a slicing error, for offline bugfixing with no internet access.
+  </p>
+
   {% include "_printer_status.html" %}
+
+  {% if untracked_print %}
+    <p class="error">
+      The printer itself reports it's actively printing
+      {% if untracked_print.job %}
+        <a href="/admin/jobs/{{ untracked_print.job.id }}/log">job #{{ untracked_print.job.id }}</a>
+        ("{{ untracked_print.job.original_filename }}"{% if untracked_print.job_user_name %}, submitted by {{ untracked_print.job_user_name }}{% endif %})
+        - recorded here as "{{ untracked_print.job.status.value }}"
+      {% else %}
+        "{{ untracked_print.filename or "an unknown file" }}"
+      {% endif %}, but nothing
+      in the queue is marked as printing - it was most likely started
+      directly from the printer's own controls, not released through
+      here. Releasing another job right now will be blocked until this
+      one finishes (or is stopped at the printer).
+    </p>
+  {% endif %}
 
   {% if old_job_count %}
     <p class="notice">
@@ -33,11 +58,12 @@
   {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
 
   <h3>Queue</h3>
+  {% include "_job_filters.html" %}
   {% if not rows %}
     <p class="muted">Nothing in the queue.</p>
   {% else %}
     <table>
-      <tr><th>User</th><th>File</th><th></th><th></th><th>Status</th><th>Queued</th><th>Est.</th><th>Actions</th></tr>
+      <tr><th>User</th><th>File</th><th></th><th></th><th>Color</th><th>Status</th><th>Queued</th><th>Est.</th><th>Actions</th></tr>
       {% for row in rows %}
         {% set job = row.job %}
         <tr>
@@ -45,6 +71,23 @@
           <td>{{ job.original_filename }}</td>
           <td>{% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}</td>
           <td><a href="/admin/jobs/{{ job.id }}/log">Log</a></td>
+          <td>
+            {{ job.color_name or "Any available" }}
+            {% if row.filament %}
+              <br><span class="muted">
+                {{ row.filament.required_g | round(1) }}g needed
+                {% if row.filament.available_g is not none %}
+                  - {{ row.filament.available_g | round(1) }}g {{ job.color_name }} on hand
+                {% endif %}
+              </span>
+              {# enough is None, not just falsy, when there's no specific
+                 color/tracked inventory to compare against at all - must
+                 not read as "not enough" in that case. #}
+              {% if row.filament.enough == false %}
+                <br><span class="error">not enough on hand (best effort - see Colors)</span>
+              {% endif %}
+            {% endif %}
+          </td>
           <td>{{ job.status.value }}</td>
           <td class="muted">
             {% if job.status.value in ('queued', 'approved') and job.queued_at %}
@@ -66,27 +109,33 @@
             {% endif %}
           </td>
           <td>
+            {# Carries the current filter query string along on every
+               action (see routers/admin.py's _perform_action/
+               _query_suffix) - so approving/rejecting/releasing/etc.
+               from a filtered queue lands back on that same filtered
+               view instead of silently resetting to unfiltered. #}
+            {% set qs = ('?' + request.url.query) if request.url.query else '' %}
             {% if job.status.value == 'queued' %}
-              <form method="post" action="/admin/jobs/{{ job.id }}/approve" style="display:inline">
+              <form method="post" action="/admin/jobs/{{ job.id }}/approve{{ qs }}" style="display:inline">
                 <button type="submit">Approve</button>
               </form>
-              <form method="post" action="/admin/jobs/{{ job.id }}/reject" style="display:inline">
+              <form method="post" action="/admin/jobs/{{ job.id }}/reject{{ qs }}" style="display:inline">
                 <input type="text" name="note" placeholder="reason" required size="16">
                 <button type="submit">Reject</button>
               </form>
             {% elif job.status.value == 'approved' %}
-              <form method="post" action="/admin/jobs/{{ job.id }}/release" style="display:inline">
+              <form method="post" action="/admin/jobs/{{ job.id }}/release{{ qs }}" style="display:inline">
                 <button type="submit">Release to printer</button>
               </form>
-              <form method="post" action="/admin/jobs/{{ job.id }}/reject" style="display:inline">
+              <form method="post" action="/admin/jobs/{{ job.id }}/reject{{ qs }}" style="display:inline">
                 <input type="text" name="note" placeholder="reason" required size="16">
                 <button type="submit">Reject</button>
               </form>
             {% elif job.status.value == 'printing' %}
-              <form method="post" action="/admin/jobs/{{ job.id }}/mark_done" style="display:inline">
+              <form method="post" action="/admin/jobs/{{ job.id }}/mark_done{{ qs }}" style="display:inline">
                 <button type="submit">Mark done</button>
               </form>
-              <form method="post" action="/admin/jobs/{{ job.id }}/mark_failed" style="display:inline">
+              <form method="post" action="/admin/jobs/{{ job.id }}/mark_failed{{ qs }}" style="display:inline">
                 <input type="text" name="reason" placeholder="reason" required size="16">
                 <button type="submit">Mark failed</button>
               </form>

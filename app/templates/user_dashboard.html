@@ -24,6 +24,20 @@
         {% endfor %}
       </select>
     </label>
+    <label>Color<br>
+      <select name="color">
+        <option value="">Any available</option>
+        {% for color in colors %}
+          <option value="{{ color.name }}">{{ color.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="muted">
+      Only one color per job - pick "Any available" if you don't mind
+      which, so an admin doesn't have to change filament for you. This is
+      best effort: the printer can't report what's actually loaded, so
+      it's only as accurate as an admin's last inventory update.
+    </p>
     <button type="submit">Upload &amp; slice</button>
     <progress id="upload-progress" value="0" max="100" hidden></progress>
   </form>
@@ -104,7 +118,12 @@
       });
       xhr.addEventListener("load", () => {
         if (xhr.status >= 200 && xhr.status < 400) {
-          window.location.href = "/dashboard";
+          // Carries the current page's own filter query string along
+          // (see filters.filtered_redirect) - a fresh upload only ever
+          // *adds* a job, never removes one a filter was already
+          // matching, so there's no "did this just empty the filter"
+          // case to check here the way a delete/reject/etc. has.
+          window.location.href = "/dashboard" + window.location.search;
           return;
         }
         uploadProgress.hidden = true;
@@ -122,5 +141,6 @@
     });
   </script>
 
+  {% include "_job_filters.html" %}
   {% include "_jobs_table.html" %}
 {% endblock %}

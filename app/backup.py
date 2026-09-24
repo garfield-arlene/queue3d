@@ -109,6 +109,26 @@ def run_backup() -> BackupRecord:
     label, target_dir = pick_target()
     started_at = datetime.now(timezone.utc)
     try:
+        # Only enforced when this specific target came from an explicit
+        # QUEUE3D_BACKUP_DIR_A/B env var (the real deployment) - local dev's
+        # default data/backups/{a,b} is a plain directory, never a mount,
+        # and that's fine. On the real Pi, a target that ISN'T actually
+        # mounted right now (drive unplugged, not yet remounted) is just an
+        # ordinary empty folder on the SD card - writing there would
+        # "succeed" and the dashboard would show a fresh green backup
+        # timestamp, while silently defeating the entire point of the
+        # two-drive rotation (the whole reason it exists is so one drive
+        # being bad/missing never leaves you with zero real backups). Fail
+        # this specific run loudly instead - the *other* drive still gets
+        # its own real attempt on its own day, this only ever skips the
+        # one target that's actually absent right now.
+        env_var = f"QUEUE3D_BACKUP_DIR_{label.upper()}"
+        if env_var in os.environ and not os.path.ismount(target_dir):
+            raise RuntimeError(
+                f"{target_dir} (backup target '{label}') is not actually a "
+                "mounted filesystem right now - refusing to write a backup "
+                "onto local disk instead of the real external drive."
+            )
         db_dest = backup_database(target_dir)
         archive_dest = backup_archive(target_dir)
         detail = f"db -> {db_dest}"

@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Edit - queue3d{% endblock %}
 {% block content %}
+  {# Reachable for a draft, or now (per the user - "Edit was supposed to
+     be all edit capability... same as the edit before queuing") an
+     already-queued/approved job too - see jobs.COLOR_EDITABLE_STATUSES,
+     edit_draft. Full editing either way, no reduced view: re-slicing an
+     already-queued job pulls it out of the shared queue for exactly as
+     long as slicing takes (status goes to 'submitted', same as a brand
+     new upload - see jobs.start_reslice) so an admin can never approve/
+     release a file that's still being written, then automatically
+     rejoins the queue on success with a fresh wait time (see
+     jobs.slice_and_update's resubmit_to_queue) rather than needing a
+     separate manual "Submit to queue" click it was never going to need. #}
   {% if job.status.value == 'submitted' %}
     <script>
       // Full-page reload, not htmx polling: this page hosts a live
@@ -47,160 +58,195 @@
        this job slices successfully at whatever orientation is actually
        requested at that point. #}
     <p class="muted">{{ job.slice_error }}</p>
+  {% elif job.status.value in ('queued', 'approved') %}
+    <p class="muted">Status: <strong>{{ job.status.value }}</strong>.</p>
   {% endif %}
 
   <p class="muted">
     Orange lines are generated support material (simplified - not the
     exact print path, just roughly where supports will be).
   </p>
-  <p class="muted" id="snap-hint" hidden>
-    Click a surface on the model above to stand it on that face.
-  </p>
-  <p class="muted" id="gizmo-hint" hidden>
-    Drag a handle on the model above.
-  </p>
-  <div id="preview-container" class="preview-container"></div>
-  <p id="preview-info" class="preview-info"></p>
+    <p class="muted" id="snap-hint" hidden>
+      Click a surface on the model above to stand it on that face.
+    </p>
+    <p class="muted" id="gizmo-hint" hidden>
+      Drag a handle on the model above.
+    </p>
+    <div id="preview-container" class="preview-container"></div>
+    <p id="preview-info" class="preview-info"></p>
 
-  <script type="importmap">
-    { "imports": { "three": "/static/vendor/three/three.module.min.js" } }
-  </script>
-  <script type="module">
-    import { previewUrl, applyTransform, autoFitScale, computeSnapRotation, enableGizmo, disableGizmo } from "/static/preview.js";
-    const container = document.getElementById("preview-container");
-    const info = document.getElementById("preview-info");
-    const supportsUrl = {% if job.supports_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
-    const scaleInput = document.getElementById("scale-percent");
-    const rotateXInput = document.getElementById("rotate-x");
-    const rotateYInput = document.getElementById("rotate-y");
-    const rotateZInput = document.getElementById("rotate-z");
-    const snapBtn = document.getElementById("snap-btn");
-    const snapHint = document.getElementById("snap-hint");
-    const rotateGizmoBtn = document.getElementById("rotate-gizmo-btn");
-    const scaleGizmoBtn = document.getElementById("scale-gizmo-btn");
-    const gizmoHint = document.getElementById("gizmo-hint");
+    <script type="importmap">
+      { "imports": { "three": "/static/vendor/three/three.module.min.js" } }
+    </script>
+    <script type="module">
+      import { previewUrl, applyTransform, autoFitScale, computeSnapRotation, enableGizmo, disableGizmo } from "/static/preview.js";
+      const container = document.getElementById("preview-container");
+      const info = document.getElementById("preview-info");
+      const supportsUrl = {% if job.supports_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
+      const scaleInput = document.getElementById("scale-percent");
+      const rotateXInput = document.getElementById("rotate-x");
+      const rotateYInput = document.getElementById("rotate-y");
+      const rotateZInput = document.getElementById("rotate-z");
+      const snapBtn = document.getElementById("snap-btn");
+      const snapHint = document.getElementById("snap-hint");
+      const rotateGizmoBtn = document.getElementById("rotate-gizmo-btn");
+      const scaleGizmoBtn = document.getElementById("scale-gizmo-btn");
+      const gizmoHint = document.getElementById("gizmo-hint");
 
-    // The single source of truth for "what should the preview show right
-    // now" - every control below reads/writes these four fields, then
-    // calls applyPreview(). Keeping one object rather than re-reading all
-    // four inputs in every handler avoids the four controls ever getting
-    // out of sync with each other or with what's actually displayed.
-    function currentTransform() {
-      return {
-        scale: (parseFloat(scaleInput.value) || 100) / 100,
-        rotateX: parseFloat(rotateXInput.value) || 0,
-        rotateY: parseFloat(rotateYInput.value) || 0,
-        rotateZ: parseFloat(rotateZInput.value) || 0,
-      };
-    }
-    function applyPreview() {
-      applyTransform(currentTransform());
-      // applyTransform() just replaced the displayed mesh with a fresh one
-      // (see preview.js) - if the on-canvas handles are currently active,
-      // they'd otherwise be left pointing at a disposed mesh. Re-enabling
-      // both re-attaches them and refreshes the baseline a fresh drag
-      // should compose onto, from whatever the fields say right now.
-      if (gizmoMode) enableGizmo(gizmoMode, currentTransform(), onGizmoCommit);
-    }
+      // The single source of truth for "what should the preview show right
+      // now" - every control below reads/writes these four fields, then
+      // calls applyPreview(). Keeping one object rather than re-reading all
+      // four inputs in every handler avoids the four controls ever getting
+      // out of sync with each other or with what's actually displayed.
+      function currentTransform() {
+        return {
+          scale: (parseFloat(scaleInput.value) || 100) / 100,
+          rotateX: parseFloat(rotateXInput.value) || 0,
+          rotateY: parseFloat(rotateYInput.value) || 0,
+          rotateZ: parseFloat(rotateZInput.value) || 0,
+        };
+      }
+      function applyPreview() {
+        applyTransform(currentTransform());
+        // applyTransform() just replaced the displayed mesh with a fresh one
+        // (see preview.js) - if the on-canvas handles are currently active,
+        // they'd otherwise be left pointing at a disposed mesh. Re-enabling
+        // both re-attaches them and refreshes the baseline a fresh drag
+        // should compose onto, from whatever the fields say right now.
+        if (gizmoMode) enableGizmo(gizmoMode, currentTransform(), onGizmoCommit);
+      }
 
-    // On-canvas rotate/resize handles - two more ways to change the same
-    // four fields, alongside typing numbers and (for rotation) clicking a
-    // face in "snap to surface" mode. Mutually exclusive with snap mode
-    // (both would otherwise fight over pointer events on the same canvas)
-    // and with each other (one handle set at a time, like most 3D editors).
-    let gizmoMode = null; // null | "rotate" | "scale"
+      // On-canvas rotate/resize handles - two more ways to change the same
+      // four fields, alongside typing numbers and (for rotation) clicking a
+      // face in "snap to surface" mode. Mutually exclusive with snap mode
+      // (both would otherwise fight over pointer events on the same canvas)
+      // and with each other (one handle set at a time, like most 3D editors).
+      let gizmoMode = null; // null | "rotate" | "scale"
 
-    function onGizmoCommit(t) {
-      rotateXInput.value = Math.round(t.rotateX * 100) / 100;
-      rotateYInput.value = Math.round(t.rotateY * 100) / 100;
-      rotateZInput.value = Math.round(t.rotateZ * 100) / 100;
-      scaleInput.value = Math.round(t.scale * 100 * 100) / 100; // percent, 2dp
-    }
+      function onGizmoCommit(t) {
+        rotateXInput.value = Math.round(t.rotateX * 100) / 100;
+        rotateYInput.value = Math.round(t.rotateY * 100) / 100;
+        rotateZInput.value = Math.round(t.rotateZ * 100) / 100;
+        scaleInput.value = Math.round(t.scale * 100 * 100) / 100; // percent, 2dp
+      }
 
-    function setGizmoMode(mode) {
-      gizmoMode = mode;
-      rotateGizmoBtn.textContent = gizmoMode === "rotate" ? "Stop rotating (drag)" : "Rotate (drag)";
-      scaleGizmoBtn.textContent = gizmoMode === "scale" ? "Stop resizing (drag)" : "Resize (drag)";
-      gizmoHint.hidden = !gizmoMode;
-      if (gizmoMode) {
+      function setGizmoMode(mode) {
+        gizmoMode = mode;
+        rotateGizmoBtn.textContent = gizmoMode === "rotate" ? "Stop rotating (drag)" : "Rotate (drag)";
+        scaleGizmoBtn.textContent = gizmoMode === "scale" ? "Stop resizing (drag)" : "Resize (drag)";
+        gizmoHint.hidden = !gizmoMode;
+        if (gizmoMode) {
+          snapMode = false;
+          snapBtn.textContent = "Snap to surface";
+          snapHint.hidden = true;
+          enableGizmo(gizmoMode, currentTransform(), onGizmoCommit);
+        } else {
+          disableGizmo();
+        }
+      }
+
+      rotateGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "rotate" ? null : "rotate"));
+      scaleGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "scale" ? null : "scale"));
+
+      // The preview loads at the model's true original size/orientation
+      // first - once that finishes, apply whatever's already saved on this
+      // job (non-default only after at least one prior re-slice) so the
+      // preview reflects what will actually be sliced, not just the raw
+      // file.
+      previewUrl("/jobs/{{ job.id }}/model.stl", supportsUrl, container, info).then(() => {
+        const t = currentTransform();
+        if (t.scale !== 1 || t.rotateX || t.rotateY || t.rotateZ) applyPreview();
+      });
+
+      // Live re-render as any number changes - no server round trip, same
+      // "see it before you commit to it" spirit as the pre-upload preview.
+      for (const input of [scaleInput, rotateXInput, rotateYInput, rotateZInput]) {
+        input.addEventListener("input", applyPreview);
+      }
+
+      document.getElementById("auto-fit-btn").addEventListener("click", () => {
+        const t = currentTransform();
+        const factor = autoFitScale(t.rotateX, t.rotateY, t.rotateZ);
+        scaleInput.value = Math.floor(factor * 100 * 100) / 100; // round down - never end up still slightly over
+        applyPreview();
+      });
+
+      // "Snap to surface" is a *mode*, not an instant action - toggled on,
+      // then the next click on the model itself (not just anywhere on the
+      // page) performs the snap. Click-vs-drag distinguished by movement
+      // distance between press and release, so orbiting the camera (a
+      // click-and-drag on the same canvas, via OrbitControls) never
+      // accidentally triggers a snap.
+      let snapMode = false;
+      let pressPos = null;
+
+      snapBtn.addEventListener("click", () => {
+        snapMode = !snapMode;
+        snapBtn.textContent = snapMode ? "Cancel snap to surface" : "Snap to surface";
+        snapHint.hidden = !snapMode;
+        if (snapMode && gizmoMode) setGizmoMode(null); // mutually exclusive, see setGizmoMode above
+      });
+
+      container.addEventListener("pointerdown", (e) => {
+        pressPos = { x: e.clientX, y: e.clientY };
+      });
+      container.addEventListener("pointerup", (e) => {
+        if (!snapMode || !pressPos) { pressPos = null; return; }
+        const moved = Math.hypot(e.clientX - pressPos.x, e.clientY - pressPos.y);
+        pressPos = null;
+        if (moved > 5) return; // a drag (camera orbit), not a click
+
+        const t = currentTransform();
+        const snapped = computeSnapRotation(t.rotateX, t.rotateY, t.rotateZ, e.clientX, e.clientY);
+        if (!snapped) return; // clicked past the model, not on it - leave rotation alone
+
+        rotateXInput.value = Math.round(snapped.x * 100) / 100;
+        rotateYInput.value = Math.round(snapped.y * 100) / 100;
+        rotateZInput.value = Math.round(snapped.z * 100) / 100;
+        applyPreview();
+
+        // One snap per click of the button - back to normal orbit/zoom
+        // interaction immediately after, rather than staying "armed."
         snapMode = false;
         snapBtn.textContent = "Snap to surface";
         snapHint.hidden = true;
-        enableGizmo(gizmoMode, currentTransform(), onGizmoCommit);
-      } else {
-        disableGizmo();
-      }
-    }
+      });
+    </script>
 
-    rotateGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "rotate" ? null : "rotate"));
-    scaleGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "scale" ? null : "scale"));
+  <h3 id="color">Color</h3>
+  {# Separate, lightweight form from the settings one below - a color
+     change has zero effect on the actual sliced file (see
+     models.Job.color_name), so it doesn't need to pay for a full
+     re-slice the way a real settings change does. Shown for a draft
+     AND a queued/approved job alike (see jobs.COLOR_EDITABLE_STATUSES) -
+     only this section, though, once a job is no longer a draft. #}
+  <form method="post" action="/jobs/{{ job.id }}/color">
+    <select name="color">
+      <option value="" {% if not job.color_name %}selected{% endif %}>Any available</option>
+      {% for color in colors %}
+        <option value="{{ color.name }}" {% if color.name == job.color_name %}selected{% endif %}>
+          {{ color.name }}{% if not color.enabled %} (no longer offered){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+    <button type="submit">Save color</button>
+  </form>
+  {% if filament %}
+    <p class="muted">
+      This job uses about {{ filament.required_g | round(1) }}g of filament.
+      {# enough is None (not just falsy) whenever there's no specific
+         color/tracked inventory to compare against at all - "Any
+         available" was picked, say - which must not be shown as if it
+         meant "not enough". #}
+      {% if filament.enough == false %}
+        <span class="error">Only {{ filament.available_g | round(1) }}g of
+        {{ job.color_name }} on hand, per the admin-tracked inventory
+        (best effort - may be out of date).</span>
+      {% endif %}
+    </p>
+  {% endif %}
 
-    // The preview loads at the model's true original size/orientation
-    // first - once that finishes, apply whatever's already saved on this
-    // job (non-default only after at least one prior re-slice) so the
-    // preview reflects what will actually be sliced, not just the raw
-    // file.
-    previewUrl("/jobs/{{ job.id }}/model.stl", supportsUrl, container, info).then(() => {
-      const t = currentTransform();
-      if (t.scale !== 1 || t.rotateX || t.rotateY || t.rotateZ) applyPreview();
-    });
-
-    // Live re-render as any number changes - no server round trip, same
-    // "see it before you commit to it" spirit as the pre-upload preview.
-    for (const input of [scaleInput, rotateXInput, rotateYInput, rotateZInput]) {
-      input.addEventListener("input", applyPreview);
-    }
-
-    document.getElementById("auto-fit-btn").addEventListener("click", () => {
-      const t = currentTransform();
-      const factor = autoFitScale(t.rotateX, t.rotateY, t.rotateZ);
-      scaleInput.value = Math.floor(factor * 100 * 100) / 100; // round down - never end up still slightly over
-      applyPreview();
-    });
-
-    // "Snap to surface" is a *mode*, not an instant action - toggled on,
-    // then the next click on the model itself (not just anywhere on the
-    // page) performs the snap. Click-vs-drag distinguished by movement
-    // distance between press and release, so orbiting the camera (a
-    // click-and-drag on the same canvas, via OrbitControls) never
-    // accidentally triggers a snap.
-    let snapMode = false;
-    let pressPos = null;
-
-    snapBtn.addEventListener("click", () => {
-      snapMode = !snapMode;
-      snapBtn.textContent = snapMode ? "Cancel snap to surface" : "Snap to surface";
-      snapHint.hidden = !snapMode;
-      if (snapMode && gizmoMode) setGizmoMode(null); // mutually exclusive, see setGizmoMode above
-    });
-
-    container.addEventListener("pointerdown", (e) => {
-      pressPos = { x: e.clientX, y: e.clientY };
-    });
-    container.addEventListener("pointerup", (e) => {
-      if (!snapMode || !pressPos) { pressPos = null; return; }
-      const moved = Math.hypot(e.clientX - pressPos.x, e.clientY - pressPos.y);
-      pressPos = null;
-      if (moved > 5) return; // a drag (camera orbit), not a click
-
-      const t = currentTransform();
-      const snapped = computeSnapRotation(t.rotateX, t.rotateY, t.rotateZ, e.clientX, e.clientY);
-      if (!snapped) return; // clicked past the model, not on it - leave rotation alone
-
-      rotateXInput.value = Math.round(snapped.x * 100) / 100;
-      rotateYInput.value = Math.round(snapped.y * 100) / 100;
-      rotateZInput.value = Math.round(snapped.z * 100) / 100;
-      applyPreview();
-
-      // One snap per click of the button - back to normal orbit/zoom
-      // interaction immediately after, rather than staying "armed."
-      snapMode = false;
-      snapBtn.textContent = "Snap to surface";
-      snapHint.hidden = true;
-    });
-  </script>
-
-  <h3>Settings</h3>
+  <h3 id="settings">Settings</h3>
   <form method="post" action="/jobs/{{ job.id }}/reslice">
     <label><input type="checkbox" name="enable_supports" {% if job.supports_enabled %}checked{% endif %}> Generate supports</label>
     <label>Support style<br>
@@ -227,6 +273,13 @@
     <label>Rotate Z<br><input type="number" id="rotate-z" name="rotate_z" step="0.01" value="{{ job.rotate_z | round(2) }}"></label>
     <button type="button" id="rotate-gizmo-btn">Rotate (drag)</button>
     <button type="button" id="snap-btn">Snap to surface</button>
+    {% if job.status.value in ('queued', 'approved') %}
+      <p class="muted">
+        Re-slicing an already-queued job temporarily pulls it out of the
+        queue while this runs, then automatically rejoins it with a
+        fresh wait time once done - no separate "Submit to queue" step.
+      </p>
+    {% endif %}
     <button type="submit">Re-slice</button>
   </form>
 

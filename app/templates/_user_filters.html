@@ -1,0 +1,29 @@
+{# GET-based filter form for the admin users list - see
+   filters.apply_user_filters. A small, distinct field set of its own
+   (User, not Job/JobEvent) - a name substring, active/disabled, and a
+   date range on created_at - so this isn't routed through
+   _job_filters.html/_log_filters.html, both built around a different
+   model entirely.
+
+   Field order matches admin_users.html's own column order (Name,
+   Status, Created, Actions) left-to-right, per the user's explicit
+   preference.
+
+   Included with the parent template's own context (admin_users.html
+   sets filter_action plus filter_q/status/date_from/date_to - see
+   routers/admin.py's _users_context). #}
+<form method="get" action="{{ filter_action }}" class="filters">
+  <input type="text" name="q" placeholder="Name contains..." value="{{ filter_q or '' }}" size="16">
+  <select name="status">
+    <option value="">Any status</option>
+    <option value="active" {% if filter_status == "active" %}selected{% endif %}>active</option>
+    <option value="disabled" {% if filter_status == "disabled" %}selected{% endif %}>disabled</option>
+  </select>
+  <label class="muted">Created
+    <input type="date" name="date_from" value="{{ filter_date_from or '' }}">
+    &ndash;
+    <input type="date" name="date_to" value="{{ filter_date_to or '' }}">
+  </label>
+  <button type="submit">Filter</button>
+  <a href="{{ filter_action }}">Clear filters</a>
+</form>

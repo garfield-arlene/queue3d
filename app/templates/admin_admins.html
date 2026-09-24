@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Manage admins - queue3d{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <a href="/admin/users">Users</a>
+  <a href="/admin/colors">Colors</a>
+  <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
+  <a href="/admin/log">Activity log</a>
+  <a href="/admin/settings">Settings</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Admins</h2>
+  {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
+  {% if flash_notice %}<p class="notice">{{ flash_notice }}</p>{% endif %}
+
+  <table>
+    <tr><th>Username</th><th>Status</th><th>Created</th><th></th><th>Actions</th></tr>
+    {% for a in admins %}
+      <tr>
+        <td>{{ a.username }}{% if a.id == admin.id %} <span class="muted">(you)</span>{% endif %}</td>
+        <td>{{ "disabled" if a.disabled else "active" }}</td>
+        <td class="muted">{{ a.created_at | local_time('%Y-%m-%d') }}</td>
+        <td class="muted">
+          {% if a.unremovable %}
+            permanent - created via create_admin.py
+          {% endif %}
+        </td>
+        <td>
+          {% if a.id == admin.id %}
+            {# Nothing here for your own row - disabling/deleting
+               yourself while signed in as it is refused either way (see
+               routers/admin.py), and a random-generated reset makes no
+               sense next to the dedicated "change your own password"
+               form below, on /admin/settings, where you pick it
+               yourself instead. #}
+            <span class="muted">use Settings to change your own password</span>
+          {% else %}
+            {% if not a.unremovable %}
+              {% if a.disabled %}
+                <form method="post" action="/admin/admins/{{ a.id }}/enable" style="display:inline">
+                  <button type="submit">Re-enable</button>
+                </form>
+              {% else %}
+                <form method="post" action="/admin/admins/{{ a.id }}/disable" style="display:inline">
+                  <button type="submit">Disable</button>
+                </form>
+              {% endif %}
+              <form method="post" action="/admin/admins/{{ a.id }}/reset_password" style="display:inline"
+                    onsubmit="return confirm('Reset {{ a.username }}\'s password? Their old password stops working immediately - the new one only shows once, right here.')">
+                <button type="submit">Reset password</button>
+              </form>
+              <form method="post" action="/admin/admins/{{ a.id }}/delete" style="display:inline"
+                    onsubmit="return confirm('Permanently delete admin {{ a.username }}? This cannot be undone.')">
+                <button type="submit">Delete</button>
+              </form>
+            {% endif %}
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+
+  <h3>Add an admin</h3>
+  <p class="muted">
+    Full access, same as any other admin here - there's no limited-permission
+    role yet (see the To do list). Created this way, a new admin can itself
+    be deleted later by another admin - unlike one made with create_admin.py
+    on the server, which is permanent.
+  </p>
+  <form method="post" action="/admin/admins/add">
+    <label>Username<br><input name="username" value="{{ username or '' }}" required autofocus></label>
+    <label>Password (8+ characters)<br><input name="password" type="password" minlength="8" required></label>
+    <label>Confirm password<br><input name="confirm_password" type="password" minlength="8" required></label>
+    <button type="submit">Create admin</button>
+  </form>
+{% endblock %}

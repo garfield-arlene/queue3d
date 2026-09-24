@@ -13,7 +13,8 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from db import engine
-from models import Admin, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES, User
+from filters import apply_event_filters, apply_job_filters
+from models import Admin, Color, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES, User
 from pipeline import run_slice
 from printer import PrinterError, capture_photo, send_print_job, system_information
 from storage import (
@@ -23,6 +24,7 @@ from storage import (
     move_job_to_archive,
     queue_paths,
     read_makerbot_duration_s,
+    read_makerbot_filament_g,
     scratch_paths,
     scratch_stl_path,
 )
@@ -57,37 +59,129 @@ def _admin_actor(admin: Admin) -> str:
     return f"admin:{admin.username}"
 
 
-def jobs_for_user(session: Session, user_id: int) -> list[Job]:
-    return session.exec(
-        select(Job).where(Job.user_id == user_id).order_by(Job.created_at.desc())
-    ).all()
+def jobs_for_user(
+    session: Session,
+    user_id: int,
+    *,
+    q: str | None = None,
+    color: str | None = None,
+    status: str | None = None,
+    min_minutes: float | None = None,
+    max_minutes: float | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[Job]:
+    """Every filter kwarg defaults to None (every call site pre-dating the
+    filters feature - see filters.py - keeps working unfiltered), applied
+    via apply_job_filters against created_at ("when uploaded" - the closest
+    thing this view has to its own single "date" column, since a draft
+    that's never been queued has no queued_at/finished_at at all yet)."""
+    query = select(Job).where(Job.user_id == user_id)
+    query = apply_job_filters(
+        query,
+        q=q,
+        color=color,
+        status=status,
+        min_minutes=min_minutes,
+        max_minutes=max_minutes,
+        date_from=date_from,
+        date_to=date_to,
+        date_column=Job.created_at,
+    )
+    return session.exec(query.order_by(Job.created_at.desc())).all()
 
 
-def active_jobs(session: Session) -> list[Job]:
+def active_jobs(
+    session: Session,
+    *,
+    q: str | None = None,
+    color: str | None = None,
+    status: str | None = None,
+    min_minutes: float | None = None,
+    max_minutes: float | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user: str | None = None,
+) -> list[Job]:
     """Everything actually in the shared queue, oldest-queued first - this
     is what a reviewing admin looks at. An explicit allow-list
     (models.QUEUE_STATUSES), not just "not terminal" - a sliced-but-
     unsubmitted draft is also not terminal, but must never show up here;
     see models.py's comment on the three-way status partition this and
-    user_has_active_jobs below both rely on."""
-    return session.exec(
-        select(Job)
-        .where(Job.status.in_(list(QUEUE_STATUSES)))
-        .order_by(Job.queued_at.asc())
-    ).all()
+    user_has_active_jobs below both rely on.
+
+    Filter kwargs default to None - see jobs_for_user above - and are
+    applied against queued_at, matching the "Queued" column both
+    admin_dashboard.html and admin_old_jobs.html already show for this
+    exact data. `status` further narrows *within* QUEUE_STATUSES (e.g.
+    queued vs. approved specifically); it isn't a way to reach anything
+    outside that allow-list, since the WHERE above already restricts to
+    it regardless of what's asked for here."""
+    query = select(Job).where(Job.status.in_(list(QUEUE_STATUSES)))
+    query = apply_job_filters(
+        query,
+        q=q,
+        color=color,
+        status=status,
+        min_minutes=min_minutes,
+        max_minutes=max_minutes,
+        date_from=date_from,
+        date_to=date_to,
+        date_column=Job.queued_at,
+        user=user,
+    )
+    return session.exec(query.order_by(Job.queued_at.asc())).all()
 
 
-def finished_jobs(session: Session) -> list[Job]:
+def finished_jobs(
+    session: Session,
+    *,
+    q: str | None = None,
+    color: str | None = None,
+    status: str | None = None,
+    min_minutes: float | None = None,
+    max_minutes: float | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user: str | None = None,
+) -> list[Job]:
     """Everything done with (models.TERMINAL_STATUSES - rejected/done/
     failed/expired), most-recently-finished first - the admin "browse
     finished jobs" view. Distinct from active_jobs() (the live queue) and
     from job_events() below (one job's full history, not a cross-job
-    list)."""
-    return session.exec(
-        select(Job)
-        .where(Job.status.in_(list(TERMINAL_STATUSES)))
-        .order_by(Job.finished_at.desc())
-    ).all()
+    list).
+
+    Filter kwargs default to None - see jobs_for_user above - applied
+    against finished_at, matching the "Finished" column
+    admin_finished_jobs.html already shows."""
+    query = select(Job).where(Job.status.in_(list(TERMINAL_STATUSES)))
+    query = apply_job_filters(
+        query,
+        q=q,
+        color=color,
+        status=status,
+        min_minutes=min_minutes,
+        max_minutes=max_minutes,
+        date_from=date_from,
+        date_to=date_to,
+        date_column=Job.finished_at,
+        user=user,
+    )
+    return session.exec(query.order_by(Job.finished_at.desc())).all()
+
+
+def distinct_job_colors(session: Session) -> list[str]:
+    """Every color name that's actually been recorded on some job, past or
+    present - for the color filter dropdown on every job-listing page.
+    Deliberately not _enabled_colors() (routers/user.py) - that's what's
+    *offered* to pick from going forward, not what's actually filterable
+    history; a color since disabled or renamed must still be findable
+    here for an old job that used it (see models.Color's own docstring on
+    why a job keeps its recorded name regardless of what happens to the
+    Color row later)."""
+    return sorted(
+        session.exec(select(Job.color_name).where(Job.color_name.is_not(None)).distinct()).all()
+    )
 
 
 def job_events(session: Session, job_id: int) -> list[JobEvent]:
@@ -97,7 +191,16 @@ def job_events(session: Session, job_id: int) -> list[JobEvent]:
     ).all()
 
 
-def all_events(session: Session, limit: int = 500) -> list[tuple[JobEvent, str, str | None]]:
+def all_events(
+    session: Session,
+    limit: int = 500,
+    *,
+    q: str | None = None,
+    actor: str | None = None,
+    action: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[tuple[JobEvent, str, str | None]]:
     """Every event across every job, most-recent first - the global admin
     activity log ("what's been happening, at a glance"), per the user:
     a single table of everything, not just reachable one job at a time.
@@ -113,16 +216,28 @@ def all_events(session: Session, limit: int = 500) -> list[tuple[JobEvent, str, 
     and should still show up here rather than silently vanishing from the
     query; original_filename/photo_path both come back None for those.
 
-    Capped at `limit` for now, not paginated - full filtering is a
-    separate, later to-do (per the user: "I will ask for log filters
-    later"), so this is deliberately just "show recent activity," not a
-    complete unbounded history browser yet."""
-    return session.exec(
+    Filter kwargs default to None (see jobs_for_user above), applied via
+    filters.apply_event_filters - this used to be capped at `limit` with
+    no way to narrow it further at all (per the user's own prior
+    "filters for narrowing this down are on the to-do list" - see
+    admin_log.html); now that filters exist, `limit` still caps the
+    *filtered* result the same way, so a broad query still can't return
+    an unbounded page."""
+    query = (
         select(JobEvent, Job.original_filename, Job.photo_path)
         .join(Job, JobEvent.job_id == Job.id, isouter=True)
-        .order_by(JobEvent.at.desc())
-        .limit(limit)
-    ).all()
+    )
+    query = apply_event_filters(query, q=q, actor=actor, action=action, date_from=date_from, date_to=date_to)
+    return session.exec(query.order_by(JobEvent.at.desc()).limit(limit)).all()
+
+
+def distinct_event_actions(session: Session) -> list[str]:
+    """Every distinct JobEvent.action value ever actually recorded - for
+    the activity log's action filter dropdown, a real list of what's
+    actually happened rather than a hand-maintained (and easily
+    out-of-date) list of every action string log_event() is ever called
+    with somewhere in this codebase."""
+    return sorted(session.exec(select(JobEvent.action).distinct()).all())
 
 
 def user_has_active_jobs(session: Session, user_id: int) -> bool:
@@ -261,6 +376,52 @@ def corrected_duration_estimate_s(session: Session, job: Job) -> float | None:
     return job.duration_estimate_s * _duration_correction_factor(session)
 
 
+def filament_status(session: Session, job: Job) -> dict | None:
+    """This job's own recorded filament use (job.filament_grams, read
+    straight from the real sliced .makerbot - see
+    storage.read_makerbot_filament_g), plus - only when there's a
+    specific color with tracked inventory to check it against - a
+    best-effort comparison against how much of that color is on hand.
+
+    Returns None only when there's truly nothing to show at all: never
+    successfully sliced yet (filament_grams is None). That's the *only*
+    reason to hide this - per the user, after noticing the whole thing,
+    including the required-amount figure, was disappearing just because
+    "Any available" was picked (no specific color to check inventory
+    for) or that color simply had no gram total entered - neither of
+    those makes the required amount itself any less known, only the
+    inventory comparison genuinely impossible.
+
+    `available_g`/`enough` are None (not present in a meaningful sense)
+    rather than the whole result being None whenever a comparison can't
+    be made: no color selected ("Any available"), that color no longer
+    exists (renamed/removed since this job was submitted - see
+    models.Color's own docstring for why a job's color_name is a
+    snapshot, never a live reference to it), or an admin never entered a
+    gram total for it (tracking rolls without tracking grams is a
+    legitimate, supported choice, not an error). A caller must check
+    `enough is not None` before trusting it either way - `not
+    result["enough"]` alone would wrongly treat "unknown" the same as
+    "not enough."
+
+    Per the user, this whole feature is "best effort": the printer has no
+    way to report actual remaining filament, so `available_g` here is
+    only ever as fresh as the last time an admin updated
+    Color.grams_available by hand - a caller displaying `enough: False`
+    should say so, not present this as a hard guarantee either way."""
+    if job.filament_grams is None:
+        return None
+    result = {"required_g": job.filament_grams, "available_g": None, "enough": None}
+    if not job.color_name:
+        return result
+    color = session.exec(select(Color).where(Color.name == job.color_name)).first()
+    if color is None or color.grams_available is None:
+        return result
+    result["available_g"] = color.grams_available
+    result["enough"] = color.grams_available >= job.filament_grams
+    return result
+
+
 def format_duration(seconds: float) -> str:
     """"1d 2h 15m"-style formatting for any duration this app shows - a
     print's estimated length, previously always rendered as raw total
@@ -358,6 +519,7 @@ def approve(session: Session, job: Job, admin: Admin) -> Job:
     job.status = JobStatus.approved
     job.reviewed_at = datetime.now(timezone.utc)
     job.reviewed_by_admin_id = admin.id
+    job.reviewed_by_name = admin.username
     job.admin_note = None
     session.add(job)
     log_event(session, job.id, _admin_actor(admin), "approved")
@@ -373,6 +535,7 @@ def reject(session: Session, job: Job, admin: Admin, note: str) -> Job:
     job.status = JobStatus.rejected
     job.reviewed_at = datetime.now(timezone.utc)
     job.reviewed_by_admin_id = admin.id
+    job.reviewed_by_name = admin.username
     job.admin_note = note.strip()
     job.finished_at = datetime.now(timezone.utc)
     move_job_to_archive(job)
@@ -449,6 +612,22 @@ def delete_own_job(session: Session, job: Job, user: User) -> None:
     NOT extended to a plain sliced draft (successfully sliced, not yet
     submitted) - that one wasn't part of this ask, and already has its
     own path forward (submit it, or keep iterating on settings).
+
+    Also rejected, per the user - "I don't want to keep rejected jobs
+    around" - the same genuine no-undo delete, not another "Restore &
+    edit" copy, which already existed for this status but leaves the
+    original rejected record sitting there regardless. Deliberately NOT
+    extended to done/failed/expired here - only rejected was actually
+    asked for, and those three raise different questions (a done job is
+    a real completed-print record; a failed one might be worth keeping to
+    see why; an expired draft never even reached a decision) worth their
+    own consideration rather than bundling in by assumption.
+    delete_job_files() (see storage.py) has to know to look in archive/
+    for a rejected job's files, not queue/ - getting that wrong would
+    delete the database row while leaving the real files behind as
+    permanently orphaned garbage, so that was fixed there directly, not
+    worked around here.
+
     No "submitted by" clause in the log detail unlike delete_old_job()'s -
     the actor label (user:<name>) already says who, since here the actor
     and the submitter are always the same person."""
@@ -460,6 +639,7 @@ def delete_own_job(session: Session, job: Job, user: User) -> None:
         JobStatus.queued,
         JobStatus.approved,
         JobStatus.slice_failed,
+        JobStatus.rejected,
     )
 
 
@@ -505,6 +685,7 @@ def restore_job(session: Session, job: Job, user: User) -> Job:
         rotate_x=job.rotate_x,
         rotate_y=job.rotate_y,
         rotate_z=job.rotate_z,
+        color_name=job.color_name,
     )
     session.add(new_job)
     session.commit()
@@ -562,6 +743,7 @@ def reprint_job(session: Session, job: Job, user: User) -> Job:
         rotate_x=job.rotate_x,
         rotate_y=job.rotate_y,
         rotate_z=job.rotate_z,
+        color_name=job.color_name,
         queued_at=datetime.now(timezone.utc),
     )
     session.add(new_job)
@@ -577,6 +759,7 @@ def reprint_job(session: Session, job: Job, user: User) -> Job:
         shutil.copy(archived_supports, new_supports)
         new_job.supports_path = str(new_supports)
     new_job.duration_estimate_s = read_makerbot_duration_s(new_makerbot)
+    new_job.filament_grams = read_makerbot_filament_g(new_makerbot)
     session.add(new_job)
     log_event(
         session, new_job.id, f"user:{user.name}", "reprint_queued",
@@ -606,7 +789,7 @@ def requeue_job(session: Session, job: Job, admin: Admin) -> Job:
     return job
 
 
-def delete_all_old_jobs(session: Session, admin: Admin, threshold_days: int) -> int:
+def delete_all_old_jobs(session: Session, admin: Admin, threshold_days: int, **filters) -> int:
     """Bulk version of delete_old_job() above, for clearing an entire
     backlog in one click rather than one job at a time - per the user.
     Re-checks is_old_job() itself against the current threshold rather
@@ -619,18 +802,121 @@ def delete_all_old_jobs(session: Session, admin: Admin, threshold_days: int) -> 
     job rather than a single batched commit, same as calling the
     single-job delete route N times by hand would do - simple over
     optimal for what's expected to be a handful of jobs at once, not
-    thousands. Returns how many were actually deleted."""
-    to_delete = [job for job in active_jobs(session) if is_old_job(job, threshold_days)]
+    thousands. Returns how many were actually deleted.
+
+    **filters (see filters.apply_job_filters) narrows this to whatever
+    the old-jobs page is currently filtered to when the button is
+    clicked - "delete all old jobs" must actually mean "delete every old
+    job *shown right now*," not silently reach past an active filter and
+    delete jobs the admin can't even currently see. Passing none (the
+    default) keeps deleting the entire backlog, same as before this
+    filters feature existed."""
+    to_delete = [job for job in active_jobs(session, **filters) if is_old_job(job, threshold_days)]
     for job in to_delete:
         delete_old_job(session, job, admin)
     return len(to_delete)
+
+
+def printer_currently_busy() -> dict | None:
+    """Live read of whatever the printer itself is actually doing right
+    now, independent of anything in our own database - the real
+    physical source of truth, not our own belief about it. Per the
+    user, after a real incident: a bed-adhesion failure was cancelled
+    and reprinted directly at the printer's own dial, entirely outside
+    the app, which had (and could have had) no idea it happened.
+
+    Returns the raw `current_process` dict if it's a genuinely
+    still-in-progress process - not yet `complete`/`cancelled`/`error`,
+    the same three-way check `check_and_finish_active_print` already
+    uses to know when a process needs action - or `None` if the printer
+    is free (no `current_process` at all) or it already resolved
+    (finished but not yet cleared by the printer itself - see that
+    function's own note on this happening).
+
+    Read-only and best-effort: an unreachable printer (`PrinterError`)
+    also returns `None` - this can't block anything on a check it
+    couldn't actually perform, and `release()`'s own `send_print_job`
+    call below will fail loudly on its own if the printer is genuinely
+    unreachable at that point anyway."""
+    try:
+        info = system_information()
+    except PrinterError:
+        return None
+    current = info.get("current_process")
+    if not current:
+        return None
+    if current.get("complete") or current.get("cancelled") or current.get("error"):
+        return None
+    return current
+
+
+def _job_from_makerbot_filename(session: Session, filename: str | None) -> Job | None:
+    """Recovers the actual Job a raw printer-reported filename refers to,
+    if it matches this app's own "<job id>.makerbot" naming convention
+    (see storage.queue_paths/archive_paths - every file this app ever
+    sends is named exactly this way) - used by untracked_print_in_progress
+    below to turn a bare "29.makerbot" into something an admin can
+    actually recognize. Per the user, after noticing the banner showed
+    only the raw filename: the printer's own on-device "reprint" option
+    resends the exact same file that was originally sent, so its name
+    already carries the original job's id - there was no reason to
+    settle for a meaningless-looking number when the real job (and
+    everything about it) is one lookup away. None if the filename
+    doesn't parse as one of our ids at all, or that id no longer exists
+    (e.g. genuinely deleted since)."""
+    if not filename:
+        return None
+    stem = Path(filename).stem  # strips any directory prefix and the .makerbot extension in one step
+    if not stem.isdigit():
+        return None
+    return session.get(Job, int(stem))
+
+
+def untracked_print_in_progress(session: Session) -> dict | None:
+    """The printer genuinely mid-print (see printer_currently_busy above)
+    while nothing in our own queue is marked 'printing' - meaning
+    whatever's running was started some other way, not released through
+    this app. Shared by release()'s own guard against sending a second
+    job onto a printer that's already busy this way, and by the admin
+    dashboard's live banner (routers/admin.py's _dashboard_context) -
+    checked fresh on every call, never cached, so it can't show stale.
+
+    The returned dict is whatever printer_currently_busy provides, plus
+    two keys this function adds: 'job' (the actual Job the printer's own
+    filename resolves to via _job_from_makerbot_filename above, or None
+    if it doesn't match/no longer exists) and 'job_user_name' (that
+    job's submitter, resolved here rather than making a template do its
+    own database lookup)."""
+    current = printer_currently_busy()
+    if current is None:
+        return None
+    already_tracked = session.exec(select(Job).where(Job.status == JobStatus.printing)).first()
+    if already_tracked is not None:
+        return None
+    result = dict(current)
+    job = _job_from_makerbot_filename(session, current.get("filename"))
+    result["job"] = job
+    result["job_user_name"] = None
+    if job is not None:
+        submitter = session.get(User, job.user_id)
+        result["job_user_name"] = submitter.name if submitter else None
+    return result
 
 
 def release(session: Session, job: Job, admin: Admin) -> Job:
     """Sends an approved job to the printer and marks it printing. Actually
     talks to the hardware (see printer.py) - only flips the status once
     the upload genuinely succeeds, so a failed send leaves the job
-    'approved' rather than claiming a print started that may not have."""
+    'approved' rather than claiming a print started that may not have.
+
+    Guards against two different ways the printer could already be busy:
+    a job this app itself already released (the database check, as
+    before), and - per the user, after the real dial-reprint incident
+    printer_currently_busy's own docstring describes - one started some
+    other way entirely, which the database alone could never catch since
+    it never went through the app at all. Physical reality is the actual
+    source of truth for "is the printer busy," not just this app's own
+    belief about it."""
     _require_status(job, JobStatus.approved)
     already_printing = session.exec(
         select(Job).where(Job.status == JobStatus.printing)
@@ -638,6 +924,14 @@ def release(session: Session, job: Job, admin: Admin) -> Job:
     if already_printing is not None:
         raise JobActionError(
             f"Job #{already_printing.id} is already printing - mark it done/failed first."
+        )
+    if printer_currently_busy() is not None:
+        raise JobActionError(
+            "The printer itself reports it's already mid-print, even though "
+            "nothing here is marked 'printing' - most likely started directly "
+            "from the printer's own controls rather than released through the "
+            "app. Let it finish (or stop it at the printer) before releasing "
+            "another job."
         )
     if not job.makerbot_path:
         raise JobActionError("This job has no sliced file to send.")
@@ -742,6 +1036,7 @@ def slice_and_update(
     rotate_x: float = 0.0,
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
+    resubmit_to_queue: bool = False,
 ) -> None:
     """Runs slicing for a draft and records the outcome as 'sliced' (ready
     to preview and, if the user wants, submit) or 'slice_failed' - never
@@ -756,7 +1051,26 @@ def slice_and_update(
 
     Output goes to scratch/, not queue/ - a draft's files stay in scratch/
     for as long as it's a draft, however many times it gets re-sliced;
-    only submit_draft moves anything into queue/.
+    only submit_draft moves anything into queue/. resubmit_to_queue is
+    the one exception: True only when this re-slice started from a job
+    that was already queued/approved a moment ago (see start_reslice's
+    own was_queued return value, threaded through from
+    routers/user.py's reslice()) - on success, that means immediately
+    rejoining the shared queue itself, moving scratch/ back to queue/
+    inline, right here, rather than landing on 'sliced' waiting for a
+    separate manual "Submit to queue" click it was never going to need
+    (it was already committed to the queue before this started). Always
+    resets to 'queued', never back to 'approved' even if that's what it
+    was a moment ago - a materially different file hasn't been
+    re-reviewed yet - with a *fresh* queued_at, per the user: any edit
+    sends it to the back of the line, the same as a genuinely new
+    submission, not the position it already held. On failure, nothing
+    special happens beyond the normal draft behavior: it lands on
+    'slice_failed', a draft, invisible to admins until the user fixes
+    and resubmits it - the job genuinely gives up its claim on a print
+    slot until it can actually produce a valid file again, which is
+    correct, not a bug: an unprintable file has no business still
+    holding a place in line.
 
     Any unexpected exception here (not just an ordinary slicer failure,
     which run_slice already reports as (False, detail)) still has to leave
@@ -779,7 +1093,7 @@ def slice_and_update(
         if job is None:
             return
 
-        _scratch_stl, scratch_makerbot, scratch_supports = scratch_paths(job.id)
+        scratch_stl, scratch_makerbot, scratch_supports = scratch_paths(job.id)
         try:
             success, detail, used_rotate_x, used_rotate_y, used_rotate_z, auto_rotated = _slice_with_rotation_retry(
                 stl_path,
@@ -800,11 +1114,34 @@ def slice_and_update(
         if success:
             job.makerbot_path = str(scratch_makerbot)
             job.duration_estimate_s = read_makerbot_duration_s(scratch_makerbot)
+            job.filament_grams = read_makerbot_filament_g(scratch_makerbot)
             if enable_supports and scratch_supports.exists():
                 job.supports_path = str(scratch_supports)
             else:
                 job.supports_path = None  # clear a stale one from a previous re-slice attempt
-            job.status = JobStatus.sliced
+
+            if resubmit_to_queue:
+                # Per the user: an already-queued job that gets re-sliced
+                # immediately rejoins the shared queue on success, rather
+                # than landing on 'sliced' waiting for a separate manual
+                # "Submit to queue" click it was never going to need - it
+                # was already committed to the queue before this started.
+                # Mirrors submit_draft's own scratch/->queue/ move, just
+                # inline here instead of a separate explicit action.
+                queue_stl, queue_makerbot, queue_supports = queue_paths(job.id)
+                if scratch_stl.exists():
+                    shutil.move(str(scratch_stl), str(queue_stl))
+                    job.stl_path = str(queue_stl)
+                shutil.move(str(scratch_makerbot), str(queue_makerbot))
+                job.makerbot_path = str(queue_makerbot)
+                if job.supports_path:  # just set above, still pointing at scratch/ if set at all
+                    shutil.move(job.supports_path, str(queue_supports))
+                    job.supports_path = str(queue_supports)
+                job.status = JobStatus.queued
+                job.queued_at = datetime.now(timezone.utc)
+            else:
+                job.status = JobStatus.sliced
+
             if auto_rotated:
                 job.rotate_x, job.rotate_y, job.rotate_z = used_rotate_x, used_rotate_y, used_rotate_z
                 job.slice_error = (
@@ -819,6 +1156,8 @@ def slice_and_update(
             else:
                 job.slice_error = None  # clear a stale one from a previous failed attempt
                 log_event(session, job.id, actor, "sliced")
+            if resubmit_to_queue:
+                log_event(session, job.id, actor, "queued", detail="automatic - rejoined the queue after a re-slice, with a fresh wait time")
         else:
             job.status = JobStatus.slice_failed
             job.slice_error = detail[-4000:]  # cap - slicer output can be long
@@ -841,22 +1180,55 @@ def start_reslice(
     rotate_x: float = 0.0,
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
-) -> Path:
+) -> tuple[Path, bool]:
     """Resets a draft to re-slice the same already-uploaded file with new
     settings - the whole point of splitting slicing from submitting: a
     user can freely iterate on support settings, scale, or now rotation
-    (see models.Job.rotate_x/y/z) before ever deciding to submit. Returns
-    the STL path to hand to slice_and_update (via a BackgroundTask, same
-    as the initial slice - see routers/user.py). No bounds check on the
-    rotation angles the way scale gets one - any float is a valid
-    rotation (sin/cos are periodic, so e.g. 370 degrees and 10 degrees
-    produce the identical result), there's no "too rotated" the way
-    there's a "too small/too large" for scale."""
-    _require_status(job, JobStatus.sliced, JobStatus.slice_failed)
+    (see models.Job.rotate_x/y/z) before ever deciding to submit.
+
+    Also reachable for an already-queued/approved job, per the user,
+    after "Edit was supposed to be all edit capability... same as the
+    edit before queuing" - not just color, which is all it was scoped to
+    right after that page first got reused for queued jobs. A queued
+    job's files already live in queue/, not scratch/ (see
+    storage.queue_paths vs scratch_paths) - this moves them back before
+    slicing touches anything, the mirror image of what submit_draft does
+    going the other way, so the rest of this function (and
+    slice_and_update below) can treat every case identically from here.
+    While it's mid-reslice, status is 'submitted' - the *same* status a
+    brand new upload sits in while its own first slice runs - which, as
+    a side effect with no special-casing needed, pulls it out of
+    active_jobs() (models.QUEUE_STATUSES doesn't include it) for exactly
+    as long as slicing takes: per the user, deliberately, so an admin
+    can never approve/release a file that's still being written.
+
+    Returns (stl_path, was_queued) - was_queued has to be threaded
+    through to slice_and_update's own BackgroundTask call (see
+    routers/user.py's reslice()), since by the time that task actually
+    runs, job.status here has already been flipped to 'submitted' and
+    there's no way to recover "was this queued a moment ago" from the
+    job itself any more.
+
+    No bounds check on the rotation angles the way scale gets one - any
+    float is a valid rotation (sin/cos are periodic, so e.g. 370 degrees
+    and 10 degrees produce the identical result), there's no "too
+    rotated" the way there's a "too small/too large" for scale."""
+    _require_status(job, JobStatus.sliced, JobStatus.slice_failed, JobStatus.queued, JobStatus.approved)
     if not (MIN_SCALE_FACTOR <= scale_factor <= MAX_SCALE_FACTOR):
         raise JobActionError(
             f"Scale must be between {MIN_SCALE_FACTOR * 100:.0f}% and {MAX_SCALE_FACTOR * 100:.0f}%."
         )
+    was_queued = job.status in (JobStatus.queued, JobStatus.approved)
+    if was_queued:
+        queue_stl, queue_makerbot, queue_supports = queue_paths(job.id)
+        scratch_stl, scratch_makerbot, scratch_supports = scratch_paths(job.id)
+        if queue_stl.exists():
+            shutil.move(str(queue_stl), str(scratch_stl))
+            job.stl_path = str(scratch_stl)
+        if queue_makerbot.exists():
+            shutil.move(str(queue_makerbot), str(scratch_makerbot))
+        if queue_supports.exists():
+            shutil.move(str(queue_supports), str(scratch_supports))
     job.supports_enabled = enable_supports
     job.support_style = support_style
     job.scale_factor = scale_factor
@@ -875,10 +1247,11 @@ def start_reslice(
             if (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0)
             else ""
         )
+        + (" (was queued - temporarily left the queue while this re-slices)" if was_queued else "")
     )
     log_event(session, job.id, _user_actor(session, job.user_id), "reslice_started", detail=style_detail)
     session.commit()
-    return Path(job.stl_path)
+    return Path(job.stl_path), was_queued
 
 
 def submit_draft(session: Session, job: Job) -> Job:
@@ -933,10 +1306,21 @@ def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool
     that it failed (see routers/admin.py's mark_failed_job, which
     requires one from a manual "Mark failed" the same way reject()
     requires admin_note). Ignored on success: a 'done' job has nothing to
-    explain."""
+    explain.
+
+    `finished_at` is stamped *after* the photo attempt below, not before -
+    per the user, now that automatic detection (check_and_finish_active_print)
+    means this whole function typically runs within ~15s of the printer
+    actually reporting the print over, rather than depending on an admin
+    noticing and clicking by hand. A few extra seconds spent trying to
+    reach the camera is a small, bounded price (capture_photo's own
+    connect+capture timeouts cap it well under a minute even on total
+    failure - see printer.py) for finished_at reflecting the true end of
+    the whole "wrap this job up" sequence, not just the instant this
+    function happened to start - see _duration_correction_factor above,
+    which this timestamp directly feeds."""
     _require_status(job, JobStatus.printing)
     job.status = JobStatus.done if success else JobStatus.failed
-    job.finished_at = datetime.now(timezone.utc)
     if not success and reason:
         job.failure_reason = reason
     move_job_to_archive(job)
@@ -949,6 +1333,7 @@ def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool
         photo_detail = "photo captured"
     except PrinterError as e:
         photo_detail = f"photo capture failed: {e}"
+    job.finished_at = datetime.now(timezone.utc)
     if reason:
         photo_detail = f"{reason}; {photo_detail}"
 
@@ -1009,12 +1394,51 @@ def check_and_finish_active_print(session: Session) -> Job | None:
 
 _AUTO_FINISH_POLL_INTERVAL_S = 15
 
+# Whether an untracked print (see untracked_print_in_progress above) has
+# already been logged for the episode currently in progress - module-level,
+# in-memory, not persisted, deliberately: this only exists to stop the
+# poller writing a fresh log entry every 15s for however long the same
+# untracked print keeps running, not to survive an app restart (a restart
+# mid-episode just logs it again once, which is fine - it's still true).
+_untracked_print_logged = False
+
+
+def _log_untracked_print_once(session: Session) -> None:
+    """Called every poll tick alongside check_and_finish_active_print -
+    unlike that function, this runs unconditionally rather than being
+    gated behind the app's own database already believing something is
+    printing, since catching exactly the case where it *doesn't* believe
+    that (but the printer disagrees) is the whole point - see
+    untracked_print_in_progress's own docstring for the real incident
+    this exists because of. Logs once when an episode starts, not
+    again until it's over (see _untracked_print_logged above) and a new
+    one begins - admin-visible immediately either way via the dashboard's
+    own live banner, which doesn't depend on this log entry at all."""
+    global _untracked_print_logged
+    current = untracked_print_in_progress(session)
+    if current is not None:
+        if not _untracked_print_logged:
+            _untracked_print_logged = True
+            log_event(
+                session, None, "system", "untracked_print_detected",
+                detail=(
+                    f"Printer reports actively printing "
+                    f"{current.get('filename') or 'an unknown file'!r} with no "
+                    "matching queue job - likely started directly from the "
+                    "printer's own controls, not released through the app."
+                ),
+            )
+            session.commit()
+    else:
+        _untracked_print_logged = False
+
 
 def _auto_finish_poll_loop():
     while True:
         try:
             with Session(engine) as session:
                 check_and_finish_active_print(session)
+                _log_untracked_print_once(session)
         except Exception:
             # Best-effort background loop - never let one bad tick (a
             # transient DB hiccup, an unexpected reply shape) kill the

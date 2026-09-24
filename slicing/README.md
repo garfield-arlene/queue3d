@@ -76,12 +76,38 @@ cd tools && ./OrcaSlicer.AppImage --appimage-extract && cd ..
 ```
 
 (Extracting avoids needing FUSE at runtime, which headless/server
-environments often lack.) For an ARM64 Raspberry Pi, use the aarch64
-AppImage asset from the same release instead - OrcaSlicer ships official
-Linux aarch64 builds, unlike PrusaSlicer, which currently only publishes
-Windows/Mac from its own GitHub releases (Linux arm64 exists via Flathub,
-but that's more moving parts for a headless Pi service than a plain
-AppImage - see project memory for the fuller comparison).
+environments often lack.) **For the target Raspberry Pi 4B (Raspberry Pi
+OS Lite, 64-bit)**, fetch the aarch64 AppImage from the same release
+instead - confirmed to actually exist and download correctly (135MB,
+genuine `ARM aarch64` ELF, extracts cleanly to the same directory
+layout as the x86_64 build):
+
+```bash
+mkdir -p tools
+curl -sL -o tools/OrcaSlicer.AppImage \
+  https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.4.2/OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V2.4.2.AppImage
+chmod +x tools/OrcaSlicer.AppImage
+cd tools && ./OrcaSlicer.AppImage --appimage-extract && cd ..
+```
+
+No code differences needed between the two architectures - `slice.py`'s
+`ORCASLICER` path always points at the same fixed
+`tools/squashfs-root/AppRun` regardless of which build was extracted
+there, so a dev x86_64 machine and the real Pi each just extract their
+own matching AppImage into that same relative path and the rest of the
+pipeline doesn't need to know or care which one it's running on.
+
+OrcaSlicer ships official Linux aarch64 builds, unlike PrusaSlicer,
+which currently only publishes Windows/Mac from its own GitHub releases
+(Linux arm64 exists via Flathub, but that's more moving parts for a
+headless Pi service than a plain AppImage - see project memory for the
+fuller comparison). Structurally verified (download, correct ELF
+architecture, clean extraction) from an x86_64 dev machine using
+`unsquashfs`'s own offset-based extraction, which reads the embedded
+squashfs filesystem directly without executing the (ARM) binary itself -
+genuine runtime behavior (does slicing actually work end-to-end on the
+real Pi) still needs verifying on the real hardware once it's set up;
+that's not something an x86_64 machine can test directly.
 
 ## Files
 

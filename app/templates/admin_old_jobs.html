@@ -3,6 +3,8 @@
 {% block nav %}
   <a href="/admin/dashboard">&laquo; Queue</a>
   <a href="/admin/users">Users</a>
+  <a href="/admin/admins">Admins</a>
+  <a href="/admin/colors">Colors</a>
   <a href="/admin/jobs/finished">Finished jobs</a>
   <a href="/admin/log">Activity log</a>
   <a href="/admin/settings">Settings</a>
@@ -23,9 +25,16 @@
 
   {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
 
+  {% include "_job_filters.html" %}
+
   {% if not rows %}
     <p class="muted">Nothing old right now.</p>
   {% else %}
+    {# Carries the current filter query string along on every action (see
+       routers/admin.py's _perform_action/_query_suffix) - so acting on a
+       job from a filtered view lands back on that same filtered view
+       instead of silently resetting to unfiltered. #}
+    {% set qs = ('?' + request.url.query) if request.url.query else '' %}
     <table>
       <tr><th>User</th><th>File</th><th></th><th></th><th>Status</th><th>Queued</th><th>Est.</th><th>Actions</th></tr>
       {% for row in rows %}
@@ -43,30 +52,30 @@
           <td class="muted">{{ row.duration_display }}</td>
           <td>
             {% if job.status.value == 'queued' %}
-              <form method="post" action="/admin/jobs/{{ job.id }}/approve" style="display:inline">
+              <form method="post" action="/admin/jobs/{{ job.id }}/approve{{ qs }}" style="display:inline">
                 <input type="hidden" name="return_to" value="/admin/jobs/old">
                 <button type="submit">Approve</button>
               </form>
-              <form method="post" action="/admin/jobs/{{ job.id }}/reject" style="display:inline">
+              <form method="post" action="/admin/jobs/{{ job.id }}/reject{{ qs }}" style="display:inline">
                 <input type="hidden" name="return_to" value="/admin/jobs/old">
                 <input type="text" name="note" placeholder="reason" required size="16">
                 <button type="submit">Reject</button>
               </form>
             {% elif job.status.value == 'approved' %}
-              <form method="post" action="/admin/jobs/{{ job.id }}/release" style="display:inline">
+              <form method="post" action="/admin/jobs/{{ job.id }}/release{{ qs }}" style="display:inline">
                 <input type="hidden" name="return_to" value="/admin/jobs/old">
                 <button type="submit">Release to printer</button>
               </form>
-              <form method="post" action="/admin/jobs/{{ job.id }}/reject" style="display:inline">
+              <form method="post" action="/admin/jobs/{{ job.id }}/reject{{ qs }}" style="display:inline">
                 <input type="hidden" name="return_to" value="/admin/jobs/old">
                 <input type="text" name="note" placeholder="reason" required size="16">
                 <button type="submit">Reject</button>
               </form>
             {% endif %}
-            <form method="post" action="/admin/jobs/{{ job.id }}/requeue" style="display:inline">
+            <form method="post" action="/admin/jobs/{{ job.id }}/requeue{{ qs }}" style="display:inline">
               <button type="submit">Move to back of queue</button>
             </form>
-            <form method="post" action="/admin/jobs/{{ job.id }}/delete" style="display:inline"
+            <form method="post" action="/admin/jobs/{{ job.id }}/delete{{ qs }}" style="display:inline"
                   onsubmit="return confirm('Permanently delete {{ job.original_filename }} (submitted by {{ row.user_name }})? This cannot be undone - the model file is deleted too.')">
               <button type="submit">Delete</button>
             </form>
@@ -75,7 +84,7 @@
       {% endfor %}
     </table>
 
-    <form method="post" action="/admin/jobs/old/delete_all"
+    <form method="post" action="/admin/jobs/old/delete_all{{ qs }}"
           onsubmit="return confirm('Permanently delete ALL {{ rows|length }} old jobs shown here? This cannot be undone.')">
       <button type="submit">Delete all old jobs</button>
     </form>

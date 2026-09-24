@@ -1,0 +1,13 @@
+[Unit]
+Description=Run queue3d database/archive backup daily
+
+[Timer]
+# Matches backup.py's own module docstring example cron line (0 3 * * *).
+OnCalendar=*-*-* 03:00:00
+# If the Pi happens to be off at 3am (not guaranteed to run 24/7 at a
+# school), catches up on the next boot instead of silently skipping
+# straight to tomorrow's scheduled time.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

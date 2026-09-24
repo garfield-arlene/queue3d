@@ -113,6 +113,19 @@ def is_valid_timezone(name: str) -> bool:
     return True
 
 
+def get_display_timezone() -> ZoneInfo:
+    """The admin-configured display timezone `local_time()` below already
+    uses - a public accessor for `filters.py`'s date-range filtering,
+    which needs the exact same zone to interpret a plain "YYYY-MM-DD"
+    filter input as the *local* calendar day an admin actually meant,
+    not literal UTC midnight. Reads `_display_timezone` fresh on every
+    call rather than letting a caller bind it once - it's reassigned
+    in place (not mutated) whenever an admin changes the setting (see
+    set_display_timezone below), so a stale imported reference would
+    silently keep using whatever zone was active at import time."""
+    return _display_timezone
+
+
 def set_display_timezone(name: str) -> None:
     """Updates the in-process cache local_time() reads. Falls back to
     UTC for a name that isn't a real IANA zone rather than raising -

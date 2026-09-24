@@ -1,0 +1,11 @@
+[Unit]
+Description=Run queue3d draft-expiry cleanup daily
+
+[Timer]
+# After the 3am backup, matching cleanup_drafts.py's own module
+# docstring example cron line (0 4 * * *).
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

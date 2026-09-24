@@ -74,6 +74,22 @@ def generate_pin(length: int = 4) -> str:
     return "".join(secrets.choice("0123456789") for _ in range(length))
 
 
+def generate_password(length: int = 12) -> str:
+    """Same idea as generate_pin above, for an admin resetting *another*
+    admin's forgotten password (routers/admin.py's reset_admin_password) -
+    shown once to relay in person, never taken as typed input the way
+    create_admin.py's own first-admin password is. A wider alphabet and
+    longer default length than generate_pin: an admin credential is a
+    higher-stakes target than a user's PIN (same reasoning
+    LOGIN_LOCKOUT_THRESHOLD above already applies to both), and this
+    still clears create_admin.py's own 8-character minimum with room to
+    spare. Letters and digits only, no punctuation - easy to read aloud
+    or type from a handwritten note without ambiguity, matching how this
+    is actually relayed (in person, not pasted)."""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
 def get_current_user(
     request: Request, session: Session = Depends(get_session)
 ) -> User | None:
@@ -102,7 +118,13 @@ def get_current_admin(
     admin_id = request.session.get("admin_id")
     if admin_id is None:
         return None
-    return session.get(Admin, admin_id)
+    admin = session.get(Admin, admin_id)
+    if admin is None or admin.disabled:
+        # Same immediacy as get_current_user's identical check above - a
+        # disabled admin is logged out of an already-open session right
+        # away, not just blocked from a future login attempt.
+        return None
+    return admin
 
 
 def require_admin(admin: Admin | None = Depends(get_current_admin)) -> Admin:

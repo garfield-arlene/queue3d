@@ -21,6 +21,26 @@ app.add_middleware(SessionMiddleware, secret_key=get_session_secret_key())
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+@app.middleware("http")
+async def no_cache_static(request: Request, call_next):
+    """Force every /static/ request to revalidate with the server rather
+    than a browser silently serving a stale cached copy with no request
+    at all - a real incident, not a hypothetical: a genuine JS bugfix
+    (see app/README.md's "3D preview" section, the OrbitControls
+    devicePixelRatio fix) kept appearing broken purely because the
+    browser was still running the pre-fix file from cache, with no way
+    to tell short of knowing to hard-refresh - cost real back-and-forth
+    time to even recognize what was actually going on. StaticFiles
+    already sends a real content-based ETag, so this doesn't disable
+    caching or force a full re-download each time - it just guarantees
+    every load checks with the server first (a fast 304 if nothing
+    changed), never silently serving old content once something has."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.exception_handler(AuthRedirect)
 async def auth_redirect_handler(request: Request, exc: AuthRedirect):
     return RedirectResponse(exc.location, status_code=303)

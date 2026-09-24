@@ -284,6 +284,11 @@ Managing user accounts:
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
+- **Downloadable support bundle** - an admin can generate a `.tar.gz`
+  on demand (a safe copy of the database, the full activity log, and
+  every model that ever hit a slicing error) for offline bugfixing at
+  this app's zero-internet-access deployment, with no need for remote
+  access to the device itself.
 - **Built for offline deployment** - runs entirely on a local network with
   no internet access required; no CDN dependencies.
 - **App version number** shown as a footer on every page, read from
@@ -299,23 +304,9 @@ Managing user accounts:
 ## To do
 
 **Upload**
-- ~~Accept `.obj` files directly~~ **Done** - see Features above.
-- ~~`.zip` files containing multiple models, splitting into one job per
-  model.~~ **Done, confirmed against a real multi-part file** - a
-  real-world functional-print kit (15 separate `.STL` files) uploaded,
-  split into 15 jobs, and every one sliced successfully. This had
-  previously been marked broken after the user reported it not working
-  in real use following an earlier round of synthetic-only testing
-  (see `app/README.md`'s "Fixing a real multi-model zip upload" for the
-  full account) - the real cause turned out to be `MAX_ZIP_MODEL_FILES`
-  being set too low (10) for a legitimate multi-part kit, not a
-  FastAPI-level failure; raised to 25, and now stated directly on the
-  upload form per the user ("We need to note the limitation for the
-  users"), not just here. Confirmed independently by the user in real
-  use, not just by this session's own testing - the stronger of the two
-  claims this project distinguishes between.
 - **Separately, still open:** the *original* 422 report (a different
-  real multi-model zip, before the file above was available to test)
+  real multi-model zip, reported before a later, reproducible
+  multi-model zip upload was confirmed working - see Features above)
   never got a confirmed root cause - that specific file was never
   available to reproduce against directly, and every synthetic zip
   built to investigate it tested clean. Whether it was the same
@@ -337,19 +328,6 @@ Managing user accounts:
   an error. **Done** - the JS now checks the response status and shows
   its own error message for anything outside 2xx-after-redirect, or a
   network failure.
-- ~~Related gap noticed while investigating the above: a `slice_failed`
-  draft has no delete route at all (only `queued`/`approved` jobs could
-  be deleted, by a user or an admin) - it could only ever be re-sliced
-  or left to the existing draft-expiry cleanup.~~ **Done** - a
-  `slice_failed` draft now shows the same Delete button/confirmation a
-  queued/approved job does (`jobs.delete_own_job`'s allowed statuses
-  extended; `storage.delete_job_files` now looks in `scratch/` rather
-  than `queue/` for anything still in `models.DRAFT_STATUSES`).
-  Deliberately NOT extended to a plain `sliced` draft (successfully
-  sliced, not yet submitted) - not part of this ask, and it already has
-  a path forward (submit it, or keep adjusting settings). Still open,
-  cross-referenced below: "allow rejected jobs to be edited and
-  requeued" is the same underlying gap for a different terminal status.
 - `.3mf` upload support - not yet built, and a meaningfully bigger lift
   than `.obj`/`.zip` turned out to be: unlike OBJ (a flat, transform-free
   mesh format converted to STL in a few dozen lines - see `app/mesh.py`),
@@ -384,87 +362,17 @@ Managing user accounts:
   section for the full numbers.
 
 **Job review & feedback**
-- ~~Show failure reasons to the user, not just rejection notes - rejection
-  notes already display (required, and shown on the user's dashboard); a
-  failed print currently has no reason at all (`mark_failed` only flips
-  status, no note field), and slicing-error detail is currently only
-  visible to an admin (as a hover tooltip), never shown to the user.~~
-  **Done** - see Features above. (Slicing-error detail turned out to
-  already be visible to the user, via the draft edit page - only the
-  manual "Mark failed" gap was real.)
-- ~~Break the estimated print duration into days/hours/minutes - it's
-  currently total minutes only.~~ **Done** - see Features above.
-- ~~Show the date/time a job was submitted, and how long it's been
-  sitting in the queue since (days/hours/minutes) - the timestamp is
-  already recorded (`Job.created_at`/`queued_at`), it's just not
-  displayed anywhere yet.~~ **Done** - see Features above.
-- ~~Let admins configure an age threshold (e.g. 30 days) and split
-  still-waiting jobs into two separate views by it: the normal queue view
-  for anything younger than the threshold, and a separate "old jobs" view
-  for anything at or past it - mutually exclusive, not shown in both.
-  Builds directly on the submitted-at timestamp/duration-in-queue item
-  above. Open question: does this apply only to `queued`/`approved` jobs
-  (still awaiting a decision), or also to ones that are `printing` (already
-  being acted on, so arguably shouldn't count as stale backlog). Jobs in
-  this "old jobs" view should have an admin delete option - see "Audit
-  log" below, since that delete has to be logged like any other change.~~
-  **Done** - see Features above (confirmed by the user: queued/approved
-  only, not printing).
-- ~~Let a user restore an archived model (`rejected`, `failed`, or
-  `done` - any job whose files ended up in `archive/`) back into their
-  working space to modify and resubmit, rather than only being able to
-  start over from scratch.~~ **Done** - "Restore & edit" on the
-  dashboard for any `rejected`/`failed`/`done`/`expired` job copies its
-  model into a brand-new draft (never moves the archived original - its
-  own record/history is completely untouched) pre-filled with its
-  previous scale/rotation/support settings, and lands straight on that
-  new draft's edit page to tweak and resubmit like any other draft - a
-  fresh `queued_at` once actually submitted, genuinely joining the back
-  of the line, not the original's old position. (Explicitly re-confirmed
-  by the user for the `rejected` case specifically: "allow rejected jobs
-  to be edited and requeued.") Corrected from the original wording of
-  this item: `slice_failed` was never actually part of this gap - a
-  `slice_failed` job is a draft, not an archived one (its files live in
-  `scratch/`, never `archive/`), and it already has a full edit/re-slice/
-  delete path of its own on the same edit page every draft uses.
-- ~~Add a "reprint" option to print another exactly as it was queued.~~
-  **Done**, per the user, as a one-click alternative to "Restore & edit"
-  for the case that doesn't need editing at all: a `done` job's own
-  "Reprint" button skips re-slicing entirely (reusing the exact archived
-  `.makerbot` byte-for-byte) and goes straight into the shared queue,
-  ready for an admin to release. Deliberately scoped to `done` only -
-  not `rejected` (turned away for a reason an admin should reconsider,
-  not silently resubmit unchanged), `expired` (never actually printed,
-  nothing proven to reprint), or `failed` (a failed print might have
-  failed for a reason worth checking before blindly retrying the
-  identical file - "Restore & edit" is the right tool for all three of
-  those instead).
-- The "View 3D" page (`/jobs/{id}/preview`) is view-only today - no way to
-  resize a model or change its support settings (enable/style) from there,
-  only at initial upload. This is really the same gap as the resize
-  controls and restore-a-model items above, just noting where users will
-  actually look for it: on the job's own page, not just at upload time or
-  after it's already failed/been rejected. Open question this raises: for
-  a job that's still active (`queued`/`approved`, not yet released) should
-  changing something here re-slice it in place, keeping its position in
-  the queue, or does any edit count as a new submission that goes to the
-  end like a restored one does - those are different user expectations and
-  worth deciding deliberately rather than defaulting to whichever is
-  easier to build.
-- ~~**Model orientation/sizing controls** - the user's full spec: rotate
-  on any axis, "snap to surface," resize maintaining aspect ratio, and
-  one-click auto-fit.~~ **Done** - see Features above ("Resize and
-  auto-fit" and "Rotate and snap to surface"). Directly confirmed to
-  resolve a real, previously-unfixable slicing failure: the Flexi_Seal
-  model that failed `mbotmake`'s bed-centering check (see `app/README.md`'s
-  "A real stuck-slicing incident" section) slices successfully once
-  rotated ~45° about its vertical axis - found by testing the real file
-  through the real pipeline, not guessed. Scoped to draft
-  (`sliced`/`slice_failed`) jobs only, on the existing job-edit page -
-  not the upload form, and not yet extended to an already-`queued`/
-  `approved` job (the "does editing an active job re-slice in place or
-  count as a new submission" question two bullets up is still open, and
-  out of scope for what's built so far).
+- Done - the open question this item raised (does changing something on
+  an active `queued`/`approved` job re-slice in place, keeping its
+  queue position, or count as a new submission that goes to the end)
+  is resolved: a new submission, per the user - a fresh `queued_at`,
+  same as a genuinely new one. The job-edit page itself (not
+  `/jobs/{id}/preview`, which stays view-only) is now reachable from a
+  queued/approved job's own dashboard row, with full resize/rotate/
+  support editing identical to a draft's - see `app/README.md`'s "Full
+  editing for a queued/approved job" section for the real safety
+  question this raised (an admin must never be able to release a file
+  mid-re-slice) and how it's handled.
 - **Real bug found using auto-fit on an actual model (an F-35 fighter
   jet STL): "Auto-resize to fit build plate" could compute a scale that
   still didn't actually fit.** Root cause: auto-fit and the "too large"
@@ -482,14 +390,6 @@ Managing user accounts:
   a correct 7.50%, and OrcaSlicer's own placement check accepted the
   result (previously refused with "no object is fully inside the print
   volume").
-- ~~Automatic rotation retry on a slicing failure.~~ **Done** - see
-  Features above. Per the user, after this same fighter-jet model
-  (once correctly sized) still failed `mbotmake`'s own bed-centering
-  check exactly like the Flexi_Seal model did, and rotating it by hand
-  fixed it too: "I don't think it would hurt to attempt rotation and
-  reslice until all reasonable rotations have been tried." A bounded
-  sweep (not exhaustive) of 11 candidate rotations, tried automatically
-  after the requested orientation fails, stopping at the first success.
 - The 3D preview's camera always frames around the *model's own* size
   and position, not the bed's fixed physical dimensions - correctly
   identified by the user right after the auto-fit fix above: "The
@@ -502,34 +402,17 @@ Managing user accounts:
   camera (or at least the bed-plate rendering) to hold a consistent
   scale/position across every model rather than re-framing per-model -
   a real design change to the preview, not a quick follow-up.
-- ~~Let a user delete their own model from the queue (they may no longer
-  want it) - with a clear warning first that this is permanent: it removes
-  the job from the queue/list and deletes the model files, with no undo.
-  Only allowed while a job is still `queued`/`approved` (before release) -
-  once it's released and `printing`, the delete action is disabled/removed
-  from the list; the job's status just updates normally from there
-  (`done`/`failed`) like any other. Deleting does not need to also remove
-  the job from any backup already taken before the delete. Like any other
-  change to a job, this needs to be recorded in the job log - see "Audit
-  log" below.~~ **Done** - see Features above.
 
 **Audit log**
 - The core log is built (`models.JobEvent`; `/admin/log` - one global,
   most-recent-first table across every job, which is the actual "admin
   log view"; `/admin/jobs/{id}/log` for one job's own history) - see
   Features below.
-- Filters for the global log (`/admin/log`) - by job, user/admin, action
-  type, date range. Explicitly deferred by the user rather than built
-  alongside the log itself; currently just capped at the 500 most recent
-  entries with no way to narrow that down.
-- ~~Once the two delete features above (a user deleting their own queued
-  model, an admin deleting an old one) actually exist, each needs its own
-  log entry too, and an admin deletion specifically must say who did it -
-  the log doesn't have anything to log yet for actions that don't exist.~~
-  **Done** - both delete a user's own queued/approved job and an admin
-  deleting an old one log a `job_deleted` event (actor + filename, plus
-  the submitter's name for the admin-side one) - see "Old jobs" and
-  "Delete your own queued job" in Features.
+- Done - filters for the global log (`/admin/log`, by actor/action/date
+  range/filename or detail substring), and for every other job/user
+  listing in the app besides (substring, color, status, est. print time,
+  date range, and submitter where relevant) - see app/README.md's
+  "Filters, on every job/log/user listing" for the full design.
 
 **Backups & recovery**
 - Let admins see a list of backups taken and a manifest of what's actually
@@ -550,35 +433,20 @@ Managing user accounts:
   is genuinely CPU/memory-heavy.
 
 **Print options**
-- Color selection for users - 1st/2nd/3rd preference, chosen from a
-  dropdown populated by an admin-managed list of colors (admins check or
-  uncheck which colors are currently available, based on inventory).
-- ~~Controls for resizing a model before submitting.~~ Folded into the
-  fuller "Model orientation/sizing controls" item under Job review &
-  feedback above, once the user spelled out the full scope (rotate,
-  snap-to-surface, resize, auto-fit) - not a separate item any more.
+- Done - a single color per job (not 1st/2nd/3rd preference, per the
+  user's own later, more specific spec superseding this item's original
+  wording), or "Any available" so an admin doesn't have to change
+  filament, chosen from a dropdown of whatever an admin currently has
+  enabled - plus a best-effort low-inventory notice, since it turned out
+  possible to read a job's actual filament use straight out of the real
+  sliced file. Full account in `app/README.md`'s "Filament color
+  selection" section.
 
 **Appearance**
-- ~~An admin setting for the display timezone - every timestamp shown
-  anywhere in the app (the activity log, job history, "finished at",
-  etc.) is UTC today, unlabeled as such in most places even though it's
-  what's actually stored and compared against. Should apply everywhere
-  at once, not per-page.~~ **Done** - see Features below.
-- ~~Convert the current look into a real, named "Default" theme, with a
-  per-user/per-admin settings page to pick one, persisting across
-  logins~~ **Done** - see Features below ("Per-account theme and
-  light/dark mode selection") and `app/README.md`'s "Themes" section.
-  Only "Default" actually exists as a theme choice today - the
-  infrastructure (settings pages, persistence, the CSS token structure a
-  theme/mode overrides) is what's built; more themes is genuinely new
-  work, not just filling in a dropdown.
-- ~~Light/dark mode~~ **Done** - a separate toggle from theme, per the
-  user, not folded into it - every theme (so far just "Default") gets
-  both a light and a dark palette. See Features above and
-  `app/README.md`'s "Themes" section.
 - More themes beyond "Default" - color changes, wallpaper, as their own
   selectable options (each needing both a light and dark palette, per
-  the user - see "Themes" above). Everything must ship as local static
+  the user - see `app/README.md`'s "Themes" section). Everything must
+  ship as local static
   files - no CDN fonts, no external image URLs (see "Deployment: zero
   internet access" - this app runs with none, ever).
 - A logo for the app, shown on every page next to the "queue3d" title in
@@ -599,28 +467,16 @@ Managing user accounts:
   that section when that feature is actually built, not before.
 
 **Printer**
-- ~~Live print progress while a job is printing~~ **Done** - see Features
-  below ("Live print progress, read from the printer") and
-  `app/README.md`'s "Live print progress" section.
-- ~~Detect a print finishing or failing automatically, rather than
-  relying on an admin to click `mark_done`/`mark_failed` by hand~~
-  **Done** - see Features below ("Automatic completion detection") and
-  `app/README.md`'s section of the same name.
 - ~~Correct the fallback time estimate using real completion history~~
   **Done** - see Features below ("A history-corrected time estimate")
   and `app/README.md`'s "Live print progress" section. What's still
   open: the correction is based on `finished_at` (when an admin clicked
-  "Mark done"), not the printer's own recorded elapsed time for that
-  print - the two automatic-detection and precise-history items above
-  both point at capturing `current_process.elapsed_time` at the moment a
-  job is marked finished, which would let the correction stop
-  inheriting whatever delay elapsed between the physical print actually
-  finishing and someone noticing.
-- ~~Camera access confirmed, photo capture wired into the job record~~
-  **Done** - see Features above ("A build-plate photo on every finished
-  job") and `app/README.md`'s "Printer camera" section. Confirmed with
-  an actual real photo, not just isolated testing - job #15's
-  automatically-detected completion produced and saved one for real.
+  "Mark done", or when automatic completion detection caught it), not
+  the printer's own recorded elapsed time for that print - capturing
+  `current_process.elapsed_time` at the moment a job is marked finished
+  would let the correction stop inheriting whatever delay elapsed
+  between the physical print actually finishing and someone/something
+  noticing.
 - A dedicated camera, independent of the printer's own flaky single-
   session connection - per the user, after a string of real
   photo-capture failures (all since fixed - see Features above) that
@@ -664,14 +520,6 @@ Managing user accounts:
   possibly a UI-state issue from repeated pairing attempts in quick
   succession. Pairing should retry through the slow-HTTP-service case
   automatically.
-- ~~Surface a clear "needs re-pairing" state on the admin dashboard,
-  with a way to start pairing from there~~ **Done** - see Features below
-  ("Printer status on the admin dashboard") and `app/README.md`'s
-  "Printer status and in-app pairing" section.
-- ~~Bed adhesion tuning - a test print completed without error but
-  didn't stick to the bed.~~ **Done** - resolved physically, not in the
-  slicing profile: new bed tape and a glue stick fixed it. No
-  first-layer/Z-offset/brim setting changes were needed.
 - Support for printer models/brands beyond the MakerBot Replicator+.
 - An admin UI for managing printers - add/remove a printer and pair it,
   all from within the app, rather than today's CLI-only, server-access-
@@ -685,55 +533,52 @@ Managing user accounts:
   form.
 
 **Accounts**
-- ~~Rate-limiting or lockout on login attempts - PINs are short by design
-  for low signup friction, which also makes them easier to guess; nothing
-  currently slows down repeated attempts.~~ **Done** - see Features above.
-- ~~Let an admin reset a user's PIN, in case they forget it - today
-  there's no recovery path at all short of the user just signing up
-  under a new name (losing their submission history) or an admin
-  deleting/recreating the account outright.~~ **Done** - see Features
-  above.
-- ~~Capture account lifecycle actions (registration, disable, re-enable,
-  delete) in the activity log, not just job actions~~ **Done** - see
-  `app/README.md`'s "Account actions in the activity log" section.
-- ~~Let admins manage user accounts from the UI~~ **Done** - any admin can
-  disable/re-enable or permanently delete a user, individually or all at
-  once, from `/admin/users`. Disabling blocks login immediately, even from
-  an already-open session (re-checked on every request, not just at
-  login). Deleting is blocked outright - with a clear reason, naming who -
-  if the user (or, for "delete all", any user) still has a job that isn't
-  finished yet (`queued`/`approved`/`printing`); a finished job's history
-  is left alone either way. Both delete actions require a confirm dialog
-  first.
-- Extend the above to admins managing *other admins* too, not just users -
-  deliberately left out of what was just built, since it raises a real
-  safety question the users-only version didn't: what stops an admin from
-  disabling or deleting the only remaining admin account, including
-  themselves, locking everyone out of admin access. Also open: does
-  "add an admin" mean creating a fresh admin credential (today's design -
-  a separate username+password, unrelated to any user account) or
-  promoting/converting an existing user's account, since those are two
-  different tables today; and what happens to a deleted admin's existing
-  references on past jobs (`reviewed_by_admin_id`/`admin_note`) - kept but
-  orphaned, or removed too.
+- On the registration page, present an "Acceptable Use Agreement" with a
+  checkbox that MUST be checked before the user can register - signup
+  currently only requires a name and PIN, with nothing about acceptable
+  use presented or agreed to at all.
+- Done - any signed-in admin can create another admin from `/admin/admins`
+  (a fresh username+password, same as `create_admin.py`'s own design, not
+  promoting/converting an existing user's account - those stay two
+  separate tables). Every admin created via `create_admin.py` itself is
+  permanently `unremovable` (schema 6.4.0) - the "what stops an admin from
+  locking everyone out by deleting every admin account" question this
+  used to raise is resolved by construction as long as at least one
+  admin was ever provisioned that way, which is required regardless
+  (it's the only way to get the very first admin at all). Admins created
+  through the new UI have no such protection and can be deleted by any
+  other admin (never by themselves, while signed in as that account).
+  Done, too - disable/re-enable and password reset for another (not
+  `unremovable`) admin, from that same page (schema 6.5.0's
+  `Admin.disabled`); a disabled admin is logged out of an already-open
+  session immediately, same as a disabled user. Also done: every account
+  type can now change its own credential itself, without another
+  admin's help - `/settings` (a user's own PIN) and `/admin/settings`
+  (an admin's own password) both require the *current* credential first,
+  unlike an admin resetting someone else's, which doesn't (a different,
+  already-authenticated admin's own session is the trust boundary there
+  instead). Done, too - a deleted admin's past job reviews no longer go
+  silently orphaned: `Job.reviewed_by_name` (schema 6.6.0) is replaced
+  with "`<username>` (deleted)" at the moment of deletion, and the
+  underlying `reviewed_by_admin_id` FK is cleared rather than left
+  pointing at a since-reused id. `admin_note` needed nothing - it's the
+  rejection reason the admin typed, not a reference to which admin typed
+  it; the activity log's own attribution (`JobEvent.actor`) was already
+  immune to this, since it was a plain string snapshot from the start,
+  never a live FK. Still open: no permission scoping between admins at
+  all yet - every one has identical, full access, "decided later" per
+  the user.
 
 **Deployment**
-- A fixed IP or mDNS hostname for the server so users don't have to type
-  or remember a raw IP address on the deployment network.
-- Actually setting this up on the target Raspberry Pi: OS install, the
-  scratch/queue/archive + two backup-target USB drives mounted, and the
-  backup cron job installed - all designed for, none yet done on real
-  hardware.
-- A downloadable "support bundle" (a `.tar.gz`) an admin can generate
-  on demand, bundling whatever's needed for offline bugfixing after the
-  real deployment (Pi/network/printer in place, zero internet access,
-  per [[queue3d-deployment-network]]) without remote access to the
-  device itself - per the user: "After I setup the app/Pi, network, and
-  printer in place, I want to be able to show up and collect the
-  support files." Likely contents: recent job `slice_error`s (the exact
-  captured OrcaSlicer/mbotmake output already shown on a failed job's
-  own page), the specific model files involved, the activity log, and
-  relevant application/service logs - exact scope not yet decided.
+- Done, on the real hardware: mDNS hostname, the full `deploy.sh`
+  install/upgrade flow with an nginx+https reverse proxy in front of it,
+  the pre-upgrade backup/rollback safety net, the three-drive live-data
+  + rotating-backup storage setup with its own systemd timers, and the
+  downloadable admin support bundle. Full account of all of it in
+  `deploy/README.md`. The one remaining open item there:
+  `QUEUE3D_PRINTER_HOST`/`QUEUE3D_PRINTER_PORT` as an `EnvironmentFile`,
+  only needed if the real network setup ever requires non-default
+  values.
 
 ## Project layout
 
@@ -741,5 +586,7 @@ Managing user accounts:
 - `slicing/` - the STL -> print-ready-file pipeline, usable standalone.
 - `test-print/` - the printer network protocol client, usable standalone
   for testing connectivity without the rest of the app.
+- `deploy/` - systemd unit + scripts for installing/upgrading on the real
+  Raspberry Pi target with zero internet access at the deployment site.
 
 Each has its own README with setup and implementation details.

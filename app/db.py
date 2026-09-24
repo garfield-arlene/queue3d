@@ -2,6 +2,7 @@
 printer; a separate DB server would be pure overhead, and a single file is
 trivial to back up."""
 
+import os
 from pathlib import Path
 
 from sqlalchemy import text
@@ -9,8 +10,34 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from version import APP_VERSION
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
-DATA_DIR.mkdir(exist_ok=True)
+# Defaults to a local dev directory; the real deployment points this at a
+# dedicated external drive instead (QUEUE3D_DATA_DIR, set in
+# deploy/queue3d.service) - see project memory queue3d-app-progress for
+# why: the microSD boots the OS, one flash drive holds the live data
+# (this - scratch/queue/archive all live under DATA_DIR too, see
+# storage.py), the other two rotate as backups (see backup.py).
+DATA_DIR = Path(os.environ.get("QUEUE3D_DATA_DIR", Path(__file__).resolve().parent / "data"))
+
+# Only enforced when QUEUE3D_DATA_DIR is explicitly set - a real deployment
+# never wants this directory to silently exist as an ordinary (empty)
+# folder on the SD card just because the external drive happened to be
+# unplugged or not yet mounted at boot. Without this check, that failure
+# mode wouldn't look like a failure at all: the app would just start up
+# fine against a brand new, empty database, quietly discarding every real
+# job/user/setting on the actual drive until someone noticed the queue
+# looked wrong. Fail loudly at startup instead - see
+# deploy/queue3d.service's RequiresMountsFor for the systemd-level version
+# of this same guard.
+if "QUEUE3D_DATA_DIR" in os.environ and not os.path.ismount(DATA_DIR):
+    raise RuntimeError(
+        f"QUEUE3D_DATA_DIR={DATA_DIR} is set but is not actually a mounted "
+        "filesystem right now - refusing to start rather than silently "
+        "creating a fresh, empty database on local disk instead of using "
+        "the real external drive. Check it's plugged in and mounted "
+        "(see deploy/README.md)."
+    )
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "queue3d.db"
 
 # check_same_thread=False: FastAPI may use a different thread per request;
@@ -205,6 +232,122 @@ def _migrate_to_5_6_0(conn):
             conn.execute(text(f"ALTER TABLE job ADD COLUMN {col} FLOAT NOT NULL DEFAULT 0.0"))
 
 
+def _migrate_to_6_2_0(conn):
+    """New Job.color_name/filament_grams columns - the color-selection and
+    best-effort filament-inventory feature (see models.Color,
+    jobs.filament_status). The new `color` table itself needs no migration
+    here at all - create_all() below already creates any missing table
+    from scratch, it just can't ALTER an existing one, which is the only
+    reason any of these functions exist. Both new columns purely additive/
+    nullable: an existing job simply reads as "no color recorded" and
+    "filament usage unknown" - exactly what was already implicitly true
+    of it before these columns existed, nothing to backfill."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "color_name" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN color_name VARCHAR"))
+    if "filament_grams" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN filament_grams FLOAT"))
+
+
+def _migrate_to_6_3_0(conn):
+    """New indexes for the job/log filtering feature (filters.py) - per
+    the user, filters everywhere the underlying data exists, across
+    several tables that can realistically grow over years of school use.
+    Unlike every migration above, this doesn't add/rename a column -
+    `CREATE INDEX IF NOT EXISTS` works directly against an existing
+    SQLite table with no rebuild needed, so this is here only because
+    create_all() below has the exact same limitation for indexes as it
+    does for columns: it happily creates every index a *new* database
+    needs from the current model definitions, but never retrofits one
+    onto a table that already exists. Named to match SQLAlchemy's own
+    default index-naming convention (ix_<table>_<column>) exactly, so a
+    brand-new database's create_all()-generated indexes and an existing
+    database's migration-created ones end up identical - nothing here is
+    a "different index with the same job," just the same one arriving by
+    two different paths depending on how old the database is."""
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_color_name ON job (color_name)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_created_at ON job (created_at)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_queued_at ON job (queued_at)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_finished_at ON job (finished_at)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobevent_at ON jobevent (at)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobevent_action ON jobevent (action)"))
+
+
+def _migrate_to_6_4_0(conn):
+    """New Admin.unremovable column - see that field's own docstring in
+    models.py for why it exists (the web UI for one admin creating
+    another - routers/admin.py's admins_page - is what first makes "can
+    this admin ever be deleted" a real question). Backfilled to 1/True
+    for every admin row that already exists at migration time, not left
+    at the column's own False default the way a purely additive column
+    normally would be here: every one of those rows was necessarily
+    created via create_admin.py, since the web UI this migration ships
+    alongside is the *only* other way an Admin row can ever come to
+    exist - there was no such thing as a non-CLI-created admin before
+    this exact migration runs. Per the user, directly: "mark the admin
+    created from the cmd we just did as unremovable" - backfilling every
+    pre-existing row this way satisfies that literally, with no need to
+    know which username(s) to single out by hand, and stays consistent
+    with the same rule create_admin.py itself now applies going forward.
+    A brand new admin created *after* this migration, through the new
+    web UI, still gets the column's real default (False) via create_all()
+    - only rows that predate the UI's existence get backfilled here."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(admin)")).fetchall()}
+    if "unremovable" not in cols:
+        conn.execute(text("ALTER TABLE admin ADD COLUMN unremovable BOOLEAN NOT NULL DEFAULT 0"))
+        conn.execute(text("UPDATE admin SET unremovable = 1"))
+
+
+def _migrate_to_6_5_0(conn):
+    """New Admin.disabled column - see that field's own docstring in
+    models.py. Purely additive/nullable-in-spirit (defaults to 0/False,
+    same as create_all() would give a brand new admin), and unlike
+    6.4.0's unremovable column just above, deliberately NOT backfilled to
+    anything else here - an existing admin simply reads as "not
+    disabled," exactly what was already implicitly true of every admin
+    before this column existed (there was no way to disable one at all
+    yet)."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(admin)")).fetchall()}
+    if "disabled" not in cols:
+        conn.execute(text("ALTER TABLE admin ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT 0"))
+
+
+def _migrate_to_6_6_0(conn):
+    """New Job.reviewed_by_name column - see that field's own docstring
+    in models.py for why it exists (reviewed_by_admin_id, a real FK, went
+    silently orphaned the moment deleting an admin became possible at
+    all - schema 6.4.0's admins_page). Backfilled here for every job that
+    already has a reviewed_by_admin_id, by joining against whichever
+    admin still exists with that id right now - this is the one and only
+    chance to backfill a real username at all, since going forward
+    delete_admin itself keeps this column in sync (see that route). A
+    job whose reviewer was *already* deleted before this migration ever
+    ran has no admin row left to join against - genuinely, permanently
+    unrecoverable, not a bug in this migration - so those get a generic
+    placeholder instead of a real name, and reviewed_by_admin_id is
+    cleared right along with it (same reason delete_admin clears it: an
+    id with nothing to resolve against is worse than useless if some
+    future feature ever joins on it directly, especially since SQLite can
+    reuse a deleted row's id for an unrelated admin later)."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "reviewed_by_name" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN reviewed_by_name VARCHAR"))
+        conn.execute(
+            text(
+                "UPDATE job SET reviewed_by_name = ("
+                "SELECT username FROM admin WHERE admin.id = job.reviewed_by_admin_id"
+                ") WHERE reviewed_by_admin_id IS NOT NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE job SET reviewed_by_name = '(unknown - admin no longer exists)', "
+                "reviewed_by_admin_id = NULL "
+                "WHERE reviewed_by_admin_id IS NOT NULL AND reviewed_by_name IS NULL"
+            )
+        )
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -227,6 +370,11 @@ MIGRATIONS = {
     "4.5.0": _migrate_to_4_5_0,
     "5.5.0": _migrate_to_5_5_0,
     "5.6.0": _migrate_to_5_6_0,
+    "6.2.0": _migrate_to_6_2_0,
+    "6.3.0": _migrate_to_6_3_0,
+    "6.4.0": _migrate_to_6_4_0,
+    "6.5.0": _migrate_to_6_5_0,
+    "6.6.0": _migrate_to_6_6_0,
 }
 
 

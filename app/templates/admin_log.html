@@ -3,6 +3,8 @@
 {% block nav %}
   <a href="/admin/dashboard">&laquo; Queue</a>
   <a href="/admin/users">Users</a>
+  <a href="/admin/admins">Admins</a>
+  <a href="/admin/colors">Colors</a>
   <a href="/admin/jobs/finished">Finished jobs</a>
   <a href="/admin/jobs/old">Old jobs</a>
   <a href="/admin/settings">Settings</a>
@@ -14,8 +16,10 @@
     Every submit, slice, re-slice, queue-submit, approve, reject, release,
     and outcome, across every job - plus account actions (registration,
     disable, re-enable, delete) - most recent first.
-    {% if rows|length >= limit %}Showing the most recent {{ limit }} - filters for narrowing this down are on the to-do list.{% endif %}
+    {% if rows|length >= limit %}Showing the most recent {{ limit }} matching entries - narrow the range below to see further back.{% endif %}
   </p>
+
+  {% include "_log_filters.html" %}
 
   {% if not rows %}
     <p class="muted">No activity recorded yet.</p>

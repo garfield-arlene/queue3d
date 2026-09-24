@@ -164,9 +164,21 @@ This runs on an isolated "island" LAN (Pi + printer wired to a router,
 client devices join over wifi, nothing on that network ever reaches the
 internet - see project memory `queue3d-deployment-network`). Consequences:
 
-- Run with `--host 0.0.0.0` (not the `127.0.0.1` used above for local dev)
-  so client devices on the LAN can actually reach it, e.g.:
-  `uvicorn main:app --host 0.0.0.0 --port 8000`.
+- The real deployment (see `deploy/`) runs this behind an nginx reverse
+  proxy, not exposed directly - `uvicorn` itself binds `127.0.0.1:8000`
+  only (`deploy/queue3d.service`), and nginx (`deploy/nginx-queue3d.conf`)
+  is the actual public listener, terminating https with a self-signed
+  cert (there's no CA reachable at the deployment site) and redirecting
+  plain port 80 to it. Client devices on the LAN reach it at
+  `https://<host>/` with no port number to remember, the app itself is
+  never directly exposed to the network at all, and every browser shows
+  a one-time "not trusted" warning per device for the self-signed cert -
+  expected on an offline network, not a sign of a problem. This changed
+  after a real first-deploy session revealed everyone would otherwise
+  need to type `:8000`, then again once plain http wasn't considered
+  good enough even on an isolated LAN - for a quick local-only dev check
+  (not the real deployment), plain `--host 0.0.0.0 --port 8000` still
+  works fine, same as always.
 - `/docs` and `/redoc` are disabled (`docs_url=None` in `main.py`) - FastAPI's
   built-in interactive docs load their JS/CSS from `cdn.jsdelivr.net`,
   which is a dead link here and isn't needed for this app anyway.
@@ -695,6 +707,73 @@ status cleanly (reprinting a `rejected` job, say) with a clear flash
 message via the same `JobActionError` pattern every other job action
 already uses, rather than a raw error or silent no-op.
 
+### Downloadable support bundle
+
+**Why this exists:** asked directly "what's next most important," this
+was recommended and built the same session - per the user's own earlier
+ask, "create a 'tar.gz' file that contains errors, model files, logs,
+etc. that would be helpful for offline bugfixes... After I setup the
+app/Pi, network, and printer in place, I want to be able to show up and
+collect the support files." This deployment has zero internet access at
+all (see project memory `queue3d-deployment-network`) - there's no way
+to relay a live problem back for help the normal way, so the plan is
+physical: generate the bundle on the spot, carry it out.
+
+**Contents chosen from what every real bug investigated this project
+has actually needed, not guessed at:** a safe, consistent copy of the
+whole database (`backup.py`'s own `backup_database()` - the exact same
+online-backup-API copy the automated backup feature already uses, not
+a raw file read that could grab a half-written page mid-write, reused
+rather than reimplemented), the original model file for every job that
+ever recorded a `slice_error` (whether it ultimately failed outright or
+an automatic rotation retry fixed it - kept either way, since a
+"fixed by auto-rotation" job's file is exactly the kind of thing worth
+double-checking later), and the full activity log as plain text. The
+database alone is genuinely the single most useful thing here - every
+investigation this session actually ran (the fighter jet, Flexi_Seal,
+the zip upload cap) started from knowing a job's exact settings/status/
+history, and without the real model file alongside it, none of those
+could have been reproduced or diagnosed at all.
+
+**Deliberately not included, and documented plainly rather than
+silently left out: a persistent application log file.** This app's own
+progress output goes straight to whatever terminal `uvicorn` happens to
+be running in, not a file - there's nothing on disk to collect yet. If
+the real deployment eventually runs this under systemd, its journal
+would be the natural next thing to add here; not attempted now since
+that setup doesn't exist yet to test against.
+
+**A real design question resolved rather than glossed over: this
+bundle contains real user names, job filenames, and the database's
+stored (hashed, not plaintext) PIN/password secrets.** Not a new
+exposure - an admin generating this already has that same access on the
+live server - but worth being explicit about in both the bundle's own
+`manifest.txt` and here, rather than assumed harmless without saying so,
+since the file is meant to leave the device once generated.
+
+`GET /admin/support-bundle` builds the bundle into a fresh temp file
+and streams it back as a real file download (`Content-Disposition:
+attachment`, a timestamped filename), then deletes the temp file via a
+`BackgroundTask` once the response has actually gone out - the same
+"clean up after the response is sent, not before" shape used wherever
+this app hands back a generated file. Reachable from a plain link on
+the admin dashboard, right next to the existing backup-status line -
+the same place an admin would already be looking when something needs
+investigating.
+
+Verified end-to-end against a real isolated instance: seeded one normal
+job and one that genuinely fails to slice (reusing the same tiny-cube
+shape that reliably trips `mbotmake`'s bed-centering assertion
+elsewhere in this file), downloaded the actual bundle through the real
+route, and confirmed all four pieces are correct - the manifest's own
+counts match, the activity log reads back the real event sequence, the
+database copy contains the exact captured `slice_error` text, and the
+failing job's own `.stl` is present under `models/` while the
+successful job's is correctly not. Also confirmed the temp file is
+genuinely gone from disk immediately after the download completes, and
+that a non-admin hitting the route is redirected rather than handed the
+file.
+
 ### Upload and slicing progress
 
 Slicing (OrcaSlicer + `mbotmake`, both real subprocesses) can take minutes
@@ -1128,6 +1207,28 @@ true` - including a filename-matched job's photo-capture attempt still
 running (and failing gracefully, exactly as the manual path already
 does) rather than being skipped for the automatic path.
 
+### `finished_at` now stamped after the photo attempt, not before
+
+Per the user, once the above meant `mark_finished()` typically runs
+within ~15s of the printer actually reporting a print over: there's no
+longer a real reason to stamp `Job.finished_at` at the very start of
+that function, before spending a few seconds trying to reach the
+camera, rather than letting the whole "wrap this job up" sequence
+(status, archiving, photo attempt) finish first. `capture_photo()`'s own
+connect+capture timeouts keep the worst case bounded - well under a
+minute even on total camera failure (see `printer.py`) - so this can't
+reintroduce anything close to the multi-minute drift a slow-to-notice
+manual "Mark done" click used to cause, which is what this timestamp's
+accuracy actually matters for: `_duration_correction_factor` feeds
+directly off `finished_at - released_at` for every future print's ETA.
+
+Verified directly, both outcomes, with a stubbed `capture_photo` rather
+than just reasoned about: a simulated 2s successful capture delayed the
+recorded `finished_at` by exactly ~2s; a simulated 1s failed capture
+(`PrinterError`) still correctly delayed it by ~1s while leaving
+`photo_path` `None` and `failure_reason` set - confirming the reorder
+changes *when* `finished_at` lands, not what else gets recorded.
+
 ### Persistent printer connection
 
 **Why this exists - a real, live-confirmed hardware limitation, not
@@ -1197,6 +1298,83 @@ process was started fresh specifically to exercise the failure path, and
 correctly got the clear "needs re-pairing" `PrinterError` rather than a
 confusing raw exception, since that process's connection attempt was
 inherently a second session against an already-spent token.
+
+### Detecting a print started outside the app entirely
+
+**A real incident, not a hypothetical:** after a bed-adhesion failure
+mid-print, the user paused and cancelled the job using the printer's
+own physical dial (triggering `check_and_finish_active_print`'s normal
+`cancelled` detection, correctly marking it `failed`), fixed the bed,
+then reprinted directly from the printer's own on-device menu - never
+touching the app at all. The app had no way to notice: `check_and_
+finish_active_print` only ever calls `system_information()` when its
+own database *already* believes a job is `printing` - a print started
+any other way was completely invisible to it, then and after.
+
+**`jobs.printer_currently_busy()`** breaks that assumption - it reads
+the printer's live `current_process` unconditionally, not gated behind
+the app's own belief about what's happening. Genuinely still in
+progress (not yet `complete`/`cancelled`/`error` - the same three-way
+read `check_and_finish_active_print` already uses) means busy,
+regardless of how it started. `jobs.untracked_print_in_progress()`
+layers the database on top of that: busy, but nothing in the queue is
+marked `printing` - it must have started some other way.
+
+**Two places this now matters, per the user** ("we should guard against
+sending a job while it's already mid-print"):
+- `release()` checks live printer state in addition to its existing
+  database-only "already printing" check - a second job can no longer
+  be sent while the printer is physically busy, even if nothing in the
+  app's own records says so. The existing DB check still runs first
+  (cheaper, and gives the more specific "job #N is already printing"
+  message when it applies); the live check only matters for exactly the
+  case the DB check can't see.
+- The admin dashboard shows a live banner - checked fresh on every
+  page load, never cached, so it can't show stale - whenever this
+  mismatch exists. The background poller (`_log_untracked_print_once`,
+  called alongside `check_and_finish_active_print` every 15s) also logs
+  it once per episode, not on every tick for however long it continues,
+  so it's in the permanent activity log too, not just visible while an
+  admin happens to have the dashboard open at the time.
+
+**Verified with a mocked printer reply, every real case, not just
+reasoned about:** a genuinely-printing reply, an idle one, a
+just-completed one, and an unreachable printer (`PrinterError`, which
+must fail open rather than block a release on a check it couldn't
+actually perform) all produced the correct busy/not-busy read;
+`release()` actually raised and left the job untouched (still
+`approved`) when the printer disagreed with the database, and still
+succeeded normally when genuinely idle; a job already correctly tracked
+as `printing` was never misidentified as "untracked" even though the
+printer legitimately reports busy for it; the poller logged exactly
+once when an untracked episode began, stayed silent through repeated
+ticks of the same episode, and logged again for a genuinely new one
+after the first cleared. Confirmed end-to-end over real HTTP too, not
+just at the function level: the dashboard banner rendered correctly and
+a real release attempt was actually blocked with the intended message.
+
+**The banner resolves the printer's raw filename back to a real job,
+not just a bare number.** Per the user, after seeing it originally show
+only "29.makerbot" and correctly guessing that number meant something:
+every file this app ever sends is named exactly `"<job id>.makerbot"`
+(see `storage.queue_paths`/`archive_paths`), and the printer's own
+on-device "reprint" option resends that exact same file - so the
+filename genuinely *is* the original job's id, not a meaningless
+string. `jobs._job_from_makerbot_filename` parses that id back out and
+looks the job up (regardless of its current status - by now it's most
+likely `done`/`failed`/whatever, never still `printing`, which is the
+whole point), and `untracked_print_in_progress` resolves its submitter
+alongside it. The dashboard banner now reads "job #4 ('bed_adhesion_
+test.stl', submitted by alex) - recorded here as 'failed'" with a link
+to that job's own log, rather than a number an admin would have had to
+go cross-reference by hand - in this feature's own real motivating
+incident, that "failed" status is exactly what confirms it's the same
+job being reprinted at the dial. Falls back to the raw filename,
+unchanged, if it doesn't parse as one of this app's ids at all or that
+id no longer exists. Verified directly (a real job resolves correctly,
+including through a directory-prefixed filename; an unrecognized name
+and a numeric-but-nonexistent id both correctly fall back to no match)
+and end-to-end over real HTTP, confirming the full rendered message.
 
 ### Printer camera
 
@@ -1732,6 +1910,235 @@ any other wrong PIN), the new one logs in successfully, and the activity
 log shows `admin:<username>` / `pin_reset` / the user's name - never the
 PIN value.
 
+### Admins creating other admins, and a permanently-unremovable bootstrap admin
+
+**Why this exists:** a real, direct need, not a planned feature landing
+on schedule - the user hit "No module named 'sqlmodel'" trying to run
+`create_admin.py` on the actual Pi (wrong Python - needed the app's own
+`.venv`, then needed to run as the `queue3d` service account with
+`QUEUE3D_DATA_DIR` set, since the real database lives on the external
+drive, owned by that account, not wherever a personal login happens to
+have write access), and doesn't want to repeat that whole process for
+every admin the site will ever need: "I will need to create 2 admin
+accounts when I deploy on site. I want existing admins to be able to
+successfully create other admin accounts."
+
+**`/admin/admins`** (`routers/admin.py`'s `admins_page`/`add_admin`/
+`delete_admin`, `templates/admin_admins.html`) - reachable from every
+admin page's nav, same as Users/Colors/etc. Any already-signed-in admin
+can create another one directly from here: username + password + confirm,
+the same validation `create_admin.py` itself applies (non-empty,
+not already taken, both password fields matching, 8+ characters).
+Deliberately still not *open* self-signup the way `/signup` is for
+users - reaching this page at all already requires `require_admin`, so
+this only ever grows the admin group from inside it, never from outside.
+No disable/reset-password for another admin here, unlike the Users page -
+not asked for, and every admin today has identical, full permissions
+with no scoping between them yet ("There may be other admin accounts
+later with limited permissions; but, that will be decided later," per
+the user - see README.md's to-do list).
+
+**`models.Admin.unremovable`** (schema 6.4.0) is what makes any of this
+safe to add at all - per the user, directly: "Let's mark the admin
+created from the cmd we just did as 'unremovable'. That means that other
+admins cannot delete this user at all." `create_admin.py` now sets it on
+every admin it creates; a fresh admin made through the new web UI gets
+the column's real default, `False`. Nothing anywhere can ever flip it
+in either direction through the UI - not an oversight, the whole point:
+since `create_admin.py` is the only way to get the very first admin at
+all (there's no UI yet to log into before that), at least one admin
+created that way has to exist for the deployment to be usable in the
+first place, so marking every one of them permanent means a deployment
+can never end up with zero surviving admins, no matter what happens to
+any admin created afterward. `delete_admin` checks this before anything
+else and refuses outright if it's set; separately (and for a completely
+different reason - not permission, just avoiding invalidating the very
+session the request is running under) it also refuses an admin deleting
+their own currently-signed-in account, full stop, regardless of
+`unremovable` - `admin_admins.html` doesn't even render a Delete button
+on an admin's own row for exactly that reason, though the route itself
+checks it too, not just the missing button.
+
+**The migration backfills every *existing* admin row to `unremovable=1`**,
+not the column's own `False` default the way a purely additive column
+normally would get here (`_migrate_to_6_4_0`, `db.py`) - deliberate,
+and it's the one migration in this project that isn't just "add the
+column": every Admin row that exists at the moment this migration runs
+was necessarily created via `create_admin.py`, since the web UI this
+ships alongside is the *only* other way one can ever come to exist -
+there was no such thing as a non-CLI-created admin before this exact
+migration. Backfilling this way satisfies the user's own request
+literally ("mark the admin created from the cmd we just did") with no
+need to know which username(s) to single out by hand, and stays exactly
+consistent with the rule `create_admin.py` applies going forward.
+
+Verified in an isolated copy before touching the live database, same
+methodology as every other migration: a genuinely fresh database (the
+`create_all()` path, a brand new admin correctly starts `unremovable=False`)
+and a simulated pre-6.4.0 one (an admin row inserted before adding the
+column, then the migration run for real) both produced the expected
+result - confirmed live afterward too. Then verified the actual feature
+end-to-end over real HTTP, not just the schema: created a second admin
+through the UI, confirmed it's listed with a working Delete button and
+`unremovable=0` in the database; confirmed deleting the original
+CLI-created admin is refused with a clear message; logged in *as* the
+new admin and confirmed it can't delete itself (no button shown, and the
+same request crafted directly against the real ID is still refused
+server-side); confirmed a *different* admin can still delete it.
+
+### Disable/reset-password for other admins, and self-service for everyone
+
+**Why this exists:** the very next question after the previous section
+shipped, per the user, directly: "Add reset-password, disable/enable for
+other admins (not permanent) now. Also, all users (admins included)
+should be able to reset their own password."
+
+**`Admin.disabled`** (schema 6.5.0) is the same idea as `User.disabled`,
+added for the same reason and enforced the same way: `auth.get_current_admin`
+checks it on every request, not just at login, so disabling someone logs
+them out of an already-open session immediately - confirmed live, not
+just reasoned about (logged in as a second admin, disabled that same
+account from another session, the next request from the disabled one's
+own session bounced straight to `/admin/login`). The admin login route
+also refuses a disabled account outright, same wording pattern as the
+user login route's own "This account has been disabled" message.
+
+**"(not permanent)" - `disable_admin`/`reset_admin_password` both refuse
+an `Admin.unremovable` target**, exactly like `delete_admin` already
+does, and for the identical reason: disabling (or silently resetting the
+password out from under) a permanent admin is a functionally-equivalent
+way around the whole point of `unremovable` - it doesn't delete the
+account, but it locks it out just as completely. `enable_admin` has no
+such check (or a self-check) - re-enabling someone can't lock anyone out
+of anything, so there's nothing to guard against.
+
+**Self-targeting is split across three different rules, not one,
+because each route has a different actual reason to care:**
+- `delete_admin`/`disable_admin` both refuse your own currently-signed-in
+  account outright, full stop - not a permission question (that account
+  might not even be `unremovable`), purely because either action would
+  invalidate the very session the request is running under.
+  `admin_admins.html` doesn't even render the buttons on your own row for
+  either, though both routes check it server-side too, not just the
+  missing button (confirmed directly: a request crafted against the real
+  ID from that same session is still refused, not just hidden from the
+  UI).
+- `reset_admin_password` (another admin generating a random replacement
+  for you) has **no** self-check - it doesn't touch `request.session` at
+  all, so it can't lock anyone out - but `admin_admins.html` still hides
+  the button on your own row anyway, pointing at the dedicated
+  self-service form instead (see below), since resetting your own known
+  password to a random one you'd have to go read off a flash message is
+  just worse than picking your own.
+- The self-service change-password/change-PIN routes below work
+  regardless of `unremovable`, on purpose - that flag only ever
+  restricts what *other* accounts can do to this one, never what it can
+  do to itself.
+
+**Self-service, for real this time:** `POST /settings/change_pin`
+(`routers/user.py`) and `POST /admin/settings/change_password`
+(`routers/admin.py`) - a new form on each account type's own Settings
+page. Both require the *current* credential before accepting a new one,
+unlike an admin resetting someone *else's* (`reset_user_pin`/
+`reset_admin_password`, both pre-existing or added just above) - that
+distinction is the actual point, not an inconsistency: an admin acting on
+someone else's account is already gated behind a *different*, currently-
+authenticated admin's own session, so there's nothing more to prove; this
+route is reachable by anyone with an open, unattended session on the
+account being changed, so proving the current PIN/password first is the
+real security boundary standing between that and a silent takeover.
+Logged the same minimal way as every other credential-change event in
+this app (`pin_changed`/`password_changed`, no detail beyond who did
+it) - the log records that a change happened, never the credential
+itself, old or new, matching `pin_reset`/`admin_password_reset`.
+
+**`auth.generate_password(length=12)`** is `generate_pin`'s admin-password
+counterpart, for `reset_admin_password` - letters and digits only
+(no punctuation, and no visually-ambiguous characters: no `0`/`O`,
+`1`/`l`/`I`), since this is relayed in person off a screen or a
+handwritten note, not pasted from a password manager. Comfortably clears
+`create_admin.py`'s own 8-character minimum.
+
+Verified in an isolated copy: fresh-DB and simulated-pre-6.5.0-migration
+paths both produce the correct `Admin.disabled` schema (the migration
+itself does *not* backfill anything, unlike 6.4.0's `unremovable` -
+every existing admin simply reads as "not disabled," which was already
+implicitly true of all of them). Then the full flow over real HTTP:
+disabling/resetting an `unremovable` admin refused with a clear message;
+a regular admin disabled, confirmed refused at login, confirmed an
+already-open session for that same account is kicked to `/admin/login`
+on its very next request; re-enabled and logged in again; password reset
+by another admin, the generated password shown once via the same
+one-time flash pattern `reset_user_pin` already uses, confirmed gone on
+a second page load; self-service password change confirmed to reject a
+wrong current password, reject mismatched new passwords, reject a too-
+short new password, then succeed and take effect immediately (the old
+password rejected, the new one accepted) - all mirrored for a user's own
+PIN change on the user side. Every new action type
+(`admin_disabled`/`admin_enabled`/`admin_password_reset`/
+`password_changed`/`pin_changed`) confirmed showing up correctly in the
+activity log.
+
+### A deleted admin's past reviews don't go silently orphaned
+
+**Why this exists:** the last open item from the Accounts to-do list,
+once admin deletion actually existed to make it a real question - per
+the user, directly: "Can the references for admins being deleted be
+replaced with admin's name as a string with deleted in parentheses?"
+
+**The actual reference in question turned out to be narrower than it
+sounded** - `Job.reviewed_by_admin_id`, a real foreign key to `Admin.id`
+set by `jobs.approve()`/`reject()`, is the *only* FK anywhere in this
+schema pointing at `Admin` (confirmed by grepping every
+`foreign_key="admin.id"` in `models.py` - there's exactly one).
+`admin_note` (the rejection reason) doesn't reference an admin at all,
+just what they typed. And the activity log's own "who did this" column
+was never at risk in the first place: `JobEvent.actor` is a plain string
+(`"admin:<username>"`) captured at write time, not a live FK - see that
+model's own docstring - so a deleted admin's past approvals/rejections
+already showed up correctly on `/admin/jobs/{id}/log` before any of this,
+confirmed directly (deleted an admin who'd approved a job, the per-job
+log still read "admin:teacher2 / approved," completely unaffected).
+`reviewed_by_admin_id` itself isn't rendered anywhere today either - so
+this was a real, but currently invisible, latent data-integrity gap, not
+a visible bug.
+
+**`Job.reviewed_by_name`** (schema 6.6.0) is the fix, mirroring
+`JobEvent.actor`'s own already-correct design instead of patching the FK
+in place: `approve()`/`reject()` now set this plain string alongside
+`reviewed_by_admin_id`, every time. `routers/admin.py`'s `delete_admin`
+finds every `Job` where `reviewed_by_admin_id` matches the admin being
+deleted and, right before the row itself is actually removed, rewrites
+`reviewed_by_name` to `"<username> (deleted)"` and clears
+`reviewed_by_admin_id` to `None` - not left dangling, since SQLite can
+reuse a deleted row's integer id for an unrelated admin created later
+(no `AUTOINCREMENT` on this table), and a stale FK pointing at a
+recycled id would silently resolve to the *wrong* account instead of
+just being empty. From that point on, `reviewed_by_name` is the only
+thing anything should ever display.
+
+**The migration backfills `reviewed_by_name` for every already-reviewed
+job**, not just new ones going forward (`_migrate_to_6_6_0`, `db.py`) -
+by joining against whichever admin still exists with that id *right
+now*. A job whose reviewer had already been deleted before this
+migration ever ran has no admin row left to join against - genuinely,
+permanently unrecoverable, not a bug in the migration - so those get a
+generic `"(unknown - admin no longer exists)"` placeholder instead of a
+real name, with `reviewed_by_admin_id` cleared the same way `delete_admin`
+clears it going forward.
+
+Verified in an isolated copy: simulated a pre-6.6.0 database with two
+reviewed jobs - one reviewed by an admin who still exists (backfilled to
+their real username) and one reviewed by an id that no longer resolves
+to anything at all (backfilled to the generic placeholder, FK cleared) -
+both came out exactly as designed. Then the real flow over live HTTP:
+created a second admin, had them approve a real job (confirmed
+`reviewed_by_name` set to their username immediately), deleted that
+admin, and confirmed the job's `reviewed_by_admin_id` was cleared and
+`reviewed_by_name` now reads `"teacher2 (deleted)"` - while the per-job
+activity log, completely unaffected as expected, still correctly showed
+`admin:teacher2 / approved`.
+
 ### Duration estimates as days/hours/minutes
 
 **Why this exists:** raw total minutes reads badly once a print's
@@ -2038,12 +2445,40 @@ clause - the actor already says who, since here the actor and the
 submitter are always the same person), while `delete_old_job()` logs
 the admin's own actor plus who originally submitted it.
 
-**Scoped identically to the admin version - `queued`/`approved` only,
-not "any job the user owns."** Once released and `printing`, an admin
-is already acting on that job; deleting it out from under that would be
-a materially different, riskier action the to-do item never asked for -
-`_delete_job_genuinely()`'s shared `_require_status()` check enforces
-this the same way for both callers.
+**Originally scoped identically to the admin version - `queued`/
+`approved` only, not "any job the user owns."** Once released and
+`printing`, an admin is already acting on that job; deleting it out
+from under that would be a materially different, riskier action the
+to-do item never asked for - `_delete_job_genuinely()`'s shared
+`_require_status()` check enforces this the same way for both callers.
+Since extended twice, each time to exactly what was actually asked for
+rather than every terminal status at once: `slice_failed` (a draft that
+never successfully sliced has nothing worth keeping and no "submit"
+option either), and `rejected` (per the user - "I don't want to keep
+rejected jobs around," old USN `ddg.stl` jobs rejected back when the
+supports calculations were off, with no way to get rid of them, only
+"Restore & edit," which leaves the original rejected record sitting
+there regardless). Deliberately still not `done`/`failed`/`expired` -
+those raise different questions of their own (a done job is a real
+completed-print record; a failed one might be worth keeping to see why;
+an expired draft never even reached a decision) worth their own
+consideration, not bundled in by assumption.
+
+Extending to `rejected` surfaced a real bug in
+`storage.delete_job_files`, not just a one-line allowed-statuses
+change: it only ever knew about `scratch/` (drafts) and `queue/`
+(everything else) - a rejected job's files actually live in `archive/`
+(moved there by `reject()`), so deleting one without fixing this would
+have removed the database row while leaving the real files behind as
+permanently orphaned garbage, unreachable by anything since nothing
+else ever looks in `archive/` for a job that no longer exists. Now
+branches on `TERMINAL_STATUSES` too, and removes the archived photo
+file if one exists. Verified directly against real files, not just
+reasoned about: created actual `archive/` files (stl, makerbot, photo)
+for a job, rejected it, deleted it, and confirmed all three were
+genuinely gone afterward alongside the database row and the correct
+audit log entry; separately confirmed a `done` job - deliberately still
+out of scope - still refuses deletion.
 
 **`routers/user.py`'s `_owned_draft()` helper got renamed to
 `_owned_job()`** - it was always a plain ownership check with no actual
@@ -2620,9 +3055,8 @@ Three views, kept separate on purpose (they answer different questions):
   below and linked to it from the queue/finished-jobs lists, which reads
   as "a log of each submission" - not what was being asked for, which was
   "what's been happening, at a glance," across everything. Filtering this
-  down (by job, user, action, date range) is explicitly deferred - "I
-  will ask for log filters later" - so for now it's just recent activity,
-  capped, not a complete searchable history yet.
+  down by actor/action/date range was explicitly deferred at the time
+  ("I will ask for log filters later") - now built, see "Filters" below.
 - **`/admin/jobs/{id}/log`** (`jobs.job_events`, oldest first) - one job's
   complete history in isolation, for when the global log's job link is
   clicked, or the "Log" link is followed straight from a queue/finished-
@@ -2657,6 +3091,389 @@ finished-jobs list as `rejected` with its note, closing the actual gap
 that was reported; the global log (`/admin/log`) shows entries from
 multiple different jobs and users interleaved in true most-recent-first
 order, not grouped by job.
+
+### Filters, on every job/log/user listing
+
+Per the user: "Let's add filters for all tables. The filters should be
+substrings, color, status, est print time, user (if admin), date/time
+range, action (activity log), etc." - and, when asked to clarify scope:
+"All tables should get filters. The filters that should be available are
+the ones that contain that data." Confirmed directly (not guessed): a
+plain GET query-param form, fields laid out left-to-right in the same
+order as the table's own columns, sitting on the same page directly
+above the table rather than a separate page - "no meaningful performance
+difference" between that and an htmx-based live-filter approach was
+confirmed too (the underlying SQL query cost is identical either way;
+only the response payload size differs, and negligibly at this app's
+realistic scale) - plus an explicit "Clear filters" link back to the
+bare, unfiltered URL on every one of these forms.
+
+**Why GET, not POST, and why query params at all:** a filtered view's URL
+is bookmarkable and shareable this way, and works with zero JavaScript -
+consistent with this app's general server-rendered-page philosophy (see
+e.g. the plain `<form method=post>` uploads elsewhere). It's also what
+makes "carry the current filter forward through an action" (below)
+possible at all: a query string is just part of the URL, so redirecting
+or re-rendering with it intact is a plain string operation, not session
+state to manage.
+
+**`app/filters.py`** is the shared layer every listing route builds on -
+built once here rather than a slightly different version in each of the
+six-plus routes that need some subset of it:
+
+- **`apply_job_filters(query, ...)`** - the workhorse, applied to a
+  `select(Job)`-based query by `jobs.jobs_for_user`/`active_jobs`/
+  `finished_jobs` alike. `q` (filename substring), `color` (exact match,
+  plus a `"__any__"` sentinel meaning "no color set at all" - a real
+  `Color.name` can never equal this), `status` (exact match), `min_minutes`/
+  `max_minutes` (compare against `Job.duration_estimate_s` converted from
+  stored seconds, matching what every duration this app displays is
+  already rendered in), a date range on whichever single timestamp
+  column that particular view already shows as its own "date" (
+  `created_at` for the user's own dashboard - the closest thing a draft
+  that's never been queued has; `queued_at` for the live queue and old-jobs
+  view, matching their "Queued" column; `finished_at` for finished jobs,
+  matching its "Finished" column), and `user` (a submitter-name
+  substring, admin views only - a user's own dashboard has no submitter
+  column to filter on at all).
+- **`local_date_bounds(date_from, date_to)`** - turns two plain
+  `YYYY-MM-DD` strings into the UTC instants bounding that whole range of
+  *local* calendar days, in the admin-configured display timezone (see
+  `templates_env.local_time`, and the new `get_display_timezone()`
+  accessor added alongside it) - not literal UTC midnight, which would
+  silently shift the filtered range by however many hours the display
+  timezone is offset from UTC. `date_to` is inclusive of the entire day
+  (bounded by the start of the *next* local day) - "through the end of
+  that day," matching what someone picking an end date actually means.
+- **`apply_event_filters(query, ...)`** - the activity log's own version,
+  since `JobEvent` isn't a `Job` listing at all: `q` matches either the
+  joined job's filename or the event's own `detail` text (an
+  account-lifecycle event has no job to match a filename against at
+  all), `actor` a substring, `action` an *exact* match (the log page
+  offers this as a dropdown of real recorded actions - see
+  `jobs.distinct_event_actions` - not a freeform field), plus the same
+  date-range handling as above, against `JobEvent.at`.
+- **`apply_user_filters(users, ...)`** - deliberately a plain in-Python
+  filter over an already-fetched `list[User]`, not a SQL `WHERE` builder
+  like the two above: the users table is realistically tiny for a
+  single-printer, single-school deployment (unlike `Job`/`JobEvent`,
+  exactly why those two got real indexes - see below), so there's no
+  performance reason to push this into SQL.
+- **`job_filter_params`/`event_filter_params`/`user_filter_params`** -
+  plain functions used as FastAPI dependencies (`Depends(...)`) on every
+  listing route, so the full set of query params a filter form can ever
+  submit is bound in exactly one shared place. `min_minutes`/
+  `max_minutes` are typed `str | None`, not `float | None`, on purpose -
+  a real bug caught before shipping: typing them as `float` let FastAPI's
+  own query-param coercion reject `""` with a 422, and a GET form submits
+  *every* one of its fields regardless of whether it has a value - so
+  leaving either field blank (the overwhelmingly common case) broke
+  *every* ordinary use of the filter form outright. Confirmed live
+  against a real running instance before and after the fix, not just
+  reasoned about - the failure mode isn't obvious from reading the code
+  alone, since a hand-built query string with only the params actually
+  wanted (exactly what manual testing tends to do first) never
+  reproduces it.
+- **`job_filters_from_query_params(request.query_params)`** - same
+  result as `job_filter_params`, but reading from a plain
+  `request.query_params` instead of FastAPI's own binding - needed by
+  `routers/admin.py`'s queue-action routes (approve/reject/release/...),
+  which are POSTs with no query-param dependency injection of their own.
+
+**Carrying a filter through an action, not just a page load:** a real
+gap caught before shipping, not just the read side - every admin queue
+action (approve/reject/release/mark done/mark failed/requeue/delete) is
+a `POST` to a fixed URL, and a plain `RedirectResponse("/admin/dashboard")`
+after one would silently drop back to unfiltered every single time, even
+though the action itself succeeded. Fixed two ways together:
+`routers/admin.py`'s `_query_suffix(request)` appends the current
+request's own query string to a redirect target, and every action
+`<form>`'s own `action=` attribute in `admin_dashboard.html`/
+`admin_old_jobs.html`/`admin_users.html` does the same, so the POST
+itself arrives carrying the filter along too (`request.query_params` is
+otherwise empty on a POST to a bare relative URL - a browser does *not*
+inherit the current page's query string into a form's `action` unless
+it's explicitly there). Verified directly, not assumed: approving a job
+from a `?color=Red`-filtered dashboard was confirmed (via a real request/
+response, not just reading the template) to redirect back to
+`/admin/dashboard?color=Red`, and triggering a real `JobActionError` from
+that same filtered view was confirmed to re-render with both the error
+*and* the filter's own submitted value still showing in the form.
+
+**...unless the action itself empties that filter.** Per the user:
+"performing an action with the filter in place should keep the filter in
+place, unless that action results in 0 records for that filter." Keeping
+`?status=queued` after approving the *only* queued job matching it would
+land back on a real page that just looks broken - the filter's own
+fields still showing what was typed, the table showing nothing, with no
+obvious way back to everything else. `filters.filtered_redirect(path,
+request, still_has_rows)` (shared by both routers - see below) re-runs
+the exact same filtered query right after the action (a real, fresh
+count - not the pre-action count minus one, which would be wrong the
+instant the action itself changes whether another row matches too, not
+just removes the acted-on row some other way) and only keeps the query
+string if that still returns at least one row. Verified directly against
+a real queue with two jobs sharing a color: rejecting the first (one
+still matches) kept `?color=Red` on the redirect; rejecting the second
+(now the last match) redirected to the bare, unfiltered
+`/admin/dashboard` instead. Same confirmed on the users page: disabling
+the one remaining user matching `?status=active` dropped that filter on
+redirect, not kept it pointing at an empty table.
+
+**A real gap in the first version of this fix, caught by the user
+directly:** "The delete operation is not retaining the filter when there
+were 2 before the operation. The filter I'm using is `status=slice_failed`
+as a user." `filtered_redirect`/`query_suffix` had only been wired into
+`routers/admin.py` - the equivalent user-side actions
+(submit/delete/restore/reprint on `/dashboard`, and the reported one)
+were still doing a plain, unconditional `RedirectResponse("/dashboard")`
+with no filter carried at all, and `_jobs_table.html`'s own action
+`<form>`s (unlike `admin_dashboard.html`/`admin_old_jobs.html`/
+`admin_users.html`, all fixed the first time) never got a query-string
+suffix on their `action=` attribute either - meaning `request.query_params`
+would have been empty on those POSTs even if the redirect logic had been
+there. Fixed by moving `query_suffix`/`filtered_redirect` out of
+`routers/admin.py` into `filters.py` itself (both are generic - neither
+one ever referenced anything admin-specific), and wiring them into
+`routers/user.py`'s four dashboard-returning actions the same way, plus
+adding the missing `{{ qs }}` suffix to `_jobs_table.html`'s forms. The
+upload flow's client-side redirect (`user_dashboard.html`'s upload JS,
+which navigates on its own after the XHR completes rather than
+following the server's actual redirect target) got the equivalent fix -
+`window.location.search` appended - though with no "still has rows"
+check, since an upload only ever *adds* a job, never removes one a
+filter was already matching. Verified by reproducing the user's exact
+report: two `slice_failed` jobs, `?status=slice_failed` active - deleting
+the first (one still matches) kept the filter on redirect; deleting the
+second (now the last match) correctly dropped it.
+
+**"Delete all" bulk actions respect the active filter, not just the
+display:** `jobs.delete_all_old_jobs` and `delete_all_users` used to
+always operate on the *entire* backlog regardless of what a page
+happened to be showing. Once a filter could hide part of that backlog
+from view, an unfiltered "delete all" became a real trap - the button's
+own confirm() text already said "delete ALL N jobs/users **shown here**"
+(true before filters existed, since nothing could hide anything then),
+so leaving the underlying action unfiltered would have made that text a
+lie the moment someone actually used a filter. Both now take the same
+filter kwargs as the read side and only touch what's actually displayed.
+
+**Indexes (schema 6.3.0):** `Job.color_name`/`created_at`/`queued_at`/
+`finished_at` and `JobEvent.at`/`action` all gained `index=True` -
+`_migrate_to_6_3_0` in `db.py` is the migration, since `CREATE INDEX IF
+NOT EXISTS` still needs a real migration function even though it doesn't
+touch a column: `create_all()` happily builds every index a *new*
+database needs from the current model definitions, but (same limitation
+it has for columns) never retrofits one onto a table that already
+exists. `User`/`Admin`/`Color` were deliberately left unindexed - a
+realistic deployment's users/colors lists stay small for years, and nothing
+in the user's own filter description emphasized those tables the way it
+did "every job table." Verified in an isolated copy before touching the
+live database: a genuinely fresh database (the `create_all()` path) and
+a simulated pre-6.3.0 one (dropping the six indexes and rolling
+`schemaversion` back, to force the actual migration path to run) both
+produced the identical final index set, and running `init_db()` a second
+time changed nothing (`CREATE INDEX IF NOT EXISTS` is idempotent by
+construction) - confirmed live afterward too, not just in the isolated
+copy.
+
+Verified end-to-end against a real seeded database (several users, jobs
+across every status/color/duration/date combination, and a mix of job
+and account-lifecycle log events) on every one of the six filtered
+pages: substring, color (including the "no color set" sentinel), status,
+duration range, date range, and submitter each independently confirmed
+to narrow the result to exactly the expected rows - not just that the
+page returned 200.
+
+**The user's own dashboard table got a real "Date" column too**, per the
+user ("move the date/time stamp to its own column"). Before this, the
+only date/time ever actually shown on that table was `queued_at`, buried
+inline in the Details column's prose for a queued/approved row only
+(`"position N in queue - queued <timestamp>, waiting <duration>"`) -
+every other status showed no date at all. Unlike the admin queue/
+finished-jobs views (each scoped to one status subset, so a single
+"Queued"/"Finished" column heading always applies to every row), this
+table mixes every status a job can ever be in at once, so a bare "Date"
+heading needs a per-row label to say what it's actually showing:
+`created_at` ("uploaded", for submitted/sliced/slice_failed - the one
+timestamp that's never null, since these predate ever being queued),
+`queued_at` ("queued", for queued/approved/printing), or `finished_at`
+("finished", for rejected/done/failed/expired) - the same three columns
+`filters.apply_job_filters` already understands (see above), just always
+shown here per-row instead of picked one-at-a-time by view. The raw
+`queued_at` stamp is gone from the Details column now that it lives in
+its own; the computed "waiting `<duration>`" text stays there, since
+that's a derived duration, not the stamp itself. Verified against a real
+seeded job in each of the nine statuses: every row showed the correct
+label and timestamp for its own status, and the queued/approved Details
+text no longer repeated it.
+
+### Filament color selection, and a best-effort low-inventory notice
+
+Per the user's full spec: admins manage a color list (`/admin/colors` -
+add/remove, set rolls and grams on hand, enable/disable which ones
+users can currently pick from), a user picks exactly one color per job
+at upload time from whatever's currently enabled (or "Any available,"
+so an admin doesn't have to change filament for them) and can change it
+later from the job's edit page, and an admin sees a clear notice when a
+job's own recorded filament use exceeds what's tracked as available for
+its color. Explicitly **best effort**, stated in the UI itself (the
+colors page, the upload form) not just here: the printer has no way to
+report what's actually loaded or how much is left, so the whole
+low-inventory check is only ever as fresh as the last time an admin
+updated it by hand.
+
+Before building any of it, investigated whether "how much filament will
+this use" was even answerable at all, per the user's own conditional
+framing ("if this is possible, let's add that too") - real test slice,
+not assumed: OrcaSlicer's gcode already carries `; filament used [g] =
+5.67`-style comments, but the sliced `.makerbot`'s own `meta.json`
+(mbotmake's real output, the same file `read_makerbot_duration_s`
+already reads `duration_s` from) carries the identical number as
+`extrusion_mass_g` - no pipeline changes needed at all, just a new
+`storage.read_makerbot_filament_g` parallel to the existing duration
+reader. `jobs.slice_and_update` (and `reprint_job`, which copies an
+already-sliced `.makerbot` byte-for-byte) sets `Job.filament_grams` from
+it the same moment `duration_estimate_s` gets set.
+
+`Job.color_name` is a plain string snapshot - **not** a foreign key to
+the new `Color` table. An admin renaming or removing a color later must
+never silently change what an already-submitted job says it was printed
+in; that job's own history is whatever was actually selected, at the
+time it was selected, full stop. The tradeoff this accepts: once a
+color is deleted, there's no live row left to check a job's usage
+against any more.
+
+**Real bug, caught by the user immediately after uploading a job with
+"Any available" selected: the required-filament figure itself was
+disappearing, not just the inventory comparison.** `jobs.filament_status`
+originally returned `None` outright - hiding the *entire* result,
+required amount included - the moment there was no specific color with
+a tracked gram total to compare against (no color selected, that color
+since deleted, or an admin simply never entered a gram total for it).
+That conflated two genuinely different things: the required amount
+(known the instant slicing succeeds, exactly like the duration estimate
+that kept showing fine right alongside it) needs neither a color nor
+any inventory data at all; only the *comparison* against how much is on
+hand does. Fixed: `filament_status` now returns `{required_g,
+available_g, enough}` in every case where the job's actually been
+sliced, with `available_g`/`enough` staying `None` (not the whole
+result) whenever there's nothing to compare against - "unknown," not
+"not enough." Every caller checking `.enough` had to change from `not
+X.enough` to `X.enough == false` accordingly, since `not None` is `True`
+in both Python and Jinja - the original check would have shown the
+"not enough" warning for precisely the "nothing to compare" case this
+fix exists for, the moment the required amount started rendering there
+too. Verified directly across all four real cases (no color, an
+untracked color, a tracked-but-short color, a tracked-and-sufficient
+one) landing on exactly `None`/`None`/`False`/`True`, and end-to-end
+over real HTTP confirming the rendered page.
+
+Changing a job's color (`POST /jobs/{id}/color`, reachable from the
+edit page) is deliberately a separate, lightweight route from
+`/reslice`, not one more field bundled into that same form - color has
+zero effect on the actual sliced geometry, so routing a pure color
+change through a full OrcaSlicer+mbotmake re-slice would be pure wasted
+CPU/memory on a Pi for something that changes nothing about the print
+itself. Verified directly: `makerbot_path`/`filament_grams` are
+provably untouched by a color-only change (identical values before and
+after), confirming this path never re-slices.
+
+Verified end-to-end in an isolated instance before touching production,
+including the real slicing pipeline (not stubbed): a color's full add/
+update/delete lifecycle from the admin page; the user-facing dropdown
+actually reflecting only currently-enabled colors; a real upload with a
+color selected; `filament_grams` landing at the exact value the real
+`.makerbot`'s `meta.json` reported; the low-filament notice genuinely
+rendering on the admin dashboard once a color's tracked amount was set
+below what a real job needed; and, after deleting that color outright,
+the job's `color_name` still reading correctly while
+`jobs.filament_status` cleanly returned `None` for it rather than
+erroring. Production's own migration (schema 6.2.0 - new `color` table,
+`Job.color_name`/`filament_grams`) re-confirmed separately once these
+changes were actually applied there.
+
+### Full editing for a queued/approved job, not just color
+
+A real course-correction, not the original design: the first version of
+"can a queued job's color be changed" reused `job_edit.html` but
+deliberately scoped it to color only for anything past draft status,
+reasoning that resize/rotate/supports all genuinely require a re-slice
+and a queued job shouldn't need one. Per the user, that was wrong -
+"Edit was supposed to be all edit capability... same as the edit before
+queuing" - it was this project's own assumption, made without
+confirming it, not something actually asked for.
+
+Reopening full editing for an already-queued job raises two real
+questions this project's own to-do list had already flagged as open
+(the "does editing an active job re-slice in place, or count as a new
+submission" question), and both were confirmed explicitly rather than
+guessed at:
+
+- **While it's mid-reslice** (a real background operation - can take
+  minutes, same as a draft's own first slice), the job is pulled out of
+  admin view/action entirely, not left approvable/releasable. Achieved
+  for free, no new status value needed: `jobs.start_reslice` puts a
+  queued/approved job into the exact same `'submitted'` status a brand
+  new upload already sits in while its first slice runs - not in
+  `models.QUEUE_STATUSES`, so `active_jobs()` (the admin dashboard's own
+  query) already excludes it automatically. It genuinely can never be
+  safe to let an admin release a file that's still being written to the
+  same path a background task is writing it to.
+- **On success, it rejoins the queue with a fresh `queued_at`** - any
+  edit sends it to the back of the line, the same as a genuinely new
+  submission, not the position it already held.
+
+Mechanically: `start_reslice` now accepts `queued`/`approved` as valid
+starting statuses too (alongside the existing `sliced`/`slice_failed`),
+and when it's one of those, moves the job's files from `queue/` back to
+`scratch/` first - the mirror image of what `submit_draft` does going
+the other way - before doing anything else, so every step downstream of
+that point can treat every starting status identically. It returns
+`(stl_path, was_queued)` rather than just `stl_path`, since by the time
+the background `slice_and_update` task actually runs, `job.status` has
+already been flipped to `'submitted'` and there's no way to recover
+"was this queued a moment ago" from the job itself any more - `was_queued`
+has to be threaded through explicitly (as `resubmit_to_queue`) from
+`routers/user.py`'s `reslice()` route into that task's own arguments.
+
+On success, `slice_and_update` checks `resubmit_to_queue`: if set, it
+moves the freshly-sliced files `scratch/` -> `queue/` inline (right
+there, not via a separate call to `submit_draft`) and sets
+`status = queued`, `queued_at = now()` - never back to `approved`, even
+if that's what it was a moment ago, since a materially different file
+hasn't been re-reviewed by anyone yet. If it's *not* set (an ordinary
+draft re-slice), behavior is completely unchanged: lands on `sliced`,
+waiting for the existing manual "Submit to queue" button. On failure,
+also unchanged either way: `slice_failed`, a draft, invisible to admins
+until fixed and resubmitted - for the queued case specifically, this
+means the job genuinely and correctly gives up its claim on a print
+slot until it can actually produce a valid file again, not a bug: an
+unprintable file has no business still holding a place in line.
+
+`job_edit.html` itself no longer branches on draft-vs-queued at all -
+the full settings form, 3D preview, and gizmo editor render identically
+regardless, exactly matching "the edit before queuing." The dashboard's
+existing "Edit" link now sits alongside a new "Change color" link -
+same page, same route, just anchored straight to its `#color` section
+(a plain HTML fragment, no new backend route) for anyone who only wants
+that without scrolling past the full settings form.
+
+**Verified end-to-end against the real slicing pipeline, not stubbed:**
+uploaded, sliced, and queued a real job; confirmed visible on the admin
+dashboard with the edit page showing the full settings form; triggered
+a real re-slice at 150% scale and confirmed, immediately, the job
+vanished from the admin dashboard and its files had genuinely moved to
+`scratch/`; after the real background slice completed, confirmed status
+back to `queued`, files genuinely back in `queue/`, `scale_factor`
+actually applied (`1.5`), `queued_at` strictly later than the original,
+the job reappeared on the admin dashboard, and the full audit trail
+(`submitted` -> `sliced` -> `queued` -> `reslice_started` -> `sliced` ->
+`queued`) was exactly right. Separately verified the failure path
+(stubbed `run_slice` for a deterministic, instant failure) correctly
+lands on `slice_failed` with the job still gone from the admin
+dashboard, and that the new "Change color" link renders with the
+correct `#color`-anchored `href`.
 
 ## 3D preview
 
@@ -2768,6 +3585,96 @@ both were produced by whatever transform OrcaSlicer chose, so of course
 they agreed with each other. The only check that catches a systematic
 transform bug is comparing against an independent third source (here: the
 original STL's own dimensions) directly.
+
+### A real bug found by the user: zooming out (or in) far enough hid the model entirely
+
+**Orbit worked fine; only zoom showed the symptom - a real clue, not a
+coincidence.** `renderGeometry()`'s own camera framing scales
+`camera.near`/`camera.far` to each model's radius (needed so a tiny
+calibration cube and a bed-filling model both start in frame - a fixed
+far plane would clip a large model, a fixed near plane would swallow a
+small one - see the comment right above it), but `OrbitControls`' own
+zoom distance was never bounded to match. Its defaults (`minDistance`
+`0`, `maxDistance` `Infinity`) let the camera dolly straight past
+either clipping plane on a big-enough scroll/pinch - orbiting doesn't
+change distance at all, so it was never affected, which is exactly why
+turning kept working while zooming made the model vanish. Confirmed via
+`git blame`: a genuine pre-existing bug from the original centroid-fix
+commit (`3592f35`), not a regression from anything built this session -
+the user just happened to hit it now.
+
+First fix (`controls.minDistance`/`maxDistance` scaled to the same
+`radius` `near`/`far` already use) turned out to be real but
+**incomplete** - the user's own follow-up screenshot (one mouse-wheel
+click zoomed in enough to fill the entire frame with a single flat
+close-up surface, camera essentially jammed against the model) didn't
+match "unbounded zoom eventually clips," it matched "one click jumped
+almost instantly to the closest point allowed." That pointed at the
+zoom *step* itself, not just the missing bounds.
+
+**The actual root cause, found by reading `OrbitControls.js`'s real
+dolly math rather than guessing again:** `getZoomScale()` computes
+`normalized_delta = |delta| / (100 * (window.devicePixelRatio | 0))`.
+`x | 0` truncates toward zero - so any `devicePixelRatio` below `1` (a
+browser zoomed under 100%, some display-scaling/remote-desktop setups)
+collapses the denominator to literal `0`, dividing by zero, giving
+`Infinity`, which collapses `Math.pow(0.95, Infinity)` to `0` - the
+zoom scale for *every* wheel event, not just large ones. One click was
+enough to send the camera essentially straight to whichever bound
+(`minDistance` or `maxDistance`, depending on scroll direction) was in
+place, rather than the intended gradual ~5%-per-click step.
+
+Patched the one line (`Math.max(window.devicePixelRatio, 1)` instead of
+the truncating `| 0`) directly in the vendored `OrbitControls.js` -
+consistent with this project's existing precedent of patching a
+vendored dependency in place when a real bug surfaces (see the vendored
+`mbotmake` bugfix) - since this file will never receive upstream
+updates anyway and the fix is minimal, well-understood, and doesn't
+change behavior for `devicePixelRatio >= 1` (the overwhelming common
+case). The `minDistance`/`maxDistance` bounds from the first fix stayed
+in place too, as a legitimate safety net independent of this root
+cause.
+
+**Verified directly, not just reasoned about - a real regression is
+worth a real test, not a second guess:** a throwaway Playwright
+install (never the project's own venv - cleaned up after, including
+the browser cache), with `device_scale_factor=0.75` specifically to
+reproduce the exact failure condition (confirmed via
+`page.evaluate("window.devicePixelRatio")` actually reading back
+`0.75`), driving a real page through the exact upload-preview code path
+(`previewFile` → `showModel` → `renderGeometry`, the same camera setup
+every viewer in this app shares) and a real simulated mouse-wheel
+click. With the patch: a single click produced a small, gradual
+zoom, exactly as intended - confirmed visually from the actual
+screenshots, not inferred. With the original unpatched line (reverted
+in this isolated copy only, to close the loop on the diagnosis itself):
+one click sent the camera rocketing to the opposite extreme instead
+(the cube shrank from filling the frame to a tiny distant speck) -
+the same underlying collapse-to-zero bug, manifesting as a jump to
+whichever bound the scroll direction pointed at, matching both the
+user's original report (zooming either direction made the model
+disappear) and this exact screenshot (one click, jammed up against the
+model) precisely.
+
+**Even after that fix was genuinely pushed, the user kept reporting the
+identical broken behavior - a third real report, not the same one
+repeated.** Turned out the fix was correct both times; the browser was
+silently serving the *pre-fix* `OrbitControls.js` from its own cache the
+whole time, never even asking the server. `StaticFiles` sends no
+`Cache-Control` header at all by default, so browsers fall back to
+heuristic caching - especially aggressive for ES module imports like
+this one - with nothing forcing a revalidation on each load. A
+`@app.middleware("http")` in `main.py` now sets `Cache-Control: no-cache`
+on every `/static/` response - forces a round-trip to check with the
+server on every load, but doesn't disable caching or force a full
+re-download: `StaticFiles` already sends a real content-based `ETag`,
+so an unchanged file still comes back as a fast `304` either way.
+Verified directly: a fresh request carries the header, and a
+conditional request with a matching `ETag` still correctly returns
+`304`, not a full body. **The user's own next real-browser retest is
+what actually confirmed the zoom fix itself was right all along** -
+this caching fix exists so that confirmation loop can't cost this much
+back-and-forth again for any future change to a vendored/static asset.
 
 ## Security checks (CI)
 

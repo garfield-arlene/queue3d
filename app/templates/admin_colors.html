@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Manage colors - queue3d{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <a href="/admin/users">Users</a>
+  <a href="/admin/admins">Admins</a>
+  <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
+  <a href="/admin/log">Activity log</a>
+  <a href="/admin/settings">Settings</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Colors</h2>
+  {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
+
+  <p class="muted">
+    This is <strong>best effort</strong>, not automatic: the printer has
+    no way to report what's actually loaded or how much filament is
+    left. "Grams available" is only ever as accurate as the last time it
+    was updated here by hand - the low-filament notice on the queue page
+    is a heads-up based on that, never a guarantee.
+  </p>
+
+  {% if not colors %}
+    <p class="muted">No colors added yet - users can only pick "Any available" until one exists.</p>
+  {% else %}
+    {# Each row's inputs/button reference a same-named <form> via the
+       form="..." attribute rather than nesting a <form> inside the row
+       itself - a <form> can't validly wrap <td>s in a <tr>. The actual
+       (empty, no visible content) <form> elements just sit right after
+       the table; where they land in the DOM doesn't matter since nothing
+       inside them is ever shown, only referenced from elsewhere. #}
+    <table>
+      <tr><th>Color</th><th>Enabled</th><th>Rolls on hand</th><th>Grams available</th><th></th></tr>
+      {% for color in colors %}
+        <tr>
+          <td>{{ color.name }}</td>
+          <td><input type="checkbox" name="enabled" form="color-{{ color.id }}" {% if color.enabled %}checked{% endif %}></td>
+          <td><input type="number" name="rolls_available" form="color-{{ color.id }}" min="0" step="1" value="{{ color.rolls_available }}" size="4"></td>
+          <td><input type="number" name="grams_available" form="color-{{ color.id }}" min="0" step="0.1" size="6"
+                     value="{{ color.grams_available if color.grams_available is not none else '' }}"
+                     placeholder="unknown"></td>
+          <td>
+            <button type="submit" form="color-{{ color.id }}">Save</button>
+            <form method="post" action="/admin/colors/{{ color.id }}/delete" style="display:inline"
+                  onsubmit="return confirm('Remove {{ color.name }} from the list? Existing jobs already using it keep showing it, but it stops being selectable and its inventory is no longer tracked.')">
+              <button type="submit">Remove</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+    {% for color in colors %}
+      <form id="color-{{ color.id }}" method="post" action="/admin/colors/{{ color.id }}/update"></form>
+    {% endfor %}
+  {% endif %}
+
+  <h3>Add a color</h3>
+  <form method="post" action="/admin/colors/add">
+    <label>Name<br><input type="text" name="name" required size="20"></label>
+    <label>Rolls on hand<br><input type="number" name="rolls_available" min="0" step="1" value="0" size="4"></label>
+    <label>Grams available (optional)<br><input type="number" name="grams_available" min="0" step="0.1" size="6" placeholder="leave blank if unknown"></label>
+    <button type="submit">Add color</button>
+  </form>
+{% endblock %}

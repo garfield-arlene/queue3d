@@ -1,0 +1,29 @@
+[Unit]
+Description=queue3d daily database/archive backup
+# Not RequiresMountsFor here, deliberately, unlike queue3d.service and
+# queue3d-cleanup.service - backup.py alternates its target by day
+# parity (see its own pick_target()), so only ONE of the two backup
+# drives actually matters on any given run. Gating the whole unit on
+# both would mean zero backups happen on a day the needed drive is
+# fine but the OTHER, unused one is temporarily missing - strictly
+# worse than today's actual behavior, which is backup.py's own
+# per-target os.path.ismount() check failing (and logging) just that
+# one day's run while leaving the other drive's future runs unaffected.
+After=queue3d.service
+
+[Service]
+Type=oneshot
+User=queue3d
+Group=queue3d
+WorkingDirectory=/opt/queue3d/app
+Environment=QUEUE3D_DATA_DIR=/mnt/queue3d-data
+Environment=QUEUE3D_BACKUP_DIR_A=/mnt/queue3d-backup-a
+Environment=QUEUE3D_BACKUP_DIR_B=/mnt/queue3d-backup-b
+ExecStart=/opt/queue3d/app/.venv/bin/python3 /opt/queue3d/app/backup.py
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/mnt/queue3d-data /mnt/queue3d-backup-a /mnt/queue3d-backup-b
+CapabilityBoundingSet=

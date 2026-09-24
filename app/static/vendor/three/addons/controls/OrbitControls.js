@@ -494,7 +494,22 @@ class OrbitControls extends EventDispatcher {
 
 		function getZoomScale( delta ) {
 
-			const normalized_delta = Math.abs( delta ) / ( 100 * ( window.devicePixelRatio | 0 ) );
+			// Patched (upstream bug, not a local change for its own sake -
+			// see app/README.md's "3D preview" section for the real
+			// incident this fixes): `x | 0` truncates toward zero, so any
+			// devicePixelRatio below 1 (a browser zoomed under 100%, some
+			// display-scaling/remote-desktop setups) collapses this to
+			// *literal* 0 - dividing by zero, giving Infinity, which
+			// collapses the whole zoom scale to ~0 on the very first wheel
+			// event instead of the intended gradual per-click step. The
+			// visible symptom: one scroll click sent the camera almost
+			// instantly to whatever the minimum zoom distance allowed,
+			// rather than dollying in smoothly - confirmed directly from a
+			// real screenshot of it happening, not just reasoned about.
+			// Math.max(..., 1), not the original `| 0`, preserves normal
+			// behavior for every devicePixelRatio >= 1 (the overwhelming
+			// common case) and fixes the collapse for anything below it.
+			const normalized_delta = Math.abs( delta ) / ( 100 * Math.max( window.devicePixelRatio, 1 ) );
 			return Math.pow( 0.95, scope.zoomSpeed * normalized_delta );
 
 		}

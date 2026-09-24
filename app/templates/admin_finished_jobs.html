@@ -3,6 +3,8 @@
 {% block nav %}
   <a href="/admin/dashboard">&laquo; Queue</a>
   <a href="/admin/users">Users</a>
+  <a href="/admin/admins">Admins</a>
+  <a href="/admin/colors">Colors</a>
   <a href="/admin/jobs/old">Old jobs</a>
   <a href="/admin/log">Activity log</a>
   <a href="/admin/settings">Settings</a>
@@ -15,6 +17,8 @@
     live queue only ever shows what's still active. A job's own files and
     3D preview stay reachable here after it leaves that list.
   </p>
+
+  {% include "_job_filters.html" %}
 
   {% if not rows %}
     <p class="muted">Nothing finished yet.</p>
