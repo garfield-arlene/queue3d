@@ -533,6 +533,10 @@ Managing user accounts:
   form.
 
 **Accounts**
+- On the registration page, present an "Acceptable Use Agreement" with a
+  checkbox that MUST be checked before the user can register - signup
+  currently only requires a name and PIN, with nothing about acceptable
+  use presented or agreed to at all.
 - Extend account management (disable/re-enable/delete from the UI,
   today's user-only) to admins managing *other admins* too, not just users -
   deliberately left out of what was just built, since it raises a real
