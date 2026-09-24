@@ -519,6 +519,7 @@ def approve(session: Session, job: Job, admin: Admin) -> Job:
     job.status = JobStatus.approved
     job.reviewed_at = datetime.now(timezone.utc)
     job.reviewed_by_admin_id = admin.id
+    job.reviewed_by_name = admin.username
     job.admin_note = None
     session.add(job)
     log_event(session, job.id, _admin_actor(admin), "approved")
@@ -534,6 +535,7 @@ def reject(session: Session, job: Job, admin: Admin, note: str) -> Job:
     job.status = JobStatus.rejected
     job.reviewed_at = datetime.now(timezone.utc)
     job.reviewed_by_admin_id = admin.id
+    job.reviewed_by_name = admin.username
     job.admin_note = note.strip()
     job.finished_at = datetime.now(timezone.utc)
     move_job_to_archive(job)

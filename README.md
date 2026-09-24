@@ -557,11 +557,17 @@ Managing user accounts:
   (an admin's own password) both require the *current* credential first,
   unlike an admin resetting someone else's, which doesn't (a different,
   already-authenticated admin's own session is the trust boundary there
-  instead). Still open: no permission scoping between admins at all yet -
-  every one has identical, full access, "decided later" per the user;
-  and what happens to a deleted admin's existing references on past jobs
-  (`reviewed_by_admin_id`/`admin_note`) - kept but orphaned, or removed
-  too.
+  instead). Done, too - a deleted admin's past job reviews no longer go
+  silently orphaned: `Job.reviewed_by_name` (schema 6.6.0) is replaced
+  with "`<username>` (deleted)" at the moment of deletion, and the
+  underlying `reviewed_by_admin_id` FK is cleared rather than left
+  pointing at a since-reused id. `admin_note` needed nothing - it's the
+  rejection reason the admin typed, not a reference to which admin typed
+  it; the activity log's own attribution (`JobEvent.actor`) was already
+  immune to this, since it was a plain string snapshot from the start,
+  never a live FK. Still open: no permission scoping between admins at
+  all yet - every one has identical, full access, "decided later" per
+  the user.
 
 **Deployment**
 - Done, on the real hardware: mDNS hostname, the full `deploy.sh`

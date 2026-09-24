@@ -792,7 +792,13 @@ def delete_admin(
     permission-related - that account might not even be unremovable -
     purely because it would immediately invalidate the session this very
     request is running under, a confusing state to leave anyone in;
-    another admin can always delete it instead)."""
+    another admin can always delete it instead).
+
+    Before the row itself is actually deleted, rewrites every Job this
+    admin ever reviewed (Job.reviewed_by_admin_id) so that history
+    doesn't go silently orphaned - see Job.reviewed_by_name's own
+    docstring. Per the user: "replaced with admin's name as a string
+    with deleted in parentheses.\""""
     target = _get_admin_or_404(session, admin_id)
     if target.unremovable:
         error = f"'{target.username}' was created via create_admin.py and can't be deleted."
@@ -800,6 +806,12 @@ def delete_admin(
     if target.id == admin.id:
         error = "Can't delete your own account while signed in as it - have another admin do it instead."
         return templates.TemplateResponse(request, "admin_admins.html", _admins_context(session, admin, error))
+
+    reviewed_jobs = session.exec(select(Job).where(Job.reviewed_by_admin_id == target.id)).all()
+    for job in reviewed_jobs:
+        job.reviewed_by_name = f"{target.username} (deleted)"
+        job.reviewed_by_admin_id = None
+        session.add(job)
 
     log_event(session, None, _admin_actor(admin), "admin_deleted", detail=target.username)
     session.delete(target)

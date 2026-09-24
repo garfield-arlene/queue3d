@@ -340,6 +340,24 @@ class Job(SQLModel, table=True):
     queued_at: datetime | None = Field(default=None, index=True)
     reviewed_at: datetime | None = Field(default=None)
     reviewed_by_admin_id: int | None = Field(default=None, foreign_key="admin.id")
+    # A plain snapshot of the reviewing admin's username at the moment of
+    # approve()/reject() (schema 6.6.0) - jobs.py sets both this and the
+    # FK above together, every time. Unlike JobEvent.actor (see that
+    # model's own docstring), reviewed_by_admin_id started life as a real
+    # FK, which meant deleting that admin later left it silently
+    # orphaned - pointing at a row that no longer exists, with no way to
+    # tell "never reviewed" apart from "reviewed by someone since
+    # deleted." This field is what actually survives that: per the user,
+    # "replaced with admin's name as a string with deleted in
+    # parentheses" - routers/admin.py's delete_admin rewrites this to
+    # "<username> (deleted)" and clears reviewed_by_admin_id to None
+    # (never left pointing at a dead id) for every job that admin
+    # reviewed, right before the row itself is actually deleted. SQLite
+    # can reuse a deleted row's integer id for a brand new admin later
+    # (no AUTOINCREMENT on this table) - clearing the FK outright avoids
+    # that ever resolving to the wrong, unrelated account by coincidence;
+    # this string is the only thing anything should ever display.
+    reviewed_by_name: str | None = Field(default=None)
     admin_note: str | None = Field(default=None)
     released_at: datetime | None = Field(default=None)
     # Indexed (schema 6.3.0) for the admin finished-jobs date filter.

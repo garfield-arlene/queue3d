@@ -312,6 +312,42 @@ def _migrate_to_6_5_0(conn):
         conn.execute(text("ALTER TABLE admin ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT 0"))
 
 
+def _migrate_to_6_6_0(conn):
+    """New Job.reviewed_by_name column - see that field's own docstring
+    in models.py for why it exists (reviewed_by_admin_id, a real FK, went
+    silently orphaned the moment deleting an admin became possible at
+    all - schema 6.4.0's admins_page). Backfilled here for every job that
+    already has a reviewed_by_admin_id, by joining against whichever
+    admin still exists with that id right now - this is the one and only
+    chance to backfill a real username at all, since going forward
+    delete_admin itself keeps this column in sync (see that route). A
+    job whose reviewer was *already* deleted before this migration ever
+    ran has no admin row left to join against - genuinely, permanently
+    unrecoverable, not a bug in this migration - so those get a generic
+    placeholder instead of a real name, and reviewed_by_admin_id is
+    cleared right along with it (same reason delete_admin clears it: an
+    id with nothing to resolve against is worse than useless if some
+    future feature ever joins on it directly, especially since SQLite can
+    reuse a deleted row's id for an unrelated admin later)."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "reviewed_by_name" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN reviewed_by_name VARCHAR"))
+        conn.execute(
+            text(
+                "UPDATE job SET reviewed_by_name = ("
+                "SELECT username FROM admin WHERE admin.id = job.reviewed_by_admin_id"
+                ") WHERE reviewed_by_admin_id IS NOT NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE job SET reviewed_by_name = '(unknown - admin no longer exists)', "
+                "reviewed_by_admin_id = NULL "
+                "WHERE reviewed_by_admin_id IS NOT NULL AND reviewed_by_name IS NULL"
+            )
+        )
+
+
 # Keyed by the app VERSION a schema change shipped in, not a separate
 # incrementing number - per the user, a schema change should always come
 # with a version bump, so there's exactly one number to keep track of,
@@ -338,6 +374,7 @@ MIGRATIONS = {
     "6.3.0": _migrate_to_6_3_0,
     "6.4.0": _migrate_to_6_4_0,
     "6.5.0": _migrate_to_6_5_0,
+    "6.6.0": _migrate_to_6_6_0,
 }
 
 

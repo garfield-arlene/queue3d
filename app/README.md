@@ -2079,6 +2079,66 @@ PIN change on the user side. Every new action type
 `password_changed`/`pin_changed`) confirmed showing up correctly in the
 activity log.
 
+### A deleted admin's past reviews don't go silently orphaned
+
+**Why this exists:** the last open item from the Accounts to-do list,
+once admin deletion actually existed to make it a real question - per
+the user, directly: "Can the references for admins being deleted be
+replaced with admin's name as a string with deleted in parentheses?"
+
+**The actual reference in question turned out to be narrower than it
+sounded** - `Job.reviewed_by_admin_id`, a real foreign key to `Admin.id`
+set by `jobs.approve()`/`reject()`, is the *only* FK anywhere in this
+schema pointing at `Admin` (confirmed by grepping every
+`foreign_key="admin.id"` in `models.py` - there's exactly one).
+`admin_note` (the rejection reason) doesn't reference an admin at all,
+just what they typed. And the activity log's own "who did this" column
+was never at risk in the first place: `JobEvent.actor` is a plain string
+(`"admin:<username>"`) captured at write time, not a live FK - see that
+model's own docstring - so a deleted admin's past approvals/rejections
+already showed up correctly on `/admin/jobs/{id}/log` before any of this,
+confirmed directly (deleted an admin who'd approved a job, the per-job
+log still read "admin:teacher2 / approved," completely unaffected).
+`reviewed_by_admin_id` itself isn't rendered anywhere today either - so
+this was a real, but currently invisible, latent data-integrity gap, not
+a visible bug.
+
+**`Job.reviewed_by_name`** (schema 6.6.0) is the fix, mirroring
+`JobEvent.actor`'s own already-correct design instead of patching the FK
+in place: `approve()`/`reject()` now set this plain string alongside
+`reviewed_by_admin_id`, every time. `routers/admin.py`'s `delete_admin`
+finds every `Job` where `reviewed_by_admin_id` matches the admin being
+deleted and, right before the row itself is actually removed, rewrites
+`reviewed_by_name` to `"<username> (deleted)"` and clears
+`reviewed_by_admin_id` to `None` - not left dangling, since SQLite can
+reuse a deleted row's integer id for an unrelated admin created later
+(no `AUTOINCREMENT` on this table), and a stale FK pointing at a
+recycled id would silently resolve to the *wrong* account instead of
+just being empty. From that point on, `reviewed_by_name` is the only
+thing anything should ever display.
+
+**The migration backfills `reviewed_by_name` for every already-reviewed
+job**, not just new ones going forward (`_migrate_to_6_6_0`, `db.py`) -
+by joining against whichever admin still exists with that id *right
+now*. A job whose reviewer had already been deleted before this
+migration ever ran has no admin row left to join against - genuinely,
+permanently unrecoverable, not a bug in the migration - so those get a
+generic `"(unknown - admin no longer exists)"` placeholder instead of a
+real name, with `reviewed_by_admin_id` cleared the same way `delete_admin`
+clears it going forward.
+
+Verified in an isolated copy: simulated a pre-6.6.0 database with two
+reviewed jobs - one reviewed by an admin who still exists (backfilled to
+their real username) and one reviewed by an id that no longer resolves
+to anything at all (backfilled to the generic placeholder, FK cleared) -
+both came out exactly as designed. Then the real flow over live HTTP:
+created a second admin, had them approve a real job (confirmed
+`reviewed_by_name` set to their username immediately), deleted that
+admin, and confirmed the job's `reviewed_by_admin_id` was cleared and
+`reviewed_by_name` now reads `"teacher2 (deleted)"` - while the per-job
+activity log, completely unaffected as expected, still correctly showed
+`admin:teacher2 / approved`.
+
 ### Duration estimates as days/hours/minutes
 
 **Why this exists:** raw total minutes reads badly once a print's
