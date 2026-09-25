@@ -1731,6 +1731,95 @@ in isolated testing: one shared cookie holding both a user session (mode
 `/dashboard` and `/admin/dashboard` each independently resolved to the
 right one.
 
+### The "Console" theme - sidebar nav, bordered sections, full width
+
+**Why this exists:** per the user - the first real theme this app has
+ever had beyond "Default" (see "Themes" above for the machinery this
+was all built for, ahead of any second theme actually existing yet):
+page links as tabs down the left instead of a top row, each page's
+sections enclosed in a border with a contrasting title bar, and the
+whole layout using the full browser width instead of the existing
+720px-max, centered column.
+
+**Achievable in CSS alone against the exact same markup every page
+already renders, except for one specific thing.** The sidebar is just
+`<header>` (already flex, already holding `{% block nav %}`'s plain list
+of `<a>` tags plus the logout `<form>`) restyled from a horizontal bar
+into a `flex-direction: column` sidebar with `align-items: stretch` so
+each link/button fills the full width - no template touched anything
+for that. The one thing pure CSS genuinely cannot do: group a `<h3>`
+and the content that follows it - up to the next `<h3>`, or the end of
+the page - into one bordered box. CSS has no "these siblings, up to a
+stopping point" combinator, and every theme before this one only ever
+needed color-token swaps, so nothing existed to hook into. Solved with a
+small inline script instead of touching every template to add explicit
+section markup: it walks every `<h3>` under `<main>`, wraps it and its
+following siblings in a new `.console-section` div, and re-runs after
+every htmx swap (`htmx:afterSwap`) - some sections, like the jobs table,
+replace themselves wholesale via polling, and a swapped-in fragment
+needs re-wrapping the same way the initial page load did. Gated on
+`document.documentElement.getAttribute("data-theme") === "console"` at
+the top, so it's a complete no-op under Default or any future
+color-only theme.
+
+**`<main>` added around `{% block content %}` and the version footer**
+(schema/markup change in `base.html`, not just CSS) - the one structural
+template change this needed, since Console's sidebar-plus-content layout
+requires a second flex sibling next to `<header>` to size against, and
+before this, the footer and the content block were separate top-level
+siblings of `<header>` with nothing grouping them into one column. A
+plain block element with no styling of its own under Default, so this
+is a genuine no-op there - confirmed directly, not just reasoned about
+(every existing page rendered pixel-identical before and after).
+
+**A real bug caught only by actually looking at a rendered page, not by
+reading the CSS:** the section-wrapping script's original stopping
+condition was "the next `<h3>`" alone - on any page whose last section
+had nothing after it but the "queue3d vX.Y.Z" footer, that footer got
+swept inside the section's own bordered box too. Fixed by also stopping
+at a `<footer>` element, not just the next heading.
+
+**Two of my own edits broke the app outright while writing this, in the
+exact same way twice** - explaining the nav's plain `<a>` tags and the
+footer-stopping fix both used the literal text `{% block nav %}` /
+`{% block content %}` inside a *CSS comment*, describing the markup
+being styled. Jinja parses `{%...%}` sequences anywhere in the file,
+with zero awareness of "this is inside a `/* CSS comment */`, not a real
+template tag" - so both comments became phantom, unclosed `{% block %}`
+tags, and every single page on the entire site 500'd with
+`TemplateSyntaxError: Unexpected end of template` until each was found
+(via `grep -n '{%\|%}'` across the file) and reworded to describe the
+same thing in plain English instead.
+
+**Colors** - light: a cool off-white page/sidebar (`#eef0f4`)  against a
+plain white content area, a deep navy (`#2b3a67`) section-title bar with
+light text. Dark: a near-black page (`#14171c`) with a slightly lighter
+sidebar/content split, and a brighter indigo (`#3b5bdb`) title bar - a
+color that reads as "accent" against a dark background needs
+meaningfully more saturation/lightness than the one that works against
+white, not the same hex value carried over unchanged the way `--error`
+happens to be.
+
+Verified visually, not just by reading the CSS - a real isolated copy,
+seeded with actual jobs/admins, screenshotted with Playwright (a
+throwaway venv, cleaned up after, per this project's own testing
+convention) across three different pages and both modes: the admin
+queue (a top-level `<h3>Queue</h3>` section), the admin Admins page (a
+`<h3>Add an admin</h3>` section sitting below an *unboxed* table that
+has no heading of its own - confirming only actual `<h3>`-marked
+sections get the border treatment, not everything on the page), and the
+user dashboard (`_jobs_table.html`'s `<h3>Your submissions</h3>`, the
+one case where the heading sits nested inside its own wrapper div rather
+than a direct child of `<main>` - confirmed the wrapping logic still
+groups correctly at that depth, and that the *unheaded* upload form
+above it correctly stays unboxed). No console errors on any page. A
+same-session test-script bug (not an app bug) was caught and fixed the
+same rigorous way: an unscoped `button[type="submit"]` selector in the
+test itself matched the sidebar's own newly-full-width "Log out" button
+before the intended form's button, silently logging the test account out
+mid-script - fixed by scoping the selector to the actual form, not by
+changing anything in the app.
+
 ### Login rate-limiting
 
 **Why this exists:** per the user - PINs are short by design (low

@@ -42,6 +42,40 @@
       --text: #e8e8e8;
       --error: #ff6b6b;
     }
+
+    /* Console theme (see themes.py) - its own layout tokens on top of
+       the shared --bg/--text/--error/--border* ones above, since this is
+       the first theme that needs more than a color swap: a distinct
+       sidebar background, a distinct content-area background, and a
+       section-title accent color strong enough to read as a real
+       "titlebar" against either. Both modes defined here, right next to
+       each other, same as every other theme's pair - light first (this
+       block), dark immediately below overriding just what changes. */
+    [data-theme="console"] {
+      color-scheme: light;
+      --bg: #eef0f4;
+      --text: #1a1a1a;
+      --error: #c0392b;
+      --border: #d0d4dc;
+      --border-strong: #b7bdc9;
+      --detail-bg: #8881;
+      --sidebar-bg: #e4e7ee;
+      --content-bg: #ffffff;
+      --section-title-bg: #2b3a67;
+      --section-title-text: #f4f6fb;
+    }
+    [data-theme="console"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #14171c;
+      --text: #e8e8e8;
+      --error: #ff6b6b;
+      --border: #333a47;
+      --border-strong: #454e5e;
+      --sidebar-bg: #191d24;
+      --content-bg: #1c2029;
+      --section-title-bg: #3b5bdb;
+      --section-title-text: #f4f6fb;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -98,14 +132,169 @@
       padding: 0.5rem;
       border-radius: 4px;
     }
+
+    /* Console theme layout - see the token block above for its colors.
+       Everything below is structural, not color, which is why it's kept
+       separate: this is the actual "sidebar tabs, bordered sections,
+       full browser width" ask, all achievable in CSS alone against the
+       exact same markup every other theme uses (the sidebar is just
+       <header> restyled from a horizontal top bar into a vertical
+       column; <main> - added specifically so this theme has a second
+       flex sibling to size against - already sits next to it either
+       way) except for one thing: grouping a <h3> with the content that
+       follows it, up to the next <h3>, into one bordered box. CSS has no
+       "these siblings, up to a stopping point" selector, so that part is
+       the small inline script at the bottom of this file instead -
+       gated to only run under this theme, touching no template. */
+    [data-theme="console"] body {
+      max-width: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      align-items: stretch;
+      min-height: 100vh;
+    }
+    [data-theme="console"] header {
+      flex: 0 0 220px;
+      box-sizing: border-box;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      gap: 0.25rem;
+      margin-bottom: 0;
+      padding: 1.5rem 1rem;
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border-strong);
+      position: sticky;
+      top: 0;
+      align-self: flex-start;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    [data-theme="console"] header h1 {
+      margin: 0 0 1rem 0.25rem;
+    }
+    /* Every page's own nav block is a flat list of <a> tags (plus one
+       <form> for Log out) - turned into a vertical stack of tab-like
+       rows here, purely by restyling that same markup, not by changing
+       it. */
+    [data-theme="console"] header a,
+    [data-theme="console"] header form {
+      display: block;
+    }
+    [data-theme="console"] header a {
+      padding: 0.6rem 0.75rem;
+      border-radius: 4px;
+      color: var(--text);
+    }
+    [data-theme="console"] header a:hover {
+      background: var(--border);
+    }
+    [data-theme="console"] header form {
+      margin-top: 0.5rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+    }
+    [data-theme="console"] header form button {
+      width: 100%;
+    }
+    [data-theme="console"] main {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 2rem 2.5rem;
+      background: var(--content-bg);
+    }
+    /* The section-box look itself - .console-section is added by the
+       inline script below, wrapping a <h3> and everything after it up to
+       the next one (or the end of the page). The title bar is the <h3>
+       itself, styled to fill the section's full width in a contrasting
+       color, per the user ("a contrasting color for section titles to
+       make them stand out more") - not just a colored underline. */
+    [data-theme="console"] .console-section {
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      margin-bottom: 1.5rem;
+      overflow: hidden;
+    }
+    [data-theme="console"] .console-section > h3 {
+      margin: 0;
+      padding: 0.6rem 1rem;
+      background: var(--section-title-bg);
+      color: var(--section-title-text);
+    }
+    [data-theme="console"] .console-section > :not(h3) {
+      margin-left: 1rem;
+      margin-right: 1rem;
+    }
+    [data-theme="console"] .console-section > *:last-child {
+      margin-bottom: 1rem;
+    }
+    [data-theme="console"] .console-section > table {
+      /* The one child that should reach the section's own edges rather
+         than sit inset like everything else - a table's own header row
+         already reads as a boundary, and insetting it just wastes width
+         a table specifically wants. */
+      margin-left: 0;
+      margin-right: 0;
+      width: 100%;
+    }
   </style>
+  <script>
+    // The one part of the Console theme (see themes.py) that genuinely
+    // needs script, not just CSS: grouping each <h3> and the content
+    // that follows it - up to the next <h3>, or the end of the page -
+    // into one bordered box (.console-section, styled above). CSS has no
+    // selector for "these siblings, up to a stopping point," and every
+    // other theme this app has ever had only needed color swaps, so
+    // there was nothing here to hook into before now. Gated to this one
+    // theme and re-run after every htmx swap (some sections - the jobs
+    // table, the printer status banner - replace themselves via
+    // hx-swap), not just on initial load, so a background refresh can't
+    // silently leave a swapped-in section unboxed.
+    function applyConsoleSections() {
+      if (document.documentElement.getAttribute("data-theme") !== "console") return;
+      // A descendant selector, not just direct children of <main> - some
+      // section headings (_jobs_table.html's "Your submissions") sit
+      // inside their own wrapper div (#jobs-table, swapped wholesale by
+      // htmx), not straight under <main> like most others. The wrapping
+      // below only ever touches the heading's own immediate siblings
+      // either way, so it groups correctly at whatever depth a given
+      // heading actually sits at.
+      document.querySelectorAll("main h3").forEach((heading) => {
+        if (heading.parentElement.classList.contains("console-section")) return; // already wrapped
+        const section = document.createElement("div");
+        section.className = "console-section";
+        heading.replaceWith(section);
+        section.appendChild(heading);
+        // Stops at the next H3 *or* the page's own <footer> - without
+        // the second check, a page whose last section has nothing after
+        // it but the "queue3d vX.Y.Z" footer (base.html always renders
+        // one right after the page's own content) swept that footer
+        // inside the section's own box too, a real bug caught by
+        // actually looking at a rendered page rather than just reading
+        // the CSS.
+        let next = section.nextSibling;
+        while (next && !(next.nodeType === 1 && (next.tagName === "H3" || next.tagName === "FOOTER"))) {
+          const after = next.nextSibling;
+          section.appendChild(next);
+          next = after;
+        }
+      });
+    }
+    document.addEventListener("DOMContentLoaded", applyConsoleSections);
+    // document, not document.body - this script runs in <head>, before
+    // <body> exists yet, so document.body would be null here.
+    document.addEventListener("htmx:afterSwap", applyConsoleSections);
+  </script>
 </head>
 <body>
   <header>
     <h1>queue3d</h1>
     {% block nav %}{% endblock %}
   </header>
-  {% block content %}{% endblock %}
-  <footer>queue3d v{{ APP_VERSION }}</footer>
+  <main>
+    {% block content %}{% endblock %}
+    <footer>queue3d v{{ APP_VERSION }}</footer>
+  </main>
 </body>
 </html>

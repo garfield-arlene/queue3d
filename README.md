@@ -138,10 +138,14 @@ Managing user accounts:
   "Default" theme (in its "Light" mode) rather than just "whatever the
   CSS says" - `base.html`'s styles are CSS custom properties a future
   theme/mode combination overrides selectively, with zero visible change
-  to how the app looked before this. Only "Default" exists as an actual
-  theme choice so far, though both Light and Dark are real, fully
-  working modes for it already; see the To do list for adding more
-  themes. See `app/README.md`'s "Themes" section.
+  to how the app looked before this. See `app/README.md`'s "Themes"
+  section.
+- **"Console" theme** - a second, genuinely different theme (not just a
+  color swap): page links as tabs down a left sidebar instead of a top
+  row, each page's sections enclosed in a border with a contrasting
+  title bar, and the full browser width used instead of a fixed, centered
+  column. Both Light and Dark modes. See `app/README.md`'s "The
+  'Console' theme" section.
 - **Automatic completion detection** - a background poller notices a
   print finishing, failing, or being cancelled on its own (via the same
   printer status read as the live progress bar above) and records the
@@ -443,12 +447,13 @@ Managing user accounts:
   selection" section.
 
 **Appearance**
-- More themes beyond "Default" - color changes, wallpaper, as their own
-  selectable options (each needing both a light and dark palette, per
-  the user - see `app/README.md`'s "Themes" section). Everything must
-  ship as local static
-  files - no CDN fonts, no external image URLs (see "Deployment: zero
-  internet access" - this app runs with none, ever).
+- Done - a second theme, "Console" (sidebar nav, bordered/titled
+  sections, full browser width), with both a light and dark palette - see
+  `app/README.md`'s "The 'Console' theme" section. Further themes beyond
+  these two - color changes, wallpaper, as their own selectable options -
+  remain open; everything must still ship as local static files, no CDN
+  fonts or external image URLs (see "Deployment: zero internet access" -
+  this app runs with none, ever).
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
 

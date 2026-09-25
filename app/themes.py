@@ -34,6 +34,16 @@ DEFAULT_MODE = "light"
 
 THEMES = {
     "default": "Default",
+    # Left-sidebar nav (the same {% block nav %} links every page already
+    # has, just laid out as a vertical column instead of a top row),
+    # bordered/titled sections, and a full browser-width layout instead
+    # of the default's fixed 720px column - per the user. See base.html's
+    # own [data-theme="console"] blocks for the actual styling, and its
+    # inline script for the one thing pure CSS genuinely can't do here:
+    # grouping each <h3> and the content after it (up to the next <h3>)
+    # into one bordered box, since CSS has no "select these siblings up
+    # to a stopping point" selector.
+    "console": "Console",
 }
 
 MODES = {
