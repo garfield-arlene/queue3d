@@ -15,6 +15,7 @@
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   {% if saved %}<p class="muted">Saved.</p>{% endif %}
 
+  <h3>Site settings</h3>
   <form method="post" action="/admin/settings">
     <label>Expire an unsubmitted draft after this many days<br>
       <input type="number" name="draft_expiry_days" min="1" value="{{ settings.draft_expiry_days }}" required>

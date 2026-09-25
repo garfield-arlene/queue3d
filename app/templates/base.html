@@ -61,7 +61,14 @@
       --detail-bg: #8881;
       --sidebar-bg: #e4e7ee;
       --content-bg: #ffffff;
-      --section-title-bg: #2b3a67;
+      /* Same indigo as the dark palette below, not a separate, darker
+         navy - per the user, after the original #2b3a67 read as barely
+         distinguishable from black/gray on a light background. A color
+         this saturated needs the same value in both modes to actually
+         look "blue" against either background; a duller shade chosen to
+         feel more "light mode-appropriate" just came across as no color
+         at all. */
+      --section-title-bg: #3b5bdb;
       --section-title-text: #f4f6fb;
     }
     [data-theme="console"][data-mode="dark"] {
