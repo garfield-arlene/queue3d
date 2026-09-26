@@ -8,7 +8,11 @@
 # see deploy/README.md for the "only I can log in" SSH setup this assumes,
 # which this script doesn't itself configure). Needs deploy/cache/
 # populated first - run fetch_bundle_assets.sh on a machine WITH internet
-# before this, since the Pi itself never touches the network.
+# before this, since the Pi itself never touches the network. Also needs
+# deploy/cache/tls/fullchain.pem and privkey.pem - a real TLS certificate,
+# issued elsewhere (see deploy/README.md's "TLS certificate" section) and
+# copied there by hand; there's no self-signed fallback and no way for
+# this deployment to obtain one on its own.
 #
 # Usage: ./deploy.sh queue3d.local
 # (or user@host, or a ~/.ssh/config Host alias - this is passed straight
@@ -37,6 +41,17 @@ if [ ! -d cache/wheels ] || [ -z "$(ls -A cache/wheels 2>/dev/null)" ]; then
 fi
 if ! ls cache/OrcaSlicer-aarch64-*.AppImage >/dev/null 2>&1; then
   echo "No cached OrcaSlicer AppImage - run ./fetch_bundle_assets.sh first." >&2
+  exit 1
+fi
+# A real, publicly-trusted TLS certificate, not self-signed (see
+# deploy/README.md's "TLS certificate" section for why, and how to get
+# one) - this deployment has no internet access itself, so it can never
+# obtain or renew one on its own; it has to be issued elsewhere and
+# staged here, same pattern as the wheels/OrcaSlicer cache above.
+if [ ! -f cache/tls/fullchain.pem ] || [ ! -f cache/tls/privkey.pem ]; then
+  echo "deploy/cache/tls/fullchain.pem and/or privkey.pem are missing - see" >&2
+  echo "deploy/README.md's 'TLS certificate' section for how to get a real" >&2
+  echo "certificate and where to put it. There is no self-signed fallback." >&2
   exit 1
 fi
 
@@ -103,6 +118,12 @@ echo "  wheels/ ..."
 rsync -az "${RSYNC_PROGRESS[@]}" cache/wheels "$TARGET:$STAGING_DIR/"
 echo "  OrcaSlicer AppImage ..."
 rsync -az "${RSYNC_PROGRESS[@]}" cache/OrcaSlicer-aarch64-*.AppImage "$TARGET:$STAGING_DIR/"
+echo "  TLS certificate ..."
+# Already going over SSH like everything else here, so this is no less
+# protected in transit than the app source itself - rsync's own -p isn't
+# used to preserve the private key's 600 permissions specifically, since
+# remote_install.sh re-chmods it explicitly once installed regardless.
+rsync -az "${RSYNC_PROGRESS[@]}" cache/tls/fullchain.pem cache/tls/privkey.pem "$TARGET:$STAGING_DIR/"
 rsync -az "${RSYNC_PROGRESS[@]}" queue3d.service "$TARGET:$STAGING_DIR/"
 rsync -az "${RSYNC_PROGRESS[@]}" queue3d-backup.service queue3d-backup.timer "$TARGET:$STAGING_DIR/"
 rsync -az "${RSYNC_PROGRESS[@]}" queue3d-cleanup.service queue3d-cleanup.timer "$TARGET:$STAGING_DIR/"

@@ -93,16 +93,14 @@ Lite by default. `rsync` has to be a manual, separate step because
 at all in step 5 below - nothing later in the process can bootstrap it.
 
 `nginx` (the reverse proxy that makes the app reachable on a plain
-`https://<host>/` with no port number - see step 6), `openssl` (which
-generates the self-signed TLS cert nginx serves, since there's no CA
-reachable at the deployment site to get a real one from), and
-`python3-venv` are all installed automatically by `remote_install.sh`
-itself in step 5, on demand, over whatever internet the Pi has at the
-time - no separate manual step needed for those. That only works right
-now, during this initial setup at home; once deployed to a genuinely
-offline site, `remote_install.sh` will fail clearly if it ever needs one
-of these and can't reach the internet to get it (it never needs to, in
-practice, once they're already installed here first).
+`https://<host>/` with no port number - see step 6) and `python3-venv`
+are installed automatically by `remote_install.sh` itself in step 5, on
+demand, over whatever internet the Pi has at the time - no separate
+manual step needed for those. That only works right now, during this
+initial setup at home; once deployed to a genuinely offline site,
+`remote_install.sh` will fail clearly if it ever needs one of these and
+can't reach the internet to get it (it never needs to, in practice, once
+they're already installed here first).
 
 Nothing else here needs installing from the internet by hand - every
 *application* dependency (Python packages, OrcaSlicer) is fetched on
@@ -220,61 +218,117 @@ deploys and there's nothing to re-fetch.
 `~/.ssh/config` per step 1 - `deploy.sh` just passes this straight
 through to `ssh`/`rsync`, so anything they'd accept works here too.)
 
-Syncs the app, bundled wheels, and OrcaSlicer to the Pi, then runs
-`remote_install.sh` there via `sudo` - creates the `queue3d` system
-user and venv if this is the first run, installs/upgrades Python
-dependencies from the bundled wheels only (no network), extracts
-OrcaSlicer, installs and enables the systemd unit (and the
+Syncs the app, bundled wheels, OrcaSlicer, and the TLS certificate to
+the Pi, then runs `remote_install.sh` there via `sudo` - creates the
+`queue3d` system user and venv if this is the first run, installs/
+upgrades Python dependencies from the bundled wheels only (no network),
+extracts OrcaSlicer, installs and enables the systemd unit (and the
 `queue3d-backup`/`queue3d-cleanup` timers - daily backup and
 draft-expiry cleanup, actually wired in and running rather than left as
 a "run manually, or wire into cron" note in each script's own
-docstring), generates a self-signed TLS cert (first run only - see
-below), configures nginx as an https reverse proxy in front of it, and
-(re)starts everything. The exact same command is both "install" and
-"upgrade" - every step is idempotent, so there's no separate first-time
-mode to remember (see `remote_install.sh`'s own comments for why each
-step is safe to re-run). Refuses to proceed at all if step 4's live-data
-drive isn't actually mounted at `/mnt/queue3d-data` - check that first
-if this exits early with that message.
+docstring), installs the TLS certificate (every run - see "TLS
+certificate" below), configures nginx as an https reverse proxy in
+front of it, and (re)starts everything. The exact same command is both
+"install" and "upgrade" - every step is idempotent, so there's no
+separate first-time mode to remember (see `remote_install.sh`'s own
+comments for why each step is safe to re-run). Refuses to proceed at
+all if step 4's live-data drive isn't actually mounted at
+`/mnt/queue3d-data`, or if the TLS certificate isn't staged - check
+those first if this exits early with either message.
 
 The app itself (`queue3d.service`) only ever listens on `127.0.0.1:8000`
 - never directly reachable from the network at all. `nginx` is the
-actual public-facing listener, terminating TLS with a self-signed cert
-(generated once on the Pi itself and left alone on every later deploy,
-so it doesn't force everyone to re-click-through a "not trusted"
-warning on every upgrade) and proxying to the app (see
-`nginx-queue3d.conf`) - so everyone on the deployment network reaches
-this at `https://<host>/`, no port number to remember, and the app
-itself has one less thing directly exposed to the network regardless.
-Plain port 80 just redirects to https, for anyone who types a bare
-`http://` URL.
+actual public-facing listener, terminating TLS and proxying to the app
+(see `nginx-queue3d.conf`) - so everyone on the deployment network
+reaches this at `https://q3d.home.mygarfield.us/`, no port number to
+remember, and the app itself has one less thing directly exposed to the
+network regardless. Plain port 80 just redirects to https, for anyone
+who types a bare `http://` URL.
 
-Since there's no CA reachable at the deployment site (zero internet, by
-design), the cert is self-signed - every browser will show a "not
-secure" / "not trusted" warning the first time it visits, on every
-device, with no way around that short of manually installing the cert
-as trusted on each one. That's inherent to a self-signed cert on an
-otherwise-offline network, not a bug here. Firefox's version of this
-warning has an obvious "Accept the Risk and Continue" button; Chrome
-buries the same option one level deeper - click **Advanced**, then
-**Proceed to `<host>` (unsafe)** underneath it. Confirmed working this
-way on an ordinary, unmanaged Chrome install.
+### TLS certificate
 
-One real caveat worth confirming before this becomes the primary way
-students/staff reach the app: on a **managed** Chrome install (e.g.
-school-issued Chromebooks under a Google Workspace for Education admin
-console), that "Proceed anyway" option can be disabled entirely by
-district policy - if so, there is no client-side click-through at all,
-on any page, ever, and the fix has to happen elsewhere (a real
-CA-signed cert for a domain you actually own, with local DNS set up to
-resolve it on the island network - a bigger lift, worth revisiting only
-if this turns out to actually be the situation on the real deployment
-devices).
+**This used to be a self-signed certificate, generated once on the Pi
+itself.** That's what the rest of this file described for a while, with
+an open caveat right here: "on a **managed** Chrome install..., that
+'Proceed anyway' option can be disabled entirely by district policy - if
+so,... the fix has to happen elsewhere (a real CA-signed cert for a
+domain you actually own, with local DNS set up to resolve it on the
+island network)." Confirmed directly on a real school-issued Chromebook
+on the actual island network: exactly that - a hard certificate warning
+with no "Advanced" / "Proceed anyway" option at all, on any page, ever.
+No amount of regenerating a self-signed cert can ever fix this; only a
+certificate from a publicly-trusted CA does, so that's what this now
+uses.
+
+**Where the certificate comes from.** This deployment has no internet
+access at all, by design - it can never run its own ACME client
+(certbot or similar) to request or renew a certificate itself. Issued
+instead on a machine that does have internet, for a real domain the
+user already controls (a subdomain of an existing personal domain,
+`q3d.home.mygarfield.us`), then copied here by hand:
+
+```bash
+# On the machine that ran certbot (a home server, in this case) -
+# only fullchain.pem and privkey.pem are actually needed; cert.pem and
+# chain.pem are subsets already folded into fullchain.pem.
+scp /etc/letsencrypt/live/<domain>/fullchain.pem  you@this-machine:deploy/cache/tls/fullchain.pem
+scp /etc/letsencrypt/live/<domain>/privkey.pem    you@this-machine:deploy/cache/tls/privkey.pem
+```
+
+`deploy/cache/tls/` is gitignored, same as `deploy/cache/wheels/` and
+the OrcaSlicer AppImage - a real private key must never end up in this
+(public) repo. `deploy.sh` refuses to proceed at all if either file is
+missing there, rather than silently falling back to anything weaker.
+
+**Renewal.** Let's Encrypt certificates are valid 90 days. There is no
+automatic renewal path here - by the time this cert is due to expire,
+get a fresh one the same way (wherever it was originally issued),
+overwrite the two files in `deploy/cache/tls/`, and run `./deploy.sh
+<host>` again; the certificate is reinstalled on *every* run (unlike the
+self-signed one this replaced, which was deliberately generated once and
+left alone), so this is the entire renewal process - no separate
+"just update the cert" script or flag needed.
+
+**DNS - the other half of this, and just as necessary.** A trusted
+certificate only fixes whether a connection is *trusted* once a client
+already reached it - it does nothing for whether `q3d.home.mygarfield.us`
+actually *resolves* to this Pi's LAN IP in the first place, and the
+island network has no route to the public DNS record for that name at
+all (zero internet access, the same reason this deployment can't request
+its own certificate). The router on the actual deployment network turned
+out to have no usable DNS service of its own to add that record to
+directly, so the Pi answers it instead: `remote_install.sh` installs and
+configures `dnsmasq` on every run, resolving *only*
+`q3d.home.mygarfield.us` (to the Pi's own current IP, detected fresh
+each time - `no-resolv`, no upstream forwarding at all, since there's
+nothing else worth resolving on a network with zero internet access
+anyway). `nginx-queue3d.conf`'s `server_name` is set to that same
+hostname to match.
+
+That alone doesn't make Chromebooks *use* the Pi for DNS, though -
+**one manual, router-specific step is still required**: log into the
+router's own admin page and set its DHCP-advertised DNS server to the
+Pi's LAN IP (exactly where "DNS server" or "DNS 1" lives varies by
+router - look under DHCP or LAN settings). Once that's done, every
+device that renews its DHCP lease on that network starts asking the Pi
+for DNS, and `q3d.home.mygarfield.us` resolves correctly for all of
+them.
+
+**This deliberately replaces relying on the Pi's own mDNS/Avahi hostname
+(`<host>.local`) for the real deployment network** - either isn't
+reliable there or isn't part of what a locked-down Chromebook will
+resolve/trust in the first place. mDNS is still exactly how every step
+in *this* file reaches the Pi during initial at-home setup (see the
+`.local` examples throughout) - `remote_install.sh` never disables it on
+its own, since that would break this very setup process the moment it
+first ran. Turning it off is instead the last manual step, done once,
+right before the Pi actually leaves for the deployment site - see
+"Before the move: disable mDNS" below.
 
 **If Chrome (specifically, and only Chrome) shows `ERR_ADDRESS_UNREACHABLE`
-instead of the cert warning above** - this isn't a queue3d, nginx, or
-cert problem at all, even though it looks like one. On a Mac, it's
-almost always macOS's own **Local Network privacy permission**
+while testing via `.local` from your own Mac during setup** - this isn't
+a queue3d, nginx, or cert problem at all, even though it looks like one.
+It's almost always macOS's own **Local Network privacy permission**
 (Apple menu -> System Settings -> Privacy & Security -> Local Network):
 apps have to be individually granted permission to connect to devices
 on your local subnet, tied specifically to resolving/connecting via
@@ -302,11 +356,16 @@ ssh <hostname-or-ip>.local sudo systemctl list-timers queue3d-backup.timer queue
 curl -k https://<hostname-or-ip>.local/login
 ```
 
-(`-k` skips certificate validation - expected here, since the cert is
-self-signed and there's no CA for curl to check it against either.) In
-a real browser, click through the "not secure" warning once per device
-- that's expected, not a sign anything is actually wrong. The
-`list-timers` output shows when each is next scheduled to run (3am/4am)
+(`-k` is still needed here even with a real, trusted certificate now -
+it's issued for `q3d.home.mygarfield.us` specifically, not for whatever
+`.local` mDNS name you're actually testing through at this stage, so
+curl would otherwise refuse it on a hostname mismatch. That mismatch is
+expected and fine during this at-home setup step; once the real DNS
+override is in place at the deployment site and everyone reaches it by
+the real hostname, this stops being an issue and a plain `curl
+https://q3d.home.mygarfield.us/login` with no `-k` at all would succeed
+cleanly.) The `list-timers` output shows when each is next scheduled to
+run (3am/4am)
 - worth a manual run of each once, too, rather than waiting until 3am to
 find out if either has a problem:
 
@@ -315,6 +374,27 @@ ssh <hostname-or-ip>.local sudo systemctl start queue3d-backup.service
 ssh <hostname-or-ip>.local sudo systemctl start queue3d-cleanup.service
 ssh <hostname-or-ip>.local sudo journalctl -u queue3d-backup.service -u queue3d-cleanup.service -n 20 --no-pager
 ```
+
+### Before the move: disable mDNS
+
+Everything up to here, including every `.local` example in this file,
+depends on the Pi's own mDNS/Avahi hostname - that's deliberate, and
+`remote_install.sh` never touches it on its own, since disabling it
+automatically would break this exact setup process the moment it first
+ran. Once dnsmasq (above) is confirmed working and the router's DHCP
+is pointed at it, mDNS has nothing left to do on the real deployment
+network - turn it off as the actual last step here, not before:
+
+```bash
+ssh <hostname-or-ip>.local sudo systemctl disable --now avahi-daemon.service avahi-daemon.socket
+```
+
+After this, `<host>.local` stops resolving *at all* on this Pi - correct,
+not a bug, and exactly the point (nothing should be relying on it once
+the deployment network's own DNS is doing the real job). Reach the Pi
+by its plain LAN IP or, once the router's DHCP change has taken effect,
+`q3d.home.mygarfield.us` from here on, including for every future
+`./deploy.sh` run.
 
 Only now, once this all checks out, move the Pi to its real deployment
 location and connect it to the isolated LAN instead of your home

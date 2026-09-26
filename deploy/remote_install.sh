@@ -8,9 +8,12 @@
 # installed"). Every *application* dependency (Python packages,
 # OrcaSlicer) always comes from what's already been bundled alongside this
 # script, never the network - the real deployment site never has internet
-# at all. A couple of plain OS packages (nginx, openssl) are the one
-# exception: those get apt-installed here too, on demand, since they only
-# ever need internet once (during initial setup) - see below.
+# at all. A plain OS package (nginx) is the one exception: it gets
+# apt-installed here too, on demand, since it only ever needs internet
+# once (during initial setup) - see below. (openssl used to be in this
+# same list, for generating a self-signed TLS cert - no longer needed at
+# all now that a real certificate is transferred in instead - see the TLS
+# section further down.)
 set -euo pipefail
 
 # Pinned explicitly rather than trusting whatever sudo/ssh -t happens to
@@ -53,7 +56,7 @@ if ! mountpoint -q "$DATA_MOUNT"; then
   exit 1
 fi
 
-# nginx/openssl/python3-venv are plain OS packages, not application
+# nginx/python3-venv are plain OS packages, not application
 # dependencies - unlike the Python packages and OrcaSlicer (which must
 # stay bundled forever, since the real deployment site never has
 # internet at all), these only ever need internet once, right now,
@@ -69,8 +72,14 @@ fi
 # script can bootstrap it.)
 MISSING_PKGS=""
 command -v nginx >/dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS nginx"
-command -v openssl >/dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS openssl"
 dpkg -s python3-venv >/dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS python3-venv"
+# dnsmasq resolves q3d.home.mygarfield.us to this Pi on the deployment
+# network - see the "DNS" section in deploy/README.md's "TLS
+# certificate" writeup for why this exists at all (the real cert is
+# useless if the hostname it's issued for can't even resolve, and the
+# router on the actual deployment network has no usable DNS service of
+# its own to add that record to).
+command -v dnsmasq >/dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS dnsmasq"
 if [ -n "$MISSING_PKGS" ]; then
   echo "Installing missing OS packages ($MISSING_PKGS) - needs internet..."
   if ! (DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y $MISSING_PKGS); then
@@ -216,28 +225,71 @@ cp "$STAGING_DIR/queue3d-cleanup.timer" /etc/systemd/system/queue3d-cleanup.time
 systemctl daemon-reload
 systemctl enable --now queue3d-backup.timer queue3d-cleanup.timer
 
-# Self-signed TLS cert for nginx's https listener. Per the user, plain
-# http wasn't good enough even on an isolated LAN - but there's no CA
-# reachable at the deployment site to get a real one from (zero internet,
-# by design, same reason nothing here ever runs apt/pip against the real
-# internet), so self-signed is the only option at all. Generated once, on
-# the Pi itself, and left alone on every later run - regenerating it on
-# every upgrade would invalidate the cert everyone already clicked
-# "trust" on, forcing that warning again for no reason.
+# Real TLS cert for nginx's https listener - not self-signed. Per the
+# user, directly: managed Chromebooks on the actual deployment network
+# hard-block a self-signed cert outright, with no "proceed anyway"
+# option at all, so no amount of self-signing could ever satisfy them -
+# only a certificate from a publicly-trusted CA does. This deployment
+# still has no internet access itself (by design), so it can never run
+# its own ACME client (certbot or similar) to obtain or renew one - the
+# cert is issued elsewhere instead (see deploy/README.md's "TLS
+# certificate" section) and staged into deploy/cache/tls/ before running
+# deploy.sh, same pattern as the offline wheels/OrcaSlicer cache.
+# Installed fresh on *every* run, unlike the self-signed cert this
+# replaced (which was deliberately generated once and left alone) -
+# there's no "everyone already clicked trust on this one" concern for a
+# real cert, and overwriting it every time is exactly what makes renewal
+# as simple as "drop the new files in the cache dir, run deploy.sh
+# again," with no separate first-run-vs-upgrade logic to remember.
 SSL_DIR=/etc/nginx/ssl
-if [ ! -f "$SSL_DIR/queue3d.crt" ] || [ ! -f "$SSL_DIR/queue3d.key" ]; then
-  echo "Generating a self-signed TLS certificate (first run only)..."
-  mkdir -p "$SSL_DIR"
-  HOST_NAME="$(hostname -f 2>/dev/null || hostname)"
-  openssl req -x509 -nodes -newkey rsa:2048 \
-    -keyout "$SSL_DIR/queue3d.key" -out "$SSL_DIR/queue3d.crt" \
-    -days 3650 \
-    -subj "/CN=$HOST_NAME" \
-    -addext "subjectAltName=DNS:$HOST_NAME,DNS:localhost,IP:127.0.0.1"
-  chmod 600 "$SSL_DIR/queue3d.key"
-else
-  echo "Existing self-signed TLS certificate found - leaving it in place."
+if [ ! -f "$STAGING_DIR/fullchain.pem" ] || [ ! -f "$STAGING_DIR/privkey.pem" ]; then
+  echo "ERROR: deploy/cache/tls/fullchain.pem and/or privkey.pem are missing." >&2
+  echo "This deployment needs a real TLS certificate (see deploy/README.md's" >&2
+  echo "'TLS certificate' section) - there is no self-signed fallback." >&2
+  exit 1
 fi
+echo "Installing the TLS certificate..."
+mkdir -p "$SSL_DIR"
+cp "$STAGING_DIR/fullchain.pem" "$SSL_DIR/queue3d-fullchain.pem"
+cp "$STAGING_DIR/privkey.pem" "$SSL_DIR/queue3d-privkey.pem"
+chmod 600 "$SSL_DIR/queue3d-privkey.pem"
+
+# Local DNS override for q3d.home.mygarfield.us -> this Pi - per the
+# user: the router on the real deployment network has no usable DNS
+# service to add this record to itself, so the Pi answers it directly
+# instead (the router's own DHCP just needs pointing at the Pi's IP as
+# the DNS server for its clients - a manual, router-specific step, see
+# deploy/README.md). Deliberately narrow, not a general-purpose
+# resolver: `no-resolv`/no upstream `server=` at all means dnsmasq never
+# forwards anything it doesn't already know - there is nothing else to
+# resolve on a network with zero internet access anyway, so refusing
+# outright is more honest than pretending to be a real DNS server that
+# just happens to fail every other lookup.
+#
+# The IP is detected fresh on every run, not hardcoded once - a Pi
+# reassigned a different DHCP lease (or moved to a different network
+# entirely) would otherwise silently keep answering with a stale,
+# now-wrong address. `hostname -I`'s first entry is the primary
+# non-loopback IPv4 address; this works with zero network path to
+# anywhere external (unlike `ip route get <public-ip>`, which needs one),
+# matching a deployment that may have no route out at all.
+PI_IP="$(hostname -I | awk '{print $1}')"
+if [ -z "$PI_IP" ]; then
+  echo "ERROR: couldn't determine this Pi's own LAN IP (hostname -I gave" >&2
+  echo "nothing) - can't configure local DNS without it." >&2
+  exit 1
+fi
+echo "Configuring local DNS (dnsmasq) - q3d.home.mygarfield.us -> $PI_IP ..."
+cat > /etc/dnsmasq.d/queue3d.conf <<EOF
+# Generated by remote_install.sh - do not edit by hand, it's overwritten
+# on every deploy. See deploy/README.md's "TLS certificate" section (the
+# "DNS" part) for why this exists.
+no-resolv
+no-hosts
+address=/q3d.home.mygarfield.us/$PI_IP
+EOF
+systemctl enable --now dnsmasq
+systemctl restart dnsmasq
 
 echo "Configuring nginx..."
 cp "$STAGING_DIR/nginx-queue3d.conf" /etc/nginx/sites-available/queue3d
@@ -266,21 +318,38 @@ sleep 3
 # is the problem) and through nginx on 80 (the thing anyone on the
 # network actually reaches) - reporting exactly which one failed rather
 # than one combined pass/fail is worth the extra few lines here.
-APP_OK=0; PROXY_OK=0
+APP_OK=0; PROXY_OK=0; DNS_OK=0
 systemctl is-active --quiet queue3d && curl -sf -o /dev/null http://127.0.0.1:8000/login && APP_OK=1
-# -k: the cert is self-signed (there's no CA to validate against here at
-# all), so curl would otherwise refuse it on principle even though it's
-# exactly the cert nginx was just told to use - this check only cares
-# that TLS itself terminates and the app answers behind it.
+# -k: even with a real, publicly-trusted certificate now, this check
+# still deliberately connects via 127.0.0.1 rather than the real
+# hostname - the cert is issued for that hostname specifically, not this
+# loopback IP, so curl would otherwise refuse it on a hostname mismatch
+# every time regardless of whether the cert itself is trusted. This check
+# only cares that TLS itself terminates and the app answers behind it,
+# not that the whole chain matches end to end from here.
 curl -sfk -o /dev/null https://127.0.0.1/login && PROXY_OK=1
+# Queries dnsmasq directly on this Pi (not through whatever the router is
+# actually configured to hand out yet - that's a separate, manual,
+# router-specific step this script can't perform or verify) - this only
+# confirms dnsmasq itself is up and answering the one record it's
+# actually responsible for, most importantly catching the case where
+# something else got to port 53 first (unlikely on Raspberry Pi OS,
+# which doesn't run systemd-resolved by default, but worth a real check
+# rather than assuming).
+if command -v dig >/dev/null 2>&1; then
+  [ "$(dig +short @127.0.0.1 q3d.home.mygarfield.us)" = "$PI_IP" ] && DNS_OK=1
+else
+  systemctl is-active --quiet dnsmasq && DNS_OK=1
+fi
 
-if [ "$APP_OK" -eq 1 ] && [ "$PROXY_OK" -eq 1 ]; then
+if [ "$APP_OK" -eq 1 ] && [ "$PROXY_OK" -eq 1 ] && [ "$DNS_OK" -eq 1 ]; then
   echo "queue3d is up and reachable through nginx at https://<host>/."
 else
   echo "" >&2
   echo "WARNING: something is not right after this deploy:" >&2
   [ "$APP_OK" -eq 1 ] || echo "  - queue3d itself is not running/responding on its internal port" >&2
   [ "$PROXY_OK" -eq 1 ] || echo "  - nginx is not proxying https to it successfully" >&2
+  [ "$DNS_OK" -eq 1 ] || echo "  - dnsmasq is not answering q3d.home.mygarfield.us correctly (check 'systemctl status dnsmasq' - port 53 may already be in use by something else)" >&2
   if [ -n "${BACKUP_DIR:-}" ]; then
     echo "This was an upgrade - the previous working version was backed up to:" >&2
     echo "  $BACKUP_DIR" >&2
@@ -290,5 +359,6 @@ else
   fi
   systemctl --no-pager status queue3d || true
   systemctl --no-pager status nginx || true
+  systemctl --no-pager status dnsmasq || true
   exit 1
 fi
