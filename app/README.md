@@ -2050,6 +2050,85 @@ every screenshot, the swing animation doesn't affect layout, and the
 shared Console/Savanna structural rules still apply identically under
 this third theme id.
 
+### The "BMMS" theme - one specific school's own colors and logo
+
+**Why this exists:** per the user - the same shared sidebar/full-width/
+bordered-section layout once more, this time built for the one specific
+school this app is actually deployed to, not a generic option meant for
+anyone: Black Mountain Middle School's own maroon-and-gold colors and
+their own Raiders logo (`app/static/bmms-logo.png`), rather than an
+original design like Console/Savanna/Fil. Came up naturally out of the
+Mickey Mouse conversation two themes back - once the question turned to
+"is a school's own mascot protected the same way," the answer (no -
+colors aren't meaningfully protectable, and a school using its own
+official branding on its own internal tool needs nobody's permission
+but its own) made this theme a straightforward yes where Mickey was a
+straightforward no. The logo itself: the school's real, public logo
+(findable with a plain web search, the same way the user found it),
+not anything sensitive - flood-filled from its original flat white
+background to transparent (`-fuzz 8% -fill none -draw "color X,Y
+floodfill"` from all four corners, ImageMagick) so it sits cleanly on
+the maroon sidebar or either login page's background, rather than
+carrying an ugly white box around it. The flood-fill only clears
+regions actually connected to a corner, unlike a blanket "make all
+white transparent," which would have also hollowed out the badge's own
+white interior field (a legitimate part of the logo's design, not
+background) along with anything white inside the lettering.
+
+**Colors are the school's own, not invented for this app** - maroon
+(`#4a0d15` sidebar, `#7a1420` section-title accent) and gold
+(`#f0c975` section-title text, `#f0dfb0` nav text). The sidebar stays a
+fixed maroon in both light and dark mode rather than flipping shades
+the way Console's own sidebar does - the same reasoning as Savanna's
+fixed-dark photo sidebar: a specific brand color is a fixed identity,
+not something that should read as "washed out" in light mode. That
+fixed-dark sidebar needs the same fixed-light nav-text override Savanna
+already established (`--text` alone isn't reliably readable against a
+sidebar that doesn't itself change with mode).
+
+**The logo also appears somewhere neither Console, Savanna, nor Fil
+ever needed to reach: the login pages.** `current_theme()`
+(templates_env.py) always resolves to `"default"` for a logged-out
+request - there's no signed-in account yet to have a saved theme choice
+- so `[data-theme="bmms"]`'s own CSS can never apply to
+`admin_login.html`/`user_login.html` no matter what theme exists. The
+user's own words correctly anticipated this: "I'm guessing the login
+pages are not part of the theme. I still want this on the login
+pages." So the logo is shown there unconditionally instead, added
+directly to both login templates rather than through the theme
+mechanism, via a plain (non-theme-gated) `.login-logo` CSS rule and a
+`.login-page` wrapper div - it shows up on the login pages regardless
+of what theme is later selected by whoever logs in, same as it would
+look identical to every visitor before any of them have an account at
+all.
+
+**Sized and laid out in two follow-up passes, both per direct user
+feedback, not guessed at upfront:** the sidebar logo (`.bmms-logo`)
+first shipped at a fixed 84px and read as "small and hard to read" -
+changed to `width: 85%` (a percentage of the sidebar's own width, not
+another fixed guess, per the user asking for "80-90% of the sidebar
+width"). The login-page logo first shipped small and left-aligned like
+the rest of that page's plain default layout - the user then asked to
+center the whole login form and make its logo "large... centered above
+the form," and, in the very next message, to size that logo
+specifically "50% wider than the form itself, like a letterhead." Since
+the login form's own `max-width` (the generic `form` rule, used
+everywhere else in the app too) is 320px, the logo's width is a literal
+480px (320 * 1.5) rather than an eyeballed "large" value -
+`.login-page` centers the logo/heading/muted text via `text-align`,
+while the form itself (a block with its own fixed max-width, so
+`text-align` alone can't center it) gets `margin: 0 auto` to center as
+a block, with `text-align: left` reset inside it so the labels/inputs
+themselves don't also center.
+
+Verified the same way as every theme before it, repeated after both
+follow-up sizing passes: a real isolated copy, Playwright screenshots
+(throwaway venv, cleaned up after) of both login pages (fully logged
+out, confirming the logo appears with no theme applied at all, at its
+current size/position) and the three-section Settings page in both
+light and dark mode, zero console errors, zero failed requests
+(confirming the logo file itself actually loads).
+
 ### Login rate-limiting
 
 **Why this exists:** per the user - PINs are short by design (low

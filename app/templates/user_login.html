@@ -1,13 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Log in - queue3d{% endblock %}
 {% block content %}
-  <h2>Log in</h2>
-  {% if error %}<p class="error">{{ error }}</p>{% endif %}
-  <form method="post" action="/login">
-    <label>Name<br><input name="name" value="{{ name or '' }}" required autofocus></label>
-    <label>PIN<br><input name="pin" type="password" inputmode="numeric" required></label>
-    <button type="submit">Log in</button>
-  </form>
-  <p class="muted">New here? <a href="/signup">Sign up</a> instead.</p>
-  <p class="muted"><a href="/admin/login">Admin log in</a></p>
+  <!-- .login-page (base.html) centers all of this - logo, heading, form
+       - per the user. The logo itself is always shown here regardless
+       of theme - per the user, the school's own logo belongs on the
+       login page even though current_theme() always resolves to
+       "default" for a logged-out request (see templates_env.py), so the
+       BMMS theme's own CSS can never reach this page. See
+       app/README.md's "BMMS" theme section. -->
+  <div class="login-page">
+    <img src="/static/bmms-logo.png" alt="Black Mountain Middle School Raiders logo" class="login-logo">
+    <h2>Log in</h2>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form method="post" action="/login">
+      <label>Name<br><input name="name" value="{{ name or '' }}" required autofocus></label>
+      <label>PIN<br><input name="pin" type="password" inputmode="numeric" required></label>
+      <button type="submit">Log in</button>
+    </form>
+    <p class="muted">New here? <a href="/signup">Sign up</a> instead.</p>
+    <p class="muted"><a href="/admin/login">Admin log in</a></p>
+  </div>
 {% endblock %}

@@ -78,6 +78,20 @@ THEMES = {
     # below him like a yoyo with the other. See theme-fil-hang.svg's own
     # top comment before changing anything near the top edge again.
     "fil": "Fil",
+    # Same shared sidebar/full-width/bordered-section layout again, this
+    # time built for one specific real deployment site rather than a
+    # generic option: Black Mountain Middle School's own Raiders colors
+    # (maroon and gold, per the user) and school logo
+    # (app/static/bmms-logo.png - the school's own public logo, the same
+    # image found via a plain web search, not anything sensitive).
+    # Unlike Console/Savanna/Fil, this theme also reaches onto the login
+    # pages (admin_login.html, user_login.html) - those render before
+    # any account (and therefore any account's saved theme) exists for
+    # the request, so current_theme() always resolves to "default" there
+    # regardless of this theme's own existence; the login templates show
+    # the school logo unconditionally instead of through the theme
+    # mechanism, per the user wanting it there regardless.
+    "bmms": "BMMS",
 }
 
 MODES = {

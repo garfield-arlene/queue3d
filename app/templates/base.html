@@ -158,6 +158,43 @@
       --section-title-bg: #12b5a6;
       --section-title-text: #f4fffd;
     }
+
+    /* BMMS theme (see themes.py) - Black Mountain Middle School's own
+       maroon-and-gold colors, per the user, not a generic palette
+       invented for this app. --sidebar-bg is a fixed maroon in both
+       modes rather than flipping light/dark like Console's own sidebar
+       does - school colors are a fixed identity, not something that
+       should look "washed out" in light mode - the same reasoning
+       Savanna's photo-sidebar already established, just with a flat
+       color here instead of an image. --section-title-bg/text (a
+       brighter maroon with gold text) stays fixed across modes too, for
+       the same "a saturated accent needs to stay saturated in both
+       palettes" reason as every other theme's own section-title color. */
+    [data-theme="bmms"] {
+      color-scheme: light;
+      --bg: #faf5ea;
+      --text: #2a1013;
+      --error: #c0392b;
+      --border: #e8d9b0;
+      --border-strong: #d4bc7a;
+      --detail-bg: #8881;
+      --sidebar-bg: #4a0d15;
+      --content-bg: #fffdf7;
+      --section-title-bg: #7a1420;
+      --section-title-text: #f0c975;
+    }
+    [data-theme="bmms"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #140f0c;
+      --text: #f3e9da;
+      --error: #ff6b6b;
+      --border: #3a2a1c;
+      --border-strong: #55402a;
+      --sidebar-bg: #4a0d15;
+      --content-bg: #1c1613;
+      --section-title-bg: #7a1420;
+      --section-title-text: #f0c975;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -176,6 +213,25 @@
     button { font-size: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
     .error { color: var(--error); }
     .muted { opacity: 0.7; font-size: 0.9rem; }
+    /* The school logo and its surrounding centered layout on the two
+       login pages (admin_login.html, user_login.html) - a plain rule,
+       not theme-gated like .bmms-logo above, since it's meant to show
+       up there regardless of theme (see those templates' own comments
+       for why). Per the user, after the first version (a small
+       left-aligned logo above an otherwise left-aligned page): a large,
+       centered logo above a centered form. .login-page centers
+       everything (the logo, "Log in" heading, error/muted text) via
+       text-align, then the form - a block with its own fixed max-width,
+       so text-align alone can't center it - gets margin: 0 auto to
+       center as a block instead, with text-align reset to left inside
+       it since centering the labels/inputs themselves would look odd.
+       The logo's own width is 480px - 50% wider than the form's own
+       320px (the generic `form` rule's max-width above), like a
+       letterhead spanning wider than the form it sits above - per the
+       user, not an arbitrary "large" size. */
+    .login-logo { display: block; width: 480px; max-width: 90%; height: auto; margin: 0 auto 1.5rem; }
+    .login-page { text-align: center; }
+    .login-page form { margin: 0 auto; text-align: left; }
     /* A one-time success/informational message (e.g. a freshly-reset PIN,
        shown exactly once) - built from the same neutral tokens as
        details.tech-detail's box below rather than a new semantic color,
@@ -235,7 +291,8 @@
        the header's own background-image differ per theme from here on. */
     [data-theme="console"] body,
     [data-theme="savanna"] body,
-    [data-theme="fil"] body {
+    [data-theme="fil"] body,
+    [data-theme="bmms"] body {
       max-width: none;
       margin: 0;
       padding: 0;
@@ -245,7 +302,8 @@
     }
     [data-theme="console"] header,
     [data-theme="savanna"] header,
-    [data-theme="fil"] header {
+    [data-theme="fil"] header,
+    [data-theme="bmms"] header {
       flex: 0 0 220px;
       box-sizing: border-box;
       flex-direction: column;
@@ -264,7 +322,8 @@
     }
     [data-theme="console"] header h1,
     [data-theme="savanna"] header h1,
-    [data-theme="fil"] header h1 {
+    [data-theme="fil"] header h1,
+    [data-theme="bmms"] header h1 {
       margin: 0 0 1rem 0.25rem;
     }
     /* Every page's own nav block is a flat list of <a> tags (plus one
@@ -276,36 +335,43 @@
     [data-theme="savanna"] header a,
     [data-theme="savanna"] header form,
     [data-theme="fil"] header a,
-    [data-theme="fil"] header form {
+    [data-theme="fil"] header form,
+    [data-theme="bmms"] header a,
+    [data-theme="bmms"] header form {
       display: block;
     }
     [data-theme="console"] header a,
     [data-theme="savanna"] header a,
-    [data-theme="fil"] header a {
+    [data-theme="fil"] header a,
+    [data-theme="bmms"] header a {
       padding: 0.6rem 0.75rem;
       border-radius: 4px;
       color: var(--text);
     }
     [data-theme="console"] header a:hover,
     [data-theme="savanna"] header a:hover,
-    [data-theme="fil"] header a:hover {
+    [data-theme="fil"] header a:hover,
+    [data-theme="bmms"] header a:hover {
       background: var(--border);
     }
     [data-theme="console"] header form,
     [data-theme="savanna"] header form,
-    [data-theme="fil"] header form {
+    [data-theme="fil"] header form,
+    [data-theme="bmms"] header form {
       margin-top: 0.5rem;
       padding-top: 0.75rem;
       border-top: 1px solid var(--border);
     }
     [data-theme="console"] header form button,
     [data-theme="savanna"] header form button,
-    [data-theme="fil"] header form button {
+    [data-theme="fil"] header form button,
+    [data-theme="bmms"] header form button {
       width: 100%;
     }
     [data-theme="console"] main,
     [data-theme="savanna"] main,
-    [data-theme="fil"] main {
+    [data-theme="fil"] main,
+    [data-theme="bmms"] main {
       flex: 1 1 auto;
       min-width: 0;
       padding: 2rem 2.5rem;
@@ -323,7 +389,8 @@
        actually resolve to. */
     [data-theme="console"] .theme-section,
     [data-theme="savanna"] .theme-section,
-    [data-theme="fil"] .theme-section {
+    [data-theme="fil"] .theme-section,
+    [data-theme="bmms"] .theme-section {
       border: 1px solid var(--border-strong);
       border-radius: 6px;
       margin-bottom: 1.5rem;
@@ -331,7 +398,8 @@
     }
     [data-theme="console"] .theme-section > h3,
     [data-theme="savanna"] .theme-section > h3,
-    [data-theme="fil"] .theme-section > h3 {
+    [data-theme="fil"] .theme-section > h3,
+    [data-theme="bmms"] .theme-section > h3 {
       margin: 0;
       padding: 0.6rem 1rem;
       background: var(--section-title-bg);
@@ -339,18 +407,21 @@
     }
     [data-theme="console"] .theme-section > :not(h3),
     [data-theme="savanna"] .theme-section > :not(h3),
-    [data-theme="fil"] .theme-section > :not(h3) {
+    [data-theme="fil"] .theme-section > :not(h3),
+    [data-theme="bmms"] .theme-section > :not(h3) {
       margin-left: 1rem;
       margin-right: 1rem;
     }
     [data-theme="console"] .theme-section > *:last-child,
     [data-theme="savanna"] .theme-section > *:last-child,
-    [data-theme="fil"] .theme-section > *:last-child {
+    [data-theme="fil"] .theme-section > *:last-child,
+    [data-theme="bmms"] .theme-section > *:last-child {
       margin-bottom: 1rem;
     }
     [data-theme="console"] .theme-section > table,
     [data-theme="savanna"] .theme-section > table,
-    [data-theme="fil"] .theme-section > table {
+    [data-theme="fil"] .theme-section > table,
+    [data-theme="bmms"] .theme-section > table {
       /* The one child that should reach the section's own edges rather
          than sit inset like everything else - a table's own header row
          already reads as a boundary, and insetting it just wastes width
@@ -393,6 +464,25 @@
       background: rgba(255, 255, 255, 0.15);
     }
     [data-theme="savanna"] header form button {
+      background: var(--section-title-bg);
+      color: var(--section-title-text);
+      border: none;
+    }
+
+    /* BMMS-specific: the same "fixed light nav text regardless of mode"
+       override as Savanna above, for the same reason - --sidebar-bg
+       here is a fixed maroon in both light and dark mode rather than
+       something that flips with Console's own light/dark distinction,
+       so --text (dark in light mode, for readability against the
+       *content* area) isn't reliably readable against it either. */
+    [data-theme="bmms"] header,
+    [data-theme="bmms"] header a {
+      color: #f0dfb0;
+    }
+    [data-theme="bmms"] header a:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+    [data-theme="bmms"] header form button {
       background: var(--section-title-bg);
       color: var(--section-title-text);
       border: none;
@@ -456,6 +546,30 @@
       0%, 100% { transform: rotate(-4deg); }
       50% { transform: rotate(4deg); }
     }
+
+    /* BMMS-specific: the school's own logo (app/static/bmms-logo.png),
+       shown near the "queue3d" title in the sidebar header - always in
+       the markup (see the <body> below), hidden by default the same way
+       Fil's mascot images are, so nothing but CSS has to know which
+       theme is active. align-self overrides the header's own
+       align-items: stretch (every other header child is meant to fill
+       the sidebar's width; the logo should just be its own size,
+       centered) - unlike Fil's images, this one sits in normal document
+       flow (not position: fixed) since it's part of the header's own
+       layout, not a floating decoration on top of the page. Sized as a
+       percentage of the sidebar's own width (not a fixed px value) per
+       the user, after an initial smaller version read as "small and
+       hard to read." */
+    .bmms-logo {
+      display: none;
+    }
+    [data-theme="bmms"] .bmms-logo {
+      display: block;
+      align-self: center;
+      width: 85%;
+      height: auto;
+      margin-bottom: 0.75rem;
+    }
   </style>
   <script>
     // The one part of any sidebar-layout theme (Console, Savanna - see
@@ -471,7 +585,7 @@
     // replace themselves via hx-swap), not just on initial load, so a
     // background refresh can't silently leave a swapped-in section
     // unboxed.
-    const SECTION_THEMES = ["console", "savanna", "fil"];
+    const SECTION_THEMES = ["console", "savanna", "fil", "bmms"];
     function applyThemeSections() {
       if (!SECTION_THEMES.includes(document.documentElement.getAttribute("data-theme"))) return;
       // A descendant selector, not just direct children of <main> - some
@@ -518,6 +632,7 @@
   <img src="/static/theme-fil-peek.svg" alt="" aria-hidden="true" class="fil-peek" title="Peek-a-boo">
   <img src="/static/theme-fil-hang.svg" alt="" aria-hidden="true" class="fil-hang" title="Hi, I'm Fil">
   <header>
+    <img src="/static/bmms-logo.png" alt="Black Mountain Middle School Raiders logo" class="bmms-logo">
     <h1>queue3d</h1>
     {% block nav %}{% endblock %}
   </header>
