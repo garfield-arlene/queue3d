@@ -64,13 +64,12 @@ THEMES = {
     # domain, and even that is still a live Disney trademark regardless
     # of copyright status, which using it as a recurring UI mascot would
     # squarely risk. "Fil" (app/static/theme-fil-*.svg) is drawn from
-    # scratch for this project instead - shaped like an actual filament
-    # spool seen from the side (flange rim, wound-filament bands, the
-    # hole through the center), not just colored like one - with no
-    # license or trademark question at all, peeking around the sidebar's
-    # own edge and dangling from the top of the window by his own strand
-    # of filament, per the user's own examples of what "fun" should look
-    # like here.
+    # scratch for this project instead, with no license or trademark
+    # question at all - a stick figure made of bent filament wire (per
+    # the user, Forky-from-Toy-Story vibes: googly eyes, a scribbled
+    # marker mouth, bendy limbs), peeking around the sidebar's own edge
+    # facing the viewer, and dangling from the top of the window while
+    # swinging a miniature spool of filament below him like a yoyo.
     "fil": "Fil",
 }
 

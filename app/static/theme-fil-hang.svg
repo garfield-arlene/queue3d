@@ -1,39 +1,58 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 150" width="100" height="150">
-  <!-- Fil's own strand of filament, doubling as the thread he hangs from -->
-  <line x1="50" y1="0" x2="50" y2="28" stroke="#7a6248" stroke-width="3" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 125" width="100" height="125">
+  <!-- Fil, reimagined per the user as a stick figure made of bent
+       filament wire (Forky-from-Toy-Story vibes: googly eyes, a
+       scribbled marker mouth, bendy pipe-cleaner-style limbs) instead
+       of a spool-shaped body - swinging a miniature spool below him
+       like a yoyo. -->
 
-  <!-- arms, thrown up in a "wheee" pose -->
-  <path d="M27,60 Q8,46 6,26" stroke="#12b5a6" stroke-width="7" fill="none" stroke-linecap="round"/>
-  <path d="M73,60 Q92,46 94,26" stroke="#12b5a6" stroke-width="7" fill="none" stroke-linecap="round"/>
-  <circle cx="6" cy="26" r="5" fill="#12b5a6"/>
-  <circle cx="94" cy="26" r="5" fill="#12b5a6"/>
+  <!-- the strand of filament he hangs from, into the top of his head -->
+  <line x1="60" y1="0" x2="60" y2="19" stroke="#7a6248" stroke-width="3" stroke-linecap="round"/>
 
-  <!-- legs, dangling and kicked out mid-swing -->
-  <path d="M40,82 Q32,102 22,116" stroke="#12b5a6" stroke-width="7" fill="none" stroke-linecap="round"/>
-  <path d="M60,82 Q70,100 82,112" stroke="#12b5a6" stroke-width="7" fill="none" stroke-linecap="round"/>
-  <circle cx="22" cy="116" r="5" fill="#12b5a6"/>
-  <circle cx="82" cy="112" r="5" fill="#12b5a6"/>
+  <!-- a loose curl of filament, like a stray bit of hair -->
+  <path d="M68,20 Q76,16 72,10 Q69,6 74,4" stroke="#0d8478" stroke-width="2.5" fill="none" stroke-linecap="round"/>
 
-  <!-- body: an actual filament spool seen from the side (the view you'd
-       get from a spool loaded on a printer, its round face toward you) -
-       the outer flange rim, a couple of bands where filament itself
-       would be wound, and the hole straight through the middle every
-       real spool has for a holder rod - not just a plain colored circle. -->
-  <circle cx="50" cy="55" r="30" fill="#12b5a6" stroke="#0d8478" stroke-width="3"/>
-  <circle cx="50" cy="55" r="26" fill="none" stroke="#0d9384" stroke-width="1.5" opacity="0.55"/>
-  <circle cx="50" cy="55" r="21" fill="none" stroke="#3fcabb" stroke-width="1.5" opacity="0.45"/>
-  <circle cx="50" cy="55" r="4" fill="#0a655a"/>
+  <!-- head - a small wound ball of filament -->
+  <circle cx="60" cy="32" r="13" fill="#12b5a6" stroke="#0d8478" stroke-width="2.5"/>
 
-  <!-- eyes -->
-  <circle cx="39" cy="46" r="6" fill="#ffffff"/>
-  <circle cx="61" cy="46" r="6" fill="#ffffff"/>
-  <circle cx="40" cy="47" r="2.6" fill="#123330"/>
-  <circle cx="62" cy="47" r="2.6" fill="#123330"/>
+  <!-- googly eyes -->
+  <circle cx="55" cy="30" r="5.5" fill="#ffffff" stroke="#0d8478" stroke-width="1"/>
+  <circle cx="65" cy="30" r="5.5" fill="#ffffff" stroke="#0d8478" stroke-width="1"/>
+  <circle cx="54" cy="31" r="2.4" fill="#123330"/>
+  <circle cx="66" cy="31" r="2.4" fill="#123330"/>
 
-  <!-- big happy smile -->
-  <path d="M36,66 Q50,79 64,66" stroke="#0d3f39" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <!-- a scribbled, slightly goofy marker-drawn mouth -->
+  <path d="M53,41 L57,44 L61,40 L65,44 L69,41" stroke="#0d3f39" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 
   <!-- rosy cheeks -->
-  <circle cx="31" cy="60" r="4" fill="#ff9d8a" opacity="0.6"/>
-  <circle cx="69" cy="60" r="4" fill="#ff9d8a" opacity="0.6"/>
+  <circle cx="51" cy="37" r="2.6" fill="#ff9d8a" opacity="0.6"/>
+  <circle cx="69" cy="37" r="2.6" fill="#ff9d8a" opacity="0.6"/>
+
+  <!-- torso - one bent length of filament wire -->
+  <line x1="60" y1="45" x2="60" y2="75" stroke="#12b5a6" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- right arm, flung out for balance while he swings the yoyo -->
+  <path d="M60,52 Q78,55 85,42" stroke="#12b5a6" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <circle cx="85" cy="42" r="4.5" fill="#12b5a6"/>
+
+  <!-- left arm, holding the yoyo string -->
+  <path d="M60,52 Q45,60 38,72" stroke="#12b5a6" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <circle cx="38" cy="72" r="4.5" fill="#12b5a6"/>
+
+  <!-- legs, kicked apart mid-swing -->
+  <path d="M60,75 Q50,95 44,112" stroke="#12b5a6" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <circle cx="44" cy="112" r="4.5" fill="#12b5a6"/>
+  <path d="M60,75 Q70,95 78,112" stroke="#12b5a6" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <circle cx="78" cy="112" r="4.5" fill="#12b5a6"/>
+
+  <!-- a faint motion swoosh, selling the yoyo swing -->
+  <path d="M4,92 A22,22 0 0,1 26,124" stroke="#7a6248" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-dasharray="3,4" opacity="0.45"/>
+
+  <!-- the yoyo string, from his hand down to the spool -->
+  <line x1="38" y1="72" x2="18" y2="108" stroke="#7a6248" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- the yoyo itself - a miniature spool of filament, seen from the
+       side (outer flange, one wound band, the center hole) -->
+  <circle cx="18" cy="110" r="9" fill="#12b5a6" stroke="#0d8478" stroke-width="2"/>
+  <circle cx="18" cy="110" r="6" fill="none" stroke="#3fcabb" stroke-width="1.2" opacity="0.5"/>
+  <circle cx="18" cy="110" r="1.8" fill="#0a655a"/>
 </svg>

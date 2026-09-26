@@ -1941,27 +1941,37 @@ claim that copyright expiration does nothing to prevent. Proposed an
 original mascot instead; the user agreed: "Yeah, let's do the original
 mascot instead. I'm curious to see what mascot you come up with is."
 
-**"Fil" is a small, round character shaped like an actual filament
-spool** - hand-authored inline SVG (`app/static/theme-fil-peek.svg`,
-`theme-fil-hang.svg`), not a photo or an AI-generated image, so there's
-no license or attribution question at all, unlike Savanna's sourced
-photo above. The body isn't just a teal (`#12b5a6`, also reused as this
-theme's `--section-title-bg` so the section titles read as "his" color
-in both modes) circle - per the user, after an initial version read as
-"a character who's colored like filament" rather than "a spool of
-filament": it's a spool seen from the side the way one actually sits
-loaded on a printer, with the outer flange rim, a couple of concentric
-bands standing in for the wound filament itself, and the hole straight
-through the center every real spool has for a holder rod (doubling, on
-Fil, as a small centered nose). Dot eyes, rosy cheeks, thin noodle arms
-and legs. Two poses, per the user's own examples of "fun": `fil-peek`
-leans out from behind the sidebar's own right edge into the content
-area (drawn mostly *outside* its own SVG viewBox on purpose, the same
-way a corner-peeking cartoon character only ever shows part of
-themselves), and `fil-hang` dangles from the top of the browser window
-by a thread the SVG draws as his own strand of filament, with a slow
-(`6s`), small (`±4deg`) CSS `@keyframes` swing - gentle enough to stay a
-mascot, not a distraction sitting next to actual queue/job data.
+**"Fil" is a stick figure made of bent filament wire** - hand-authored
+inline SVG (`app/static/theme-fil-peek.svg`, `theme-fil-hang.svg`), not
+a photo or an AI-generated image, so there's no license or attribution
+question at all, unlike Savanna's sourced photo above. Went through two
+real redesigns before landing here, each per direct user feedback: a
+first version was just a plain teal circle (color-of-filament, no
+spool shape at all); a second gave that circle an actual spool
+silhouette (flange rim, wound-filament bands, a center hole); the user
+then decided they didn't like the circular body at all and asked for
+"a stick figure made of filament that sort of looks like Forky from
+Toy Story" instead - Pixar's own googly-eyed, pipe-cleaner-limbed spork
+character - which is the version that shipped. Teal (`#12b5a6`, also
+reused as this theme's `--section-title-bg` so the section titles read
+as "his" color in both modes) throughout: a small ball-of-wound-
+filament head, googly eyes (a white circle plus a dark pupil per eye,
+the Forky signature), a scribbled zigzag marker mouth rather than a
+smooth cartoon smile, and bendy limbs drawn as thick rounded strokes
+(not filled shapes) so they read as wire, not a solid body. Two poses,
+per the user's own examples of "fun": `fil-peek` leans his head out
+from behind the sidebar's own right edge facing the viewer head-on
+(per the user, after the first pass showed him in profile with only
+one eye visible), one hand gripping the corner, the rest of him
+implied hidden behind it; `fil-hang` dangles from the top of the
+browser window by a strand of filament attached to his head, one arm
+flung out for balance while the other swings a miniature spool below
+him like a yoyo (a faint dashed arc sells the swing) - per the user's
+own suggestion, once the spool itself stopped being his body and
+needed somewhere else to live. The existing slow (`6s`), small
+(`±4deg`) CSS `@keyframes` swing on `fil-hang` carried over unchanged -
+gentle enough to stay a mascot, not a distraction sitting next to
+actual queue/job data.
 
 **The structural CSS is shared with Console and Savanna, not
 duplicated again** - every shared layout rule picked up a third
@@ -1973,14 +1983,15 @@ hidden by plain CSS (`display: none`) except under `[data-theme="fil"]`
 - rather than added/removed by JS, so there's nothing for
 `applyThemeSections()` or any other script to manage for them.
 
-Verified the same way as Console and Savanna: a real isolated copy,
-Playwright screenshots (throwaway venv, cleaned up after) across the
-three-section Settings page and the login page, both modes, zero
-console errors and zero failed requests (confirming both SVGs actually
-load). Both poses render at the intended size and position in every
-screenshot, the swing animation doesn't affect layout, and the shared
-Console/Savanna structural rules still apply identically under this
-third theme id.
+Verified the same way as Console and Savanna, and repeated after each
+redesign pass: a real isolated copy, Playwright screenshots (throwaway
+venv, cleaned up after) across the three-section Settings page and a
+close-up crop of the sidebar/header corner at real UI size, both modes,
+zero console errors and zero failed requests (confirming both SVGs
+actually load). Both poses render at the intended size and position in
+every screenshot, the swing animation doesn't affect layout, and the
+shared Console/Savanna structural rules still apply identically under
+this third theme id.
 
 ### Login rate-limiting
 

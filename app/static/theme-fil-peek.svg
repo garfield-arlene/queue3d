@@ -1,29 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 90" width="60" height="90">
-  <!-- Fil peeking around the sidebar's own right edge - most of his body
-       is meant to fall outside this SVG's own viewBox (which lines up
-       exactly with that edge once positioned - see base.html), the same
-       way a cartoon character peeking around a corner only ever shows
-       part of themselves. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100" width="60" height="100">
+  <!-- Fil peeking around the sidebar's own right edge - facing the user
+       head-on (not in profile, per the user), leaning his head out from
+       behind the corner with one hand gripping the edge; the rest of
+       him stays hidden behind it. -->
 
-  <!-- a hand curling around the corner, low and to the left -->
-  <ellipse cx="6" cy="78" rx="10" ry="7" fill="#12b5a6" stroke="#0d8478" stroke-width="2.5"/>
+  <!-- a loose curl of filament, like a stray bit of hair -->
+  <path d="M40,18 Q48,14 44,8 Q41,4 46,2" stroke="#0d8478" stroke-width="2.2" fill="none" stroke-linecap="round"/>
 
-  <!-- head/body: the same filament-spool face as the hanging pose - the
-       outer flange, a couple of wound-filament bands, and the center
-       arbor hole - centered off the left edge so only the near side
-       shows. -->
-  <circle cx="12" cy="42" r="28" fill="#12b5a6" stroke="#0d8478" stroke-width="3"/>
-  <circle cx="12" cy="42" r="23" fill="none" stroke="#0d9384" stroke-width="1.5" opacity="0.55"/>
-  <circle cx="12" cy="42" r="17" fill="none" stroke="#3fcabb" stroke-width="1.5" opacity="0.45"/>
-  <circle cx="12" cy="42" r="4" fill="#0a655a"/>
+  <!-- head - a small wound ball of filament -->
+  <circle cx="26" cy="35" r="22" fill="#12b5a6" stroke="#0d8478" stroke-width="2.5"/>
 
-  <!-- just the one visible eye, wide with curiosity -->
-  <circle cx="31" cy="36" r="6.5" fill="#ffffff"/>
-  <circle cx="32.5" cy="37" r="3" fill="#123330"/>
+  <!-- googly eyes, both visible, looking straight out at the viewer -->
+  <circle cx="18" cy="32" r="6.5" fill="#ffffff" stroke="#0d8478" stroke-width="1"/>
+  <circle cx="34" cy="32" r="6.5" fill="#ffffff" stroke="#0d8478" stroke-width="1"/>
+  <circle cx="17" cy="33" r="2.8" fill="#123330"/>
+  <circle cx="35" cy="33" r="2.8" fill="#123330"/>
 
-  <!-- a small, curious half-smile -->
-  <path d="M27,50 Q36,57 41,49" stroke="#0d3f39" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+  <!-- a scribbled, slightly goofy marker-drawn mouth -->
+  <path d="M15,48 L20,52 L26,47 L32,52 L37,48" stroke="#0d3f39" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- one rosy cheek -->
-  <circle cx="38" cy="46" r="3.6" fill="#ff9d8a" opacity="0.6"/>
+  <!-- rosy cheeks -->
+  <circle cx="12" cy="42" r="3" fill="#ff9d8a" opacity="0.6"/>
+  <circle cx="40" cy="42" r="3" fill="#ff9d8a" opacity="0.6"/>
+
+  <!-- an arm stub connecting down to the hand, the rest of him implied
+       to be hidden behind the corner below/out of frame -->
+  <path d="M14,55 Q7,66 9,78" stroke="#12b5a6" stroke-width="6" fill="none" stroke-linecap="round"/>
+
+  <!-- a hand curling around the corner, gripping the edge -->
+  <ellipse cx="10" cy="82" rx="10" ry="7" fill="#12b5a6" stroke="#0d8478" stroke-width="2.5"/>
 </svg>
