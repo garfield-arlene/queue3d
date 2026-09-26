@@ -14,17 +14,24 @@
   <circle cx="22" cy="116" r="5" fill="#12b5a6"/>
   <circle cx="82" cy="112" r="5" fill="#12b5a6"/>
 
-  <!-- body - a friendly spool-of-filament face -->
+  <!-- body: an actual filament spool seen from the side (the view you'd
+       get from a spool loaded on a printer, its round face toward you) -
+       the outer flange rim, a couple of bands where filament itself
+       would be wound, and the hole straight through the middle every
+       real spool has for a holder rod - not just a plain colored circle. -->
   <circle cx="50" cy="55" r="30" fill="#12b5a6" stroke="#0d8478" stroke-width="3"/>
+  <circle cx="50" cy="55" r="26" fill="none" stroke="#0d9384" stroke-width="1.5" opacity="0.55"/>
+  <circle cx="50" cy="55" r="21" fill="none" stroke="#3fcabb" stroke-width="1.5" opacity="0.45"/>
+  <circle cx="50" cy="55" r="4" fill="#0a655a"/>
 
   <!-- eyes -->
-  <circle cx="39" cy="50" r="6" fill="#ffffff"/>
-  <circle cx="61" cy="50" r="6" fill="#ffffff"/>
-  <circle cx="40" cy="51" r="2.6" fill="#123330"/>
-  <circle cx="62" cy="51" r="2.6" fill="#123330"/>
+  <circle cx="39" cy="46" r="6" fill="#ffffff"/>
+  <circle cx="61" cy="46" r="6" fill="#ffffff"/>
+  <circle cx="40" cy="47" r="2.6" fill="#123330"/>
+  <circle cx="62" cy="47" r="2.6" fill="#123330"/>
 
   <!-- big happy smile -->
-  <path d="M36,63 Q50,76 64,63" stroke="#0d3f39" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <path d="M36,66 Q50,79 64,66" stroke="#0d3f39" stroke-width="3.5" fill="none" stroke-linecap="round"/>
 
   <!-- rosy cheeks -->
   <circle cx="31" cy="60" r="4" fill="#ff9d8a" opacity="0.6"/>

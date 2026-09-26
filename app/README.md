@@ -1941,21 +1941,27 @@ claim that copyright expiration does nothing to prevent. Proposed an
 original mascot instead; the user agreed: "Yeah, let's do the original
 mascot instead. I'm curious to see what mascot you come up with is."
 
-**"Fil" is a small, round, filament-spool-colored character** - hand-
-authored inline SVG (`app/static/theme-fil-peek.svg`,
+**"Fil" is a small, round character shaped like an actual filament
+spool** - hand-authored inline SVG (`app/static/theme-fil-peek.svg`,
 `theme-fil-hang.svg`), not a photo or an AI-generated image, so there's
 no license or attribution question at all, unlike Savanna's sourced
-photo above. Teal (`#12b5a6`, also reused as this theme's
-`--section-title-bg` so the section titles read as "his" color in both
-modes), dot eyes, rosy cheeks, thin noodle arms and legs. Two poses, per
-the user's own examples of "fun": `fil-peek` leans out from behind the
-sidebar's own right edge into the content area (drawn mostly *outside*
-its own SVG viewBox on purpose, the same way a corner-peeking cartoon
-character only ever shows part of themselves), and `fil-hang` dangles
-from the top of the browser window by a thread the SVG draws as his own
-strand of filament, with a slow (`6s`), small (`±4deg`) CSS
-`@keyframes` swing - gentle enough to stay a mascot, not a distraction
-sitting next to actual queue/job data.
+photo above. The body isn't just a teal (`#12b5a6`, also reused as this
+theme's `--section-title-bg` so the section titles read as "his" color
+in both modes) circle - per the user, after an initial version read as
+"a character who's colored like filament" rather than "a spool of
+filament": it's a spool seen from the side the way one actually sits
+loaded on a printer, with the outer flange rim, a couple of concentric
+bands standing in for the wound filament itself, and the hole straight
+through the center every real spool has for a holder rod (doubling, on
+Fil, as a small centered nose). Dot eyes, rosy cheeks, thin noodle arms
+and legs. Two poses, per the user's own examples of "fun": `fil-peek`
+leans out from behind the sidebar's own right edge into the content
+area (drawn mostly *outside* its own SVG viewBox on purpose, the same
+way a corner-peeking cartoon character only ever shows part of
+themselves), and `fil-hang` dangles from the top of the browser window
+by a thread the SVG draws as his own strand of filament, with a slow
+(`6s`), small (`±4deg`) CSS `@keyframes` swing - gentle enough to stay a
+mascot, not a distraction sitting next to actual queue/job data.
 
 **The structural CSS is shared with Console and Savanna, not
 duplicated again** - every shared layout rule picked up a third

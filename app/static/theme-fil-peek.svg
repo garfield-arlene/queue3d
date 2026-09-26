@@ -8,8 +8,14 @@
   <!-- a hand curling around the corner, low and to the left -->
   <ellipse cx="6" cy="78" rx="10" ry="7" fill="#12b5a6" stroke="#0d8478" stroke-width="2.5"/>
 
-  <!-- head/body, centered off the left edge so only the near side shows -->
+  <!-- head/body: the same filament-spool face as the hanging pose - the
+       outer flange, a couple of wound-filament bands, and the center
+       arbor hole - centered off the left edge so only the near side
+       shows. -->
   <circle cx="12" cy="42" r="28" fill="#12b5a6" stroke="#0d8478" stroke-width="3"/>
+  <circle cx="12" cy="42" r="23" fill="none" stroke="#0d9384" stroke-width="1.5" opacity="0.55"/>
+  <circle cx="12" cy="42" r="17" fill="none" stroke="#3fcabb" stroke-width="1.5" opacity="0.45"/>
+  <circle cx="12" cy="42" r="4" fill="#0a655a"/>
 
   <!-- just the one visible eye, wide with curiosity -->
   <circle cx="31" cy="36" r="6.5" fill="#ffffff"/>
