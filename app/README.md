@@ -1944,34 +1944,52 @@ mascot instead. I'm curious to see what mascot you come up with is."
 **"Fil" is a stick figure made of bent filament wire** - hand-authored
 inline SVG (`app/static/theme-fil-peek.svg`, `theme-fil-hang.svg`), not
 a photo or an AI-generated image, so there's no license or attribution
-question at all, unlike Savanna's sourced photo above. Went through two
-real redesigns before landing here, each per direct user feedback: a
-first version was just a plain teal circle (color-of-filament, no
-spool shape at all); a second gave that circle an actual spool
-silhouette (flange rim, wound-filament bands, a center hole); the user
-then decided they didn't like the circular body at all and asked for
-"a stick figure made of filament that sort of looks like Forky from
+question at all, unlike Savanna's sourced photo above. Went through
+three real redesigns before landing here, each per direct user
+feedback: a first version was just a plain teal circle (color-of-
+filament, no spool shape at all); a second gave that circle an actual
+spool silhouette (flange rim, wound-filament bands, a center hole); the
+user then decided they didn't like the circular body at all and asked
+for "a stick figure made of filament that sort of looks like Forky from
 Toy Story" instead - Pixar's own googly-eyed, pipe-cleaner-limbed spork
-character - which is the version that shipped. Teal (`#12b5a6`, also
-reused as this theme's `--section-title-bg` so the section titles read
-as "his" color in both modes) throughout: a small ball-of-wound-
-filament head, googly eyes (a white circle plus a dark pupil per eye,
-the Forky signature), a scribbled zigzag marker mouth rather than a
-smooth cartoon smile, and bendy limbs drawn as thick rounded strokes
-(not filled shapes) so they read as wire, not a solid body. Two poses,
-per the user's own examples of "fun": `fil-peek` leans his head out
-from behind the sidebar's own right edge facing the viewer head-on
-(per the user, after the first pass showed him in profile with only
-one eye visible), one hand gripping the corner, the rest of him
-implied hidden behind it; `fil-hang` dangles from the top of the
-browser window by a strand of filament attached to his head, one arm
-flung out for balance while the other swings a miniature spool below
-him like a yoyo (a faint dashed arc sells the swing) - per the user's
-own suggestion, once the spool itself stopped being his body and
-needed somewhere else to live. The existing slow (`6s`), small
-(`±4deg`) CSS `@keyframes` swing on `fil-hang` carried over unchanged -
-gentle enough to stay a mascot, not a distraction sitting next to
-actual queue/job data.
+character. Teal (`#12b5a6`, also reused as this theme's
+`--section-title-bg` so the section titles read as "his" color in both
+modes) throughout: a small ball-of-wound-filament head, googly eyes (a
+white circle plus a dark pupil per eye, the Forky signature), a
+scribbled zigzag marker mouth rather than a smooth cartoon smile, and
+bendy limbs drawn as thick rounded strokes (not filled shapes) so they
+read as wire, not a solid body.
+
+**A real appropriateness problem, caught by the user and fixed
+immediately, not something to gloss over:** that stick-figure pass's
+`fil-hang` pose attached the hanging strand of filament directly to the
+top of his *head*, meant to read as him dangling from the ceiling by
+his own thread. The user's own words: "the one dangling looks like
+suicide. This is not something that should be at a school." Correct,
+and a real miss on this app's own part - a school-deployed app is
+exactly the context where that association is least acceptable, and it
+should have been caught before shipping, not after. Fixed by changing
+what the strand attaches to entirely: it now runs to a closed fist, on
+an arm drawn raised up beside his head, gripping it - the same pose as
+a kid hanging from playground monkey bars, not a noose. The same turn
+also fixed `fil-peek`, which the user found "a little weird with just a
+floating head" - it now shows the near (right) half of his *whole*
+body (head, torso, one arm, one leg), drawn as a full figure straddling
+the svg's own left edge so the far half is simply never drawn, the same
+clipping idea as before just carried down his whole body instead of
+stopping at the head.
+
+Two poses, per the user's own examples of "fun": `fil-peek` leans out
+from behind the sidebar's own right edge facing the viewer head-on (per
+the user, after an earlier pass showed him in profile with only one eye
+visible); `fil-hang` hangs from the top of the browser window by one
+hand gripping his own strand of filament, the other arm swinging a
+miniature spool below him like a yoyo (a faint dashed arc sells the
+swing) - per the user's own suggestion, once the spool itself stopped
+being his body and needed somewhere else to live. The existing slow
+(`6s`), small (`±4deg`) CSS `@keyframes` swing on `fil-hang` carried
+over unchanged through every redesign - gentle enough to stay a mascot,
+not a distraction sitting next to actual queue/job data.
 
 **The structural CSS is shared with Console and Savanna, not
 duplicated again** - every shared layout rule picked up a third

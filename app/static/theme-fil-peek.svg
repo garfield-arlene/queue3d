@@ -1,32 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100" width="60" height="100">
-  <!-- Fil peeking around the sidebar's own right edge - facing the user
-       head-on (not in profile, per the user), leaning his head out from
-       behind the corner with one hand gripping the edge; the rest of
-       him stays hidden behind it. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 108" width="40" height="108">
+  <!-- Fil peeking around the sidebar's own right edge - per the user,
+       showing the right half of his whole body (head, torso, one arm,
+       one leg), not just a floating head. Drawn as a full figure
+       straddling this SVG's own left edge (which lines up exactly with
+       the sidebar's right edge once positioned - see base.html) so the
+       left half of him is simply never drawn, the same idea as before,
+       just extended down his whole body instead of stopping at the
+       head. He faces the viewer (no profile view). -->
 
   <!-- a loose curl of filament, like a stray bit of hair -->
-  <path d="M40,18 Q48,14 44,8 Q41,4 46,2" stroke="#0d8478" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+  <path d="M11,10 Q19,6 15,0" stroke="#0d8478" stroke-width="2.2" fill="none" stroke-linecap="round"/>
 
   <!-- head - a small wound ball of filament -->
-  <circle cx="26" cy="35" r="22" fill="#12b5a6" stroke="#0d8478" stroke-width="2.5"/>
+  <circle cx="0" cy="24" r="13" fill="#12b5a6" stroke="#0d8478" stroke-width="2.5"/>
 
-  <!-- googly eyes, both visible, looking straight out at the viewer -->
-  <circle cx="18" cy="32" r="6.5" fill="#ffffff" stroke="#0d8478" stroke-width="1"/>
-  <circle cx="34" cy="32" r="6.5" fill="#ffffff" stroke="#0d8478" stroke-width="1"/>
-  <circle cx="17" cy="33" r="2.8" fill="#123330"/>
-  <circle cx="35" cy="33" r="2.8" fill="#123330"/>
+  <!-- his one visible (right) eye -->
+  <circle cx="6" cy="21" r="6" fill="#ffffff" stroke="#0d8478" stroke-width="1"/>
+  <circle cx="7" cy="22" r="2.6" fill="#123330"/>
 
-  <!-- a scribbled, slightly goofy marker-drawn mouth -->
-  <path d="M15,48 L20,52 L26,47 L32,52 L37,48" stroke="#0d3f39" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- the visible half of his scribbled mouth -->
+  <path d="M0,33 L4,36 L9,32" stroke="#0d3f39" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- rosy cheeks -->
-  <circle cx="12" cy="42" r="3" fill="#ff9d8a" opacity="0.6"/>
-  <circle cx="40" cy="42" r="3" fill="#ff9d8a" opacity="0.6"/>
+  <!-- one rosy cheek -->
+  <circle cx="10" cy="29" r="2.8" fill="#ff9d8a" opacity="0.6"/>
 
-  <!-- an arm stub connecting down to the hand, the rest of him implied
-       to be hidden behind the corner below/out of frame -->
-  <path d="M14,55 Q7,66 9,78" stroke="#12b5a6" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <!-- torso - the near half of the same bent-wire body, its far edge
+       running off the canvas's own left side -->
+  <line x1="5" y1="39" x2="5" y2="65" stroke="#12b5a6" stroke-width="10" stroke-linecap="butt"/>
 
-  <!-- a hand curling around the corner, gripping the edge -->
-  <ellipse cx="10" cy="82" rx="10" ry="7" fill="#12b5a6" stroke="#0d8478" stroke-width="2.5"/>
+  <!-- his near arm, reaching out into view -->
+  <path d="M5,44 Q20,48 26,38" stroke="#12b5a6" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <circle cx="26" cy="38" r="4.5" fill="#12b5a6"/>
+
+  <!-- his near leg, stepping into view -->
+  <path d="M5,65 Q15,84 13,104" stroke="#12b5a6" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <circle cx="13" cy="104" r="4.5" fill="#12b5a6"/>
 </svg>

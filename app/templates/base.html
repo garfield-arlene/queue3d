@@ -413,22 +413,27 @@
       pointer-events: none;
       z-index: 5;
     }
-    /* Positioned right at the sidebar's own 220px width (the shared
-       header rule's flex-basis above) so he reads as leaning out from
-       behind its edge into the content area, the same "peek around a
-       corner" pose the user asked for. */
+    /* Positioned so the svg's own left edge - where his body is cut off,
+       showing only the near half of him (see theme-fil-peek.svg's own
+       comment) - lines up exactly with the sidebar's own 220px width
+       (the shared header rule's flex-basis above), so he reads as
+       leaning out from behind its edge into the content area, the same
+       "peek around a corner" pose the user asked for. */
     [data-theme="fil"] .fil-peek {
       display: block;
-      left: 205px;
-      top: 40vh;
-      width: 64px;
+      left: 220px;
+      top: 38vh;
+      width: 56px;
       height: auto;
     }
-    /* Hangs from the top of the browser window itself, by his own
-       strand of filament (drawn into the svg's own top edge) - the
-       "hang from the ceiling" pose the user asked for. The gentle
-       swing below is slow and small on purpose - a mascot, not a
-       distraction from the actual queue/job data next to it. */
+    /* Hangs from the top of the browser window itself, gripping his own
+       strand of filament with one hand (drawn into the svg's own top
+       edge) - like a kid on playground monkey bars, not by his neck (an
+       earlier version attached the strand to his head instead of a
+       hand, which read as a noose on review - wrong for a school app,
+       fixed here). The gentle swing below is slow and small on purpose
+       - a mascot, not a distraction from the actual queue/job data next
+       to it. */
     [data-theme="fil"] .fil-hang {
       display: block;
       top: 0;

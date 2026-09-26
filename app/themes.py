@@ -68,8 +68,12 @@ THEMES = {
     # question at all - a stick figure made of bent filament wire (per
     # the user, Forky-from-Toy-Story vibes: googly eyes, a scribbled
     # marker mouth, bendy limbs), peeking around the sidebar's own edge
-    # facing the viewer, and dangling from the top of the window while
-    # swinging a miniature spool of filament below him like a yoyo.
+    # facing the viewer (his whole near-side body visible, not just his
+    # head), and hanging from the top of the window by ONE HAND gripping
+    # his own strand of filament - not by his neck, an earlier version's
+    # real mistake caught by the user as reading like a noose, wrong for
+    # a school app - while swinging a miniature spool below him like a
+    # yoyo with the other.
     "fil": "Fil",
 }
 
