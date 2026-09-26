@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 90" width="60" height="90">
+  <!-- Fil peeking around the sidebar's own right edge - most of his body
+       is meant to fall outside this SVG's own viewBox (which lines up
+       exactly with that edge once positioned - see base.html), the same
+       way a cartoon character peeking around a corner only ever shows
+       part of themselves. -->
+
+  <!-- a hand curling around the corner, low and to the left -->
+  <ellipse cx="6" cy="78" rx="10" ry="7" fill="#12b5a6" stroke="#0d8478" stroke-width="2.5"/>
+
+  <!-- head/body, centered off the left edge so only the near side shows -->
+  <circle cx="12" cy="42" r="28" fill="#12b5a6" stroke="#0d8478" stroke-width="3"/>
+
+  <!-- just the one visible eye, wide with curiosity -->
+  <circle cx="31" cy="36" r="6.5" fill="#ffffff"/>
+  <circle cx="32.5" cy="37" r="3" fill="#123330"/>
+
+  <!-- a small, curious half-smile -->
+  <path d="M27,50 Q36,57 41,49" stroke="#0d3f39" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+
+  <!-- one rosy cheek -->
+  <circle cx="38" cy="46" r="3.6" fill="#ff9d8a" opacity="0.6"/>
+</svg>

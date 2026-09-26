@@ -124,6 +124,40 @@
       --section-title-bg: #c9622a;
       --section-title-text: #fdf6ec;
     }
+
+    /* Fil theme (see themes.py) - same shared sidebar/full-width/
+       bordered-section layout again, this time with a plain, bright
+       minty palette instead of a photo, since the actual personality
+       here comes from the mascot images further down rather than the
+       background. --section-title-bg reuses Fil's own body color
+       (#12b5a6, see theme-fil-*.svg) so the section titles read as "his"
+       color in both modes, same reasoning as Console/Savanna's own
+       section-title-bg choice above. */
+    [data-theme="fil"] {
+      color-scheme: light;
+      --bg: #f5fbfa;
+      --text: #123330;
+      --error: #c0392b;
+      --border: #cdeae5;
+      --border-strong: #a9dcd4;
+      --detail-bg: #8881;
+      --sidebar-bg: #e3f6f3;
+      --content-bg: #ffffff;
+      --section-title-bg: #12b5a6;
+      --section-title-text: #f4fffd;
+    }
+    [data-theme="fil"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #101a19;
+      --text: #dff5f2;
+      --error: #ff6b6b;
+      --border: #1e3532;
+      --border-strong: #2c4b47;
+      --sidebar-bg: #0b1414;
+      --content-bg: #16211f;
+      --section-title-bg: #12b5a6;
+      --section-title-text: #f4fffd;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -200,7 +234,8 @@
        the same layout per theme; only the color tokens and (for Savanna)
        the header's own background-image differ per theme from here on. */
     [data-theme="console"] body,
-    [data-theme="savanna"] body {
+    [data-theme="savanna"] body,
+    [data-theme="fil"] body {
       max-width: none;
       margin: 0;
       padding: 0;
@@ -209,7 +244,8 @@
       min-height: 100vh;
     }
     [data-theme="console"] header,
-    [data-theme="savanna"] header {
+    [data-theme="savanna"] header,
+    [data-theme="fil"] header {
       flex: 0 0 220px;
       box-sizing: border-box;
       flex-direction: column;
@@ -227,7 +263,8 @@
       overflow-y: auto;
     }
     [data-theme="console"] header h1,
-    [data-theme="savanna"] header h1 {
+    [data-theme="savanna"] header h1,
+    [data-theme="fil"] header h1 {
       margin: 0 0 1rem 0.25rem;
     }
     /* Every page's own nav block is a flat list of <a> tags (plus one
@@ -237,31 +274,38 @@
     [data-theme="console"] header a,
     [data-theme="console"] header form,
     [data-theme="savanna"] header a,
-    [data-theme="savanna"] header form {
+    [data-theme="savanna"] header form,
+    [data-theme="fil"] header a,
+    [data-theme="fil"] header form {
       display: block;
     }
     [data-theme="console"] header a,
-    [data-theme="savanna"] header a {
+    [data-theme="savanna"] header a,
+    [data-theme="fil"] header a {
       padding: 0.6rem 0.75rem;
       border-radius: 4px;
       color: var(--text);
     }
     [data-theme="console"] header a:hover,
-    [data-theme="savanna"] header a:hover {
+    [data-theme="savanna"] header a:hover,
+    [data-theme="fil"] header a:hover {
       background: var(--border);
     }
     [data-theme="console"] header form,
-    [data-theme="savanna"] header form {
+    [data-theme="savanna"] header form,
+    [data-theme="fil"] header form {
       margin-top: 0.5rem;
       padding-top: 0.75rem;
       border-top: 1px solid var(--border);
     }
     [data-theme="console"] header form button,
-    [data-theme="savanna"] header form button {
+    [data-theme="savanna"] header form button,
+    [data-theme="fil"] header form button {
       width: 100%;
     }
     [data-theme="console"] main,
-    [data-theme="savanna"] main {
+    [data-theme="savanna"] main,
+    [data-theme="fil"] main {
       flex: 1 1 auto;
       min-width: 0;
       padding: 2rem 2.5rem;
@@ -278,30 +322,35 @@
        is what --section-title-bg/--section-title-text/--border-strong
        actually resolve to. */
     [data-theme="console"] .theme-section,
-    [data-theme="savanna"] .theme-section {
+    [data-theme="savanna"] .theme-section,
+    [data-theme="fil"] .theme-section {
       border: 1px solid var(--border-strong);
       border-radius: 6px;
       margin-bottom: 1.5rem;
       overflow: hidden;
     }
     [data-theme="console"] .theme-section > h3,
-    [data-theme="savanna"] .theme-section > h3 {
+    [data-theme="savanna"] .theme-section > h3,
+    [data-theme="fil"] .theme-section > h3 {
       margin: 0;
       padding: 0.6rem 1rem;
       background: var(--section-title-bg);
       color: var(--section-title-text);
     }
     [data-theme="console"] .theme-section > :not(h3),
-    [data-theme="savanna"] .theme-section > :not(h3) {
+    [data-theme="savanna"] .theme-section > :not(h3),
+    [data-theme="fil"] .theme-section > :not(h3) {
       margin-left: 1rem;
       margin-right: 1rem;
     }
     [data-theme="console"] .theme-section > *:last-child,
-    [data-theme="savanna"] .theme-section > *:last-child {
+    [data-theme="savanna"] .theme-section > *:last-child,
+    [data-theme="fil"] .theme-section > *:last-child {
       margin-bottom: 1rem;
     }
     [data-theme="console"] .theme-section > table,
-    [data-theme="savanna"] .theme-section > table {
+    [data-theme="savanna"] .theme-section > table,
+    [data-theme="fil"] .theme-section > table {
       /* The one child that should reach the section's own edges rather
          than sit inset like everything else - a table's own header row
          already reads as a boundary, and insetting it just wastes width
@@ -348,6 +397,51 @@
       color: var(--section-title-text);
       border: none;
     }
+
+    /* Fil-specific: the two mascot images (see the <body> markup below
+       and theme-fil-*.svg) - both <img> tags are always present in the
+       markup on every theme, so JS never needs to add/remove them; they
+       just stay hidden except under this one theme. Fixed positioning
+       (not part of the normal document flow) so they float over the
+       page the same way a real desk mascot would sit on top of a
+       screen, rather than pushing any real content around; pointer-
+       events: none so they can never intercept a click meant for
+       whatever happens to be underneath them. */
+    .fil-peek, .fil-hang {
+      display: none;
+      position: fixed;
+      pointer-events: none;
+      z-index: 5;
+    }
+    /* Positioned right at the sidebar's own 220px width (the shared
+       header rule's flex-basis above) so he reads as leaning out from
+       behind its edge into the content area, the same "peek around a
+       corner" pose the user asked for. */
+    [data-theme="fil"] .fil-peek {
+      display: block;
+      left: 205px;
+      top: 40vh;
+      width: 64px;
+      height: auto;
+    }
+    /* Hangs from the top of the browser window itself, by his own
+       strand of filament (drawn into the svg's own top edge) - the
+       "hang from the ceiling" pose the user asked for. The gentle
+       swing below is slow and small on purpose - a mascot, not a
+       distraction from the actual queue/job data next to it. */
+    [data-theme="fil"] .fil-hang {
+      display: block;
+      top: 0;
+      right: 60px;
+      width: 90px;
+      height: auto;
+      transform-origin: top center;
+      animation: fil-swing 6s ease-in-out infinite;
+    }
+    @keyframes fil-swing {
+      0%, 100% { transform: rotate(-4deg); }
+      50% { transform: rotate(4deg); }
+    }
   </style>
   <script>
     // The one part of any sidebar-layout theme (Console, Savanna - see
@@ -363,7 +457,7 @@
     // replace themselves via hx-swap), not just on initial load, so a
     // background refresh can't silently leave a swapped-in section
     // unboxed.
-    const SECTION_THEMES = ["console", "savanna"];
+    const SECTION_THEMES = ["console", "savanna", "fil"];
     function applyThemeSections() {
       if (!SECTION_THEMES.includes(document.documentElement.getAttribute("data-theme"))) return;
       // A descendant selector, not just direct children of <main> - some
@@ -401,6 +495,10 @@
   </script>
 </head>
 <body>
+  <!-- Fil's two mascot poses (see the .fil-peek/.fil-hang CSS above) -
+       always in the markup, hidden by CSS on every theme but Fil. -->
+  <img src="/static/theme-fil-peek.svg" alt="" aria-hidden="true" class="fil-peek">
+  <img src="/static/theme-fil-hang.svg" alt="" aria-hidden="true" class="fil-hang">
   <header>
     <h1>queue3d</h1>
     {% block nav %}{% endblock %}

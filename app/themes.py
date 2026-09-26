@@ -57,6 +57,19 @@ THEMES = {
     # edge) and downscaled from 4000x3000/3.6MB to 1600x1363/~300KB for
     # a background image loaded on every page.
     "savanna": "Savanna",
+    # Same shared sidebar/full-width/bordered-section layout again, this
+    # time with a wholly original mascot instead of a photo - per the
+    # user, after a Mickey Mouse theme was proposed and turned down: only
+    # the specific 1928 Steamboat Willie design is actually public
+    # domain, and even that is still a live Disney trademark regardless
+    # of copyright status, which using it as a recurring UI mascot would
+    # squarely risk. "Fil" (app/static/theme-fil-*.svg) is drawn from
+    # scratch for this project instead - a small, round, filament-spool-
+    # colored character with no license or trademark question at all -
+    # peeking around the sidebar's own edge and dangling from the top of
+    # the window by his own strand of filament, per the user's own
+    # examples of what "fun" should look like here.
+    "fil": "Fil",
 }
 
 MODES = {

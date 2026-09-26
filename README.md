@@ -140,12 +140,17 @@ Managing user accounts:
   theme/mode combination overrides selectively, with zero visible change
   to how the app looked before this. See `app/README.md`'s "Themes"
   section.
-- **"Console" theme** - a second, genuinely different theme (not just a
-  color swap): page links as tabs down a left sidebar instead of a top
-  row, each page's sections enclosed in a border with a contrasting
-  title bar, and the full browser width used instead of a fixed, centered
-  column. Both Light and Dark modes. See `app/README.md`'s "The
-  'Console' theme" section.
+- **"Console," "Savanna," and "Fil" themes** - three genuinely different
+  themes (not just color swaps), sharing one layout: page links as tabs
+  down a left sidebar instead of a top row, each page's sections
+  enclosed in a border with a contrasting title bar, and the full
+  browser width used instead of a fixed, centered column. Console is a
+  neutral gray/indigo look; Savanna adds a real desert-sunrise photo
+  behind the sidebar; Fil adds an original mascot (peeking around the
+  sidebar's edge, dangling from the top of the window) instead of a
+  photo. All three ship both Light and Dark modes. See `app/README.md`'s
+  "The 'Console' theme," "The 'Savanna' theme," and "The 'Fil' theme"
+  sections.
 - **Automatic completion detection** - a background poller notices a
   print finishing, failing, or being cancelled on its own (via the same
   printer status read as the live progress bar above) and records the
@@ -447,13 +452,17 @@ Managing user accounts:
   selection" section.
 
 **Appearance**
-- Done - a second theme, "Console" (sidebar nav, bordered/titled
-  sections, full browser width), with both a light and dark palette - see
-  `app/README.md`'s "The 'Console' theme" section. Further themes beyond
-  these two - color changes, wallpaper, as their own selectable options -
-  remain open; everything must still ship as local static files, no CDN
-  fonts or external image URLs (see "Deployment: zero internet access" -
-  this app runs with none, ever).
+- Done - three themes beyond Default: "Console" (sidebar nav,
+  bordered/titled sections, full browser width), "Savanna" (the same
+  layout with a desert-sunrise background photo), and "Fil" (the same
+  layout again with an original mascot instead of a photo - a Mickey
+  Mouse theme was requested and turned down over trademark risk, see
+  `app/README.md`'s "The 'Fil' theme" section for why). All three ship
+  both a light and dark palette - see `app/README.md`'s "The 'Console'
+  theme," "The 'Savanna' theme," and "The 'Fil' theme" sections. Further
+  themes beyond these remain open; everything must still ship as local
+  static files, no CDN fonts or external image URLs (see "Deployment:
+  zero internet access" - this app runs with none, ever).
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
 

@@ -1923,6 +1923,59 @@ titles match the desert palette in both light and dark, and Console
 itself (screenshotted again after the shared-selector refactor) still
 looks pixel-identical to before.
 
+### The "Fil" theme - an original mascot, not a licensed character
+
+**Why this exists:** per the user, a third theme with the same
+Console/Savanna layout was requested as a Mickey Mouse theme - "he
+recently went into public domain... having him peek from behind a
+corner, hang from the ceiling, etc." Turned down, not built as asked:
+only the specific 1928 *Steamboat Willie*/*Plane Crazy* character design
+actually entered the US public domain (the 95-year copyright term
+expiring Jan 1, 2024) - not "Mickey Mouse" broadly, and not the modern
+design a viewer would actually picture. More importantly, **trademark
+rights don't expire with copyright** - Disney still actively holds and
+enforces Mickey Mouse as a trademark regardless of the 1928 design's
+copyright status, and using even that specific design as a recurring UI
+mascot (not a one-off parody/commentary use) risks a false-endorsement
+claim that copyright expiration does nothing to prevent. Proposed an
+original mascot instead; the user agreed: "Yeah, let's do the original
+mascot instead. I'm curious to see what mascot you come up with is."
+
+**"Fil" is a small, round, filament-spool-colored character** - hand-
+authored inline SVG (`app/static/theme-fil-peek.svg`,
+`theme-fil-hang.svg`), not a photo or an AI-generated image, so there's
+no license or attribution question at all, unlike Savanna's sourced
+photo above. Teal (`#12b5a6`, also reused as this theme's
+`--section-title-bg` so the section titles read as "his" color in both
+modes), dot eyes, rosy cheeks, thin noodle arms and legs. Two poses, per
+the user's own examples of "fun": `fil-peek` leans out from behind the
+sidebar's own right edge into the content area (drawn mostly *outside*
+its own SVG viewBox on purpose, the same way a corner-peeking cartoon
+character only ever shows part of themselves), and `fil-hang` dangles
+from the top of the browser window by a thread the SVG draws as his own
+strand of filament, with a slow (`6s`), small (`±4deg`) CSS
+`@keyframes` swing - gentle enough to stay a mascot, not a distraction
+sitting next to actual queue/job data.
+
+**The structural CSS is shared with Console and Savanna, not
+duplicated again** - every shared layout rule picked up a third
+`[data-theme="fil"]` selector alongside the existing two (`body`,
+`header`, `main`, the `.theme-section` rules, etc.), and `fil` was added
+to the `SECTION_THEMES` JS array the same way Savanna was. Both mascot
+`<img>` tags are always present in `base.html`'s markup on every theme -
+hidden by plain CSS (`display: none`) except under `[data-theme="fil"]`
+- rather than added/removed by JS, so there's nothing for
+`applyThemeSections()` or any other script to manage for them.
+
+Verified the same way as Console and Savanna: a real isolated copy,
+Playwright screenshots (throwaway venv, cleaned up after) across the
+three-section Settings page and the login page, both modes, zero
+console errors and zero failed requests (confirming both SVGs actually
+load). Both poses render at the intended size and position in every
+screenshot, the swing animation doesn't affect layout, and the shared
+Console/Savanna structural rules still apply identically under this
+third theme id.
+
 ### Login rate-limiting
 
 **Why this exists:** per the user - PINs are short by design (low
