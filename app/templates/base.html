@@ -405,8 +405,15 @@
        (not part of the normal document flow) so they float over the
        page the same way a real desk mascot would sit on top of a
        screen, rather than pushing any real content around; pointer-
-       events: none so they can never intercept a click meant for
-       whatever happens to be underneath them. */
+       events: none by default so they can never intercept a click meant
+       for whatever happens to be underneath them - overridden back to
+       auto on each one below, since a native title-attribute tooltip
+       (see the <img> tags' own title="") needs an element to actually
+       receive the hover for the browser to show it at all. Both are
+       small and sit mostly over padding/gutter space rather than real
+       controls, so the trade-off stays worth it for a hover greeting -
+       revisit if either one ever ends up sitting on top of something
+       actually clickable. */
     .fil-peek, .fil-hang {
       display: none;
       position: fixed;
@@ -425,6 +432,7 @@
       top: 38vh;
       width: 56px;
       height: auto;
+      pointer-events: auto;
     }
     /* Hangs from the top of the browser window itself, gripping his own
        strand of filament with one hand (drawn into the svg's own top
@@ -442,6 +450,7 @@
       height: auto;
       transform-origin: top center;
       animation: fil-swing 6s ease-in-out infinite;
+      pointer-events: auto;
     }
     @keyframes fil-swing {
       0%, 100% { transform: rotate(-4deg); }
@@ -501,9 +510,13 @@
 </head>
 <body>
   <!-- Fil's two mascot poses (see the .fil-peek/.fil-hang CSS above) -
-       always in the markup, hidden by CSS on every theme but Fil. -->
-  <img src="/static/theme-fil-peek.svg" alt="" aria-hidden="true" class="fil-peek">
-  <img src="/static/theme-fil-hang.svg" alt="" aria-hidden="true" class="fil-hang">
+       always in the markup, hidden by CSS on every theme but Fil. Each
+       carries a title="" for a plain native hover tooltip - purely a
+       mouse-hover flourish (neither image is keyboard-focusable), so
+       aria-hidden stays true; nothing accessibility-relevant lives in
+       either tooltip's text. -->
+  <img src="/static/theme-fil-peek.svg" alt="" aria-hidden="true" class="fil-peek" title="Peek-a-boo">
+  <img src="/static/theme-fil-hang.svg" alt="" aria-hidden="true" class="fil-hang" title="Hi, I'm Fil">
   <header>
     <h1>queue3d</h1>
     {% block nav %}{% endblock %}

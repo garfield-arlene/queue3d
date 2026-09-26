@@ -2008,6 +2008,28 @@ being his body and needed somewhere else to live. The existing slow
 over unchanged through every redesign - gentle enough to stay a mascot,
 not a distraction sitting next to actual queue/job data.
 
+**Each pose has a plain `title=""` hover tooltip** - per the user:
+"Peek-a-boo" on `fil-peek`, "Hi, I'm Fil" on `fil-hang`. A native
+browser tooltip rather than a custom one, since that needs nothing
+beyond the attribute itself - no JS, no extra CSS, nothing to vendor.
+The one real requirement it has: both images had `pointer-events: none`
+from the start (deliberately, so a decorative mascot could never
+intercept a click meant for whatever's underneath it), and a hover
+tooltip needs the element to actually receive the hover for the browser
+to show one at all - so both are overridden back to `pointer-events:
+auto` specifically, a small, scoped, documented trade-off rather than
+lifting the restriction everywhere. Confirmed with Playwright that the
+override actually reaches both elements (`getComputedStyle(...)
+.pointerEvents` reads back `"auto"`, not the base rule's `"none"`) and
+that the browser's own hit-test resolves to the mascot at its own
+center (`document.elementFromPoint` at the image's own coordinates)
+rather than passing through to something else - a real screenshot of
+the tooltip itself wasn't obtainable for either pose (native OS
+tooltips routinely don't render in a headless screenshot at all, and
+`fil-hang`'s own continuous swing animation additionally made
+Playwright's synthetic hover refuse as "not stable" - neither is a
+real-browser problem, just a limitation of the check itself).
+
 **The structural CSS is shared with Console and Savanna, not
 duplicated again** - every shared layout rule picked up a third
 `[data-theme="fil"]` selector alongside the existing two (`body`,
