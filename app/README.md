@@ -1820,6 +1820,109 @@ before the intended form's button, silently logging the test account out
 mid-script - fixed by scoping the selector to the actual form, not by
 changing anything in the app.
 
+**Two real follow-up reports, fixed right after:** "The admin settings
+isn't split into separate boxes with their own color title. Only 'My
+preferences' and 'Change your password' are... The light mode for the
+console theme seems to be only black + gray. Use a color for the
+section titles like on the dark mode." First - `admin_settings.html`,
+`user_settings.html`, and `admin_colors.html` each had one *unheaded*
+section (the site-wide settings form, the theme/mode form, the colors
+list) sitting above a properly-headed one - the section-wrapping script
+had nothing to box for those, since there was no `<h3>` to find at all.
+Fixed by giving each its own heading ("Site settings," "My
+preferences," "Current colors") rather than anything in the theme
+itself. Second - light mode's `--section-title-bg` was `#2b3a67`, a navy
+dark enough to read as barely-there black/gray against a light page;
+replaced with the same `#3b5bdb` indigo the dark palette already uses -
+a color this saturated needs the same value in both modes to actually
+look like a color against either background.
+
+### The "Savanna" theme - a real background photo, desert-sunrise colors
+
+**Why this exists:** per the user - the same Console layout (sidebar,
+full width, bordered sections), copied to a second theme with "a desert
+sunrise feel with the vibes from the opening scenes of the original
+Lion King movie," using a real background image.
+
+**The structural CSS is shared with Console, not duplicated** - every
+layout rule that used to read `[data-theme="console"] header { ... }`
+now reads `[data-theme="console"] header, [data-theme="savanna"] header
+{ ... }` (and likewise for `body`/`main`/the section-box rules), so the
+sidebar/full-width/bordered-section mechanics live in exactly one place
+regardless of how many themes end up wanting them. The section-wrapping
+script was generalized the same way: `.console-section` renamed to the
+theme-neutral `.theme-section`, and the inline script's gate changed
+from a single string comparison to a `SECTION_THEMES` array checked with
+`.includes()` - adding a third theme like this one later means adding
+its id to that array, not copying the script.
+
+**A real, freely-licensed photo, not a stock asset pulled without
+checking - per the user, explicitly: "don't pull any images illegally.
+Any images used should be free and open to use."** Sourced from
+Wikimedia Commons, whose API exposes real, verifiable license metadata
+per file rather than trusting a filename or a search result blindly -
+queried directly (`action=query&prop=imageinfo&iiprop=url|extmetadata`)
+before downloading anything. "The Savannah's Last Ember" by Commons user
+Temptious: `LicenseShortName: CC0`, `AttributionRequired: false` - a
+public domain dedication, the strongest and least restrictive license
+Commons offers, uploaded as part of a real, legitimate photography
+project (Wiki Loves Folklore 2026, Botswana) - not attribution-required,
+credited in `themes.py` anyway for traceability. Its own description -
+"the silhouettes of acacia trees stand like sentinels against a sky
+filled with soft, violet-tinged clouds" - is close to a word-for-word
+match for the requested look, confirmed by actually looking at the
+photo, not just its metadata: acacia-tree silhouettes against a vivid
+amber/orange/gold sky, the closest a real, freely-licensed photograph
+gets to the opening-scene visual without literally being one.
+
+**Processed before shipping, not used at its original size** - `Pillow`,
+cropped from 4000x3000 to 3520x3000 (a soccer goalpost visible at the
+original's right edge, confirmed by looking at the photo and cropped
+out), then downscaled to 1600x1363 and re-encoded at quality 82,
+348581 -> ~308KB. A `background-size: cover` sidebar image never needed
+the original's full resolution or file size, and this is loaded on every
+single page for anyone using this theme - worth shrinking deliberately
+for a Pi serving many users over a school LAN, not just left at whatever
+size the source happened to be.
+
+**The photo lives behind the sidebar specifically, not the whole page**
+- a deliberate choice, not the only option considered. This is a
+utility app (dense tables, forms, filter bars) where a photographic
+background behind actual body text would fight with readability across
+most of the app; the sidebar - short nav links, no dense text - is the
+one place a strong photographic moment doesn't cost anything to read.
+`linear-gradient(rgba(20,10,5,0.35), rgba(20,10,5,0.35))` (light mode) /
+`rgba(10,5,5,0.65)` (dark mode) stacked on top of the image in the same
+`background-image` property - not a real gradient, both color stops
+identical, just a flat tint layered over the photo so light nav text
+stays readable against its own brightest band (the sunset itself) in
+either mode. Nav text and hover state are pinned to a fixed light color
+regardless of mode here, unlike Console (where the flat sidebar color
+already contrasts correctly against `--text` in both modes) - a photo's
+own brightness varies across it, so one reliably-light color plus the
+scrim above is what actually stays legible everywhere on it, not
+something that should flip with the mode toggle the way flat-color
+themes do.
+
+**Colors away from the sidebar** - warm cream (`#fbf3e7`) content
+background and warm-brown text in light mode, a warm near-black
+(`#1c140f`, not blue-black like Console's dark mode) in dark mode, and a
+burnt-amber (`#c9622a`) section-title accent - the same value in both
+modes, for the identical reason Console's own light-mode color fix
+above needed it: a saturated accent color needs to stay saturated in
+both palettes to read as an actual color, not a duller "light-mode-safe"
+variant of itself.
+
+Verified the same way as Console: a real isolated copy, Playwright
+screenshots (throwaway venv, cleaned up after) across the admin queue
+and the three-section Settings page, both modes, zero console errors
+and zero failed requests (confirming the image itself actually loads,
+not just that the CSS references it) - the sidebar photo, scrim, and
+light nav text all render correctly, the section boxes and their amber
+titles match the desert palette in both light and dark, and Console
+itself (screenshotted again after the shared-selector refactor) still
+looks pixel-identical to before.
+
 ### Login rate-limiting
 
 **Why this exists:** per the user - PINs are short by design (low

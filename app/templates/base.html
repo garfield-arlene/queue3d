@@ -83,6 +83,47 @@
       --section-title-bg: #3b5bdb;
       --section-title-text: #f4f6fb;
     }
+
+    /* Savanna theme (see themes.py) - the same sidebar/full-width/
+       bordered-section layout as Console (shared structural rules below,
+       keyed off both [data-theme="console"] and [data-theme="savanna"]
+       at once) with a warm desert-sunrise palette and a background photo
+       behind the sidebar instead of a flat color - per the user. Warm
+       browns/creams and a burnt-amber section-title accent instead of
+       Console's cool grays/indigo; --sidebar-bg here is only the
+       *fallback* color (shown briefly before the image loads, or if it
+       fails to), the real look comes from the header's own
+       background-image rule further down. */
+    [data-theme="savanna"] {
+      color-scheme: light;
+      --bg: #fbf3e7;
+      --text: #2e2013;
+      --error: #c0392b;
+      --border: #e6d7bd;
+      --border-strong: #d3bf9c;
+      --detail-bg: #8881;
+      --sidebar-bg: #2b1a12;
+      --content-bg: #fffaf2;
+      /* Same amber as the dark palette below, for the same reason
+         Console's two section-title-bg values match each other - a
+         color this saturated needs to stay consistent to read as an
+         actual accent color in both modes, not a washed-out variant of
+         itself in one of them. */
+      --section-title-bg: #c9622a;
+      --section-title-text: #fdf6ec;
+    }
+    [data-theme="savanna"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #1c140f;
+      --text: #ecdfcd;
+      --error: #ff6b6b;
+      --border: #3d2e21;
+      --border-strong: #52402f;
+      --sidebar-bg: #150d09;
+      --content-bg: #241a13;
+      --section-title-bg: #c9622a;
+      --section-title-text: #fdf6ec;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -153,7 +194,13 @@
        "these siblings, up to a stopping point" selector, so that part is
        the small inline script at the bottom of this file instead -
        gated to only run under this theme, touching no template. */
-    [data-theme="console"] body {
+    /* Shared by every sidebar-layout theme (Console, Savanna, and any
+       future one) - kept as one set of structural rules, keyed off
+       multiple [data-theme] selectors at once, rather than duplicating
+       the same layout per theme; only the color tokens and (for Savanna)
+       the header's own background-image differ per theme from here on. */
+    [data-theme="console"] body,
+    [data-theme="savanna"] body {
       max-width: none;
       margin: 0;
       padding: 0;
@@ -161,7 +208,8 @@
       align-items: stretch;
       min-height: 100vh;
     }
-    [data-theme="console"] header {
+    [data-theme="console"] header,
+    [data-theme="savanna"] header {
       flex: 0 0 220px;
       box-sizing: border-box;
       flex-direction: column;
@@ -178,7 +226,8 @@
       height: 100vh;
       overflow-y: auto;
     }
-    [data-theme="console"] header h1 {
+    [data-theme="console"] header h1,
+    [data-theme="savanna"] header h1 {
       margin: 0 0 1rem 0.25rem;
     }
     /* Every page's own nav block is a flat list of <a> tags (plus one
@@ -186,57 +235,73 @@
        rows here, purely by restyling that same markup, not by changing
        it. */
     [data-theme="console"] header a,
-    [data-theme="console"] header form {
+    [data-theme="console"] header form,
+    [data-theme="savanna"] header a,
+    [data-theme="savanna"] header form {
       display: block;
     }
-    [data-theme="console"] header a {
+    [data-theme="console"] header a,
+    [data-theme="savanna"] header a {
       padding: 0.6rem 0.75rem;
       border-radius: 4px;
       color: var(--text);
     }
-    [data-theme="console"] header a:hover {
+    [data-theme="console"] header a:hover,
+    [data-theme="savanna"] header a:hover {
       background: var(--border);
     }
-    [data-theme="console"] header form {
+    [data-theme="console"] header form,
+    [data-theme="savanna"] header form {
       margin-top: 0.5rem;
       padding-top: 0.75rem;
       border-top: 1px solid var(--border);
     }
-    [data-theme="console"] header form button {
+    [data-theme="console"] header form button,
+    [data-theme="savanna"] header form button {
       width: 100%;
     }
-    [data-theme="console"] main {
+    [data-theme="console"] main,
+    [data-theme="savanna"] main {
       flex: 1 1 auto;
       min-width: 0;
       padding: 2rem 2.5rem;
       background: var(--content-bg);
     }
-    /* The section-box look itself - .console-section is added by the
+    /* The section-box look itself - .theme-section is added by the
        inline script below, wrapping a <h3> and everything after it up to
        the next one (or the end of the page). The title bar is the <h3>
        itself, styled to fill the section's full width in a contrasting
        color, per the user ("a contrasting color for section titles to
-       make them stand out more") - not just a colored underline. */
-    [data-theme="console"] .console-section {
+       make them stand out more") - not just a colored underline. Named
+       generically (not "console-section") since Savanna reuses the exact
+       same class/script now too - the only thing that changes per theme
+       is what --section-title-bg/--section-title-text/--border-strong
+       actually resolve to. */
+    [data-theme="console"] .theme-section,
+    [data-theme="savanna"] .theme-section {
       border: 1px solid var(--border-strong);
       border-radius: 6px;
       margin-bottom: 1.5rem;
       overflow: hidden;
     }
-    [data-theme="console"] .console-section > h3 {
+    [data-theme="console"] .theme-section > h3,
+    [data-theme="savanna"] .theme-section > h3 {
       margin: 0;
       padding: 0.6rem 1rem;
       background: var(--section-title-bg);
       color: var(--section-title-text);
     }
-    [data-theme="console"] .console-section > :not(h3) {
+    [data-theme="console"] .theme-section > :not(h3),
+    [data-theme="savanna"] .theme-section > :not(h3) {
       margin-left: 1rem;
       margin-right: 1rem;
     }
-    [data-theme="console"] .console-section > *:last-child {
+    [data-theme="console"] .theme-section > *:last-child,
+    [data-theme="savanna"] .theme-section > *:last-child {
       margin-bottom: 1rem;
     }
-    [data-theme="console"] .console-section > table {
+    [data-theme="console"] .theme-section > table,
+    [data-theme="savanna"] .theme-section > table {
       /* The one child that should reach the section's own edges rather
          than sit inset like everything else - a table's own header row
          already reads as a boundary, and insetting it just wastes width
@@ -245,21 +310,62 @@
       margin-right: 0;
       width: 100%;
     }
+
+    /* Savanna-specific: the sidebar's background photo (see themes.py
+       for its source/license) instead of a flat color - added after the
+       shared header rule above so its background-image (a separate
+       longhand property) layers on top of that rule's own
+       background-color without needing to repeat every other header
+       property here too. A dark scrim (the two identical color stops in
+       each linear-gradient - not really a "gradient", just a flat tint
+       stacked on top of the photo) keeps the light nav text readable
+       against the photo's own bright band of sunset-orange sky; dark
+       mode uses a heavier one, evoking dusk rather than daybreak over
+       the same image, same idea as Console's own light/dark sidebar
+       distinction. Nav text and hover state are overridden to a fixed
+       light color regardless of mode - unlike Console, where --text
+       already provides enough contrast against a flat sidebar color in
+       both modes, a photo's own brightness varies across it, so a single
+       reliably-light color (plus the scrim above) is what actually stays
+       readable everywhere on it, in either mode. */
+    [data-theme="savanna"] header {
+      background-image: linear-gradient(rgba(20, 10, 5, 0.35), rgba(20, 10, 5, 0.35)), url("/static/theme-savanna-sunset.jpg");
+      background-size: cover;
+      background-position: left center;
+    }
+    [data-theme="savanna"][data-mode="dark"] header {
+      background-image: linear-gradient(rgba(10, 5, 5, 0.65), rgba(10, 5, 5, 0.65)), url("/static/theme-savanna-sunset.jpg");
+    }
+    [data-theme="savanna"] header,
+    [data-theme="savanna"] header a {
+      color: #fdf6ec;
+    }
+    [data-theme="savanna"] header a:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+    [data-theme="savanna"] header form button {
+      background: var(--section-title-bg);
+      color: var(--section-title-text);
+      border: none;
+    }
   </style>
   <script>
-    // The one part of the Console theme (see themes.py) that genuinely
-    // needs script, not just CSS: grouping each <h3> and the content
-    // that follows it - up to the next <h3>, or the end of the page -
-    // into one bordered box (.console-section, styled above). CSS has no
-    // selector for "these siblings, up to a stopping point," and every
-    // other theme this app has ever had only needed color swaps, so
-    // there was nothing here to hook into before now. Gated to this one
-    // theme and re-run after every htmx swap (some sections - the jobs
-    // table, the printer status banner - replace themselves via
-    // hx-swap), not just on initial load, so a background refresh can't
-    // silently leave a swapped-in section unboxed.
-    function applyConsoleSections() {
-      if (document.documentElement.getAttribute("data-theme") !== "console") return;
+    // The one part of any sidebar-layout theme (Console, Savanna - see
+    // themes.py) that genuinely needs script, not just CSS: grouping
+    // each <h3> and the content that follows it - up to the next <h3>,
+    // or the end of the page - into one bordered box (.theme-section,
+    // styled above). CSS has no selector for "these siblings, up to a
+    // stopping point," and every theme before Console only needed color
+    // swaps, so there was nothing here to hook into before it existed.
+    // Shared by every theme that wants this treatment (SECTION_THEMES
+    // below), not copy-pasted per theme, and re-run after every htmx
+    // swap (some sections - the jobs table, the printer status banner -
+    // replace themselves via hx-swap), not just on initial load, so a
+    // background refresh can't silently leave a swapped-in section
+    // unboxed.
+    const SECTION_THEMES = ["console", "savanna"];
+    function applyThemeSections() {
+      if (!SECTION_THEMES.includes(document.documentElement.getAttribute("data-theme"))) return;
       // A descendant selector, not just direct children of <main> - some
       // section headings (_jobs_table.html's "Your submissions") sit
       // inside their own wrapper div (#jobs-table, swapped wholesale by
@@ -268,9 +374,9 @@
       // either way, so it groups correctly at whatever depth a given
       // heading actually sits at.
       document.querySelectorAll("main h3").forEach((heading) => {
-        if (heading.parentElement.classList.contains("console-section")) return; // already wrapped
+        if (heading.parentElement.classList.contains("theme-section")) return; // already wrapped
         const section = document.createElement("div");
-        section.className = "console-section";
+        section.className = "theme-section";
         heading.replaceWith(section);
         section.appendChild(heading);
         // Stops at the next H3 *or* the page's own <footer> - without
@@ -288,10 +394,10 @@
         }
       });
     }
-    document.addEventListener("DOMContentLoaded", applyConsoleSections);
+    document.addEventListener("DOMContentLoaded", applyThemeSections);
     // document, not document.body - this script runs in <head>, before
     // <body> exists yet, so document.body would be null here.
-    document.addEventListener("htmx:afterSwap", applyConsoleSections);
+    document.addEventListener("htmx:afterSwap", applyThemeSections);
   </script>
 </head>
 <body>

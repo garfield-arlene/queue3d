@@ -44,6 +44,19 @@ THEMES = {
     # into one bordered box, since CSS has no "select these siblings up
     # to a stopping point" selector.
     "console": "Console",
+    # Same sidebar/full-width/bordered-section layout as Console (the
+    # structural CSS rules in base.html are shared between the two,
+    # keyed off both ids at once) with a desert-sunrise look instead -
+    # per the user: warm oranges/golds, an acacia-silhouette background
+    # photo behind the sidebar. That photo (app/static/theme-savanna-
+    # sunset.jpg) is "The Savannah's Last Ember" by Wikimedia Commons
+    # user Temptious, dedicated to the public domain (CC0 - no
+    # attribution legally required, credited here anyway for
+    # traceability): https://commons.wikimedia.org/wiki/File:The_Savannah%E2%80%99s_Last_Ember.jpg
+    # - cropped (a soccer goalpost visible at the original photo's right
+    # edge) and downscaled from 4000x3000/3.6MB to 1600x1363/~300KB for
+    # a background image loaded on every page.
+    "savanna": "Savanna",
 }
 
 MODES = {
