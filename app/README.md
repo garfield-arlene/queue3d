@@ -1969,7 +1969,7 @@ suicide. This is not something that should be at a school." Correct,
 and a real miss on this app's own part - a school-deployed app is
 exactly the context where that association is least acceptable, and it
 should have been caught before shipping, not after. Fixed by changing
-what the strand attaches to entirely: it now runs to a closed fist, on
+what the strand attaches to entirely: it now ran to a closed fist, on
 an arm drawn raised up beside his head, gripping it - the same pose as
 a kid hanging from playground monkey bars, not a noose. The same turn
 also fixed `fil-peek`, which the user found "a little weird with just a
@@ -1979,11 +1979,28 @@ the svg's own left edge so the far half is simply never drawn, the same
 clipping idea as before just carried down his whole body instead of
 stopping at the head.
 
+**That first `fil-hang` fix wasn't actually enough, and the user caught
+two more problems with it in the very next pass:** the thread running
+from the top edge down to the closed fist, at a glance, read as an
+obscene gesture rather than a grip - the user's words: "The closed fist
+with the string looks like he's 'flipping you off'." Separately, a
+decorative hair-curl doodle near the top of his head was reaching up
+toward the top edge too, which the user correctly pointed out brought
+the noose look right back even with the grip itself fixed: "Having it
+touch both the head and top still looks like suicide." Both fixed by
+removing anything that reaches toward the top edge except the one thing
+that should: his fist now touches the top edge directly, with no
+separate strand drawn above it at all, and the hair curl moved off to
+the side at head height instead. Documented in `theme-fil-hang.svg`'s
+own top comment as a concrete "don't reintroduce this" note, not just
+here, since it's exactly the kind of thing a future edit could
+accidentally bring back without realizing why it matters.
+
 Two poses, per the user's own examples of "fun": `fil-peek` leans out
 from behind the sidebar's own right edge facing the viewer head-on (per
 the user, after an earlier pass showed him in profile with only one eye
 visible); `fil-hang` hangs from the top of the browser window by one
-hand gripping his own strand of filament, the other arm swinging a
+fist gripping the top edge directly, the other arm swinging a
 miniature spool below him like a yoyo (a faint dashed arc sells the
 swing) - per the user's own suggestion, once the spool itself stopped
 being his body and needed somewhere else to live. The existing slow

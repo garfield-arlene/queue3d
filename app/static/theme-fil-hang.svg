@@ -1,21 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 125" width="100" height="125">
-  <!-- Fil, hanging by ONE HAND from a strand of filament - like a kid on
-       playground monkey bars, not by his neck (an earlier pass attached
-       the strand to the top of his head, which read as a noose - wrong
-       for a school app, caught and fixed on the user's own report) -
-       swinging a miniature spool below him like a yoyo with his free
-       hand. -->
+  <!-- Fil, hanging by ONE HAND directly from the top edge - like a kid
+       on playground monkey bars, not by his neck. Two things caught on
+       the user's own report and fixed here, both real appropriateness
+       misses for a school app: an earlier pass ran a thread from the
+       top edge down to a closed fist, which read as an obscene gesture
+       rather than a grip - fixed by having the fist itself touch the
+       top edge directly, no separate strand drawn above it; a second
+       pass then had a decorative hair curl reaching up near the top of
+       his head, which read as a second strand and brought back the
+       noose look even with the grip fixed - fixed by moving it off to
+       the side at head height instead. Swings a miniature spool below
+       him like a yoyo with his free hand. -->
 
-  <!-- the strand of filament he's gripping -->
-  <line x1="44" y1="0" x2="44" y2="14" stroke="#7a6248" stroke-width="3" stroke-linecap="round"/>
+  <!-- the gripping arm, raised straight up so his fist touches the top
+       edge directly - no separate strand/thread drawn above the fist -->
+  <path d="M60,42 Q44,24 44,6" stroke="#12b5a6" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <!-- his closed fist, gripping the top of the window itself -->
+  <circle cx="44" cy="5" r="5" fill="#12b5a6" stroke="#0d8478" stroke-width="2"/>
 
-  <!-- the gripping arm, raised up beside his head to hold on -->
-  <path d="M60,42 Q46,28 44,15" stroke="#12b5a6" stroke-width="6" fill="none" stroke-linecap="round"/>
-  <!-- his closed fist, gripping the strand -->
-  <circle cx="44" cy="15" r="5" fill="#12b5a6" stroke="#0d8478" stroke-width="2"/>
-
-  <!-- a loose curl of filament, like a stray bit of hair -->
-  <path d="M70,20 Q78,16 74,10 Q71,6 76,4" stroke="#0d8478" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- a loose curl of filament, like a stray bit of hair - off to the
+       side at head height, well clear of the top edge -->
+  <path d="M76,27 Q85,25 82,33 Q80,37 87,37" stroke="#0d8478" stroke-width="2.5" fill="none" stroke-linecap="round"/>
 
   <!-- head - a small wound ball of filament -->
   <circle cx="62" cy="30" r="13" fill="#12b5a6" stroke="#0d8478" stroke-width="2.5"/>
