@@ -287,20 +287,16 @@ neither ends up committed to this (public) repo:
 ```
 
 Needs your own key already added to that machine's `authorized_keys`,
-the same way it already is for the Pi - a one-time `ssh-copy-id` (or
-manual append) if it isn't there yet. It fetches both files from
-`<cert-host>` into `deploy/cache/tls/` - a plain read first, and if
-that account can't read a file directly (certbot leaves `privkey.pem`
-root-only by default, so this is the common case, not the exception),
-automatically falls back to `ssh -t ... sudo cat` instead: a real
-interactive sudo password prompt, over a pty allocated specifically so
-that prompt can actually appear, not silently skipped or left to fail
-with a confusing permission error. Confirms the two files actually
-match each other afterward either way (the same `openssl ... -modulus`
-check done by hand the first time this cert was wired in - catches a
-fetch that grabbed a stale/mismatched pair, rather than that only
-surfacing later as a broken HTTPS setup on the Pi), and prints the
-cert's valid dates.
+the same way it already is for the Pi, connecting as an account that
+can already read both files directly - no sudo, no elevation, no
+fallback of any kind. Per the user, whose account on that machine is
+already set up with exactly that access: this script trusts it and
+just copies the files with a plain `scp`, nothing more. It fetches both
+into `deploy/cache/tls/`, confirms they actually match each other
+afterward (the same `openssl ... -modulus` check done by hand the
+first time this cert was wired in - catches a fetch that grabbed a
+stale/mismatched pair, rather than that only surfacing later as a
+broken HTTPS setup on the Pi), and prints the cert's valid dates.
 
 **Doing it by hand instead** (what `prep_deploy.sh` above actually
 automates) still works fine, if you'd rather not set up SSH access

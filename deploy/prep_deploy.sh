@@ -11,12 +11,11 @@
 # Needs: SSH access to the machine that runs certbot for this deployment's
 # domain (a home server, not this Mac and not the Pi - see deploy/README.md
 # for which one, and why it can't be either of those) - your own key added
-# to its authorized_keys, the same way it already is for the Pi. certbot
-# leaves privkey.pem root-only-readable by default, so unless your SSH
-# login there already has read access some other way, you'll be prompted
-# for that account's sudo password below (real interactive prompts, over
-# a pty this script allocates for exactly that - not silently skipped or
-# swallowed).
+# to its authorized_keys, the same way it already is for the Pi, connecting
+# as an account that can already read both files directly. No sudo, no
+# elevation, no fallback of any kind - per the user, whose account is set
+# up with exactly the access this needs already: this script trusts that
+# and just copies the files.
 #
 # Only two things this needs to know, and only two arguments it takes -
 # the cert host, and the one directory on it holding both fullchain.pem
@@ -78,50 +77,11 @@ cd deploy
 mkdir -p cache/tls
 
 echo "Fetching the TLS certificate from $CERT_HOST:$REMOTE_CERT_DIR ..."
-# Tries a plain scp first - works fine if that account can already read
-# these files directly. Falls back to sudo on $CERT_HOST if that account
-# can't (certbot's privkey.pem is root-only by default on most setups) -
-# but deliberately NOT `ssh -t ... sudo cat > local_path`: with -t, the
-# *entire* remote pty's output (including sudo's own password prompt,
-# wherever it writes it) shares the same channel this local ssh process
-# treats as the command's stdout, so redirecting that straight into the
-# cert file either swallows the prompt into the file invisibly (looks
-# like a hang - you're actually being asked for a password you can't
-# see) or, if you type blindly and it works anyway, corrupts the file
-# with the prompt text prepended to it. Real bug, caught on the user's
-# own report of exactly this happening, not a hypothetical.
-#
-# Instead: elevate and stage a world-readable copy in /tmp first (that
-# command's own output is never captured anywhere, so a password prompt
-# during it is harmless no matter where it's written), then fetch that
-# staged copy with a completely separate, ordinary, non-interactive scp
-# - the actual file content never shares a stream with anything
-# interactive at all. Cleaned up immediately after either way, since it
-# briefly sits world-readable on $CERT_HOST.
-fetch_cert_file() {
-  local remote_path="$1" local_path="$2"
-  local scp_err
-  if scp_err="$(scp -q "$CERT_HOST:$remote_path" "$local_path" 2>&1)"; then
-    return 0
-  fi
-  # scp's own error is shown, not swallowed - "Permission denied" from a
-  # file genuinely unreadable by this account looks nothing like
-  # "Permission denied (publickey)" from an auth/wrong-user problem, or
-  # "No such file or directory" from a wrong path, and only scp's own
-  # message actually distinguishes them. A generic message here already
-  # cost real time chasing a permissions fix that may not have even been
-  # the actual problem.
-  echo "  $remote_path - plain read failed:" >&2
-  echo "$scp_err" | sed 's/^/    /' >&2
-  echo "  Falling back to sudo on $CERT_HOST to stage a readable copy (you may be asked for its password):"
-  local remote_tmp="/tmp/queue3d-prep-deploy-$$-$(basename "$remote_path")"
-  ssh -t "$CERT_HOST" "sudo sh -c \"cp '$remote_path' '$remote_tmp' && chmod 644 '$remote_tmp'\""
-  scp -q "$CERT_HOST:$remote_tmp" "$local_path"
-  ssh "$CERT_HOST" "rm -f '$remote_tmp'"
-}
-
-fetch_cert_file "$REMOTE_CERT_DIR/fullchain.pem" cache/tls/fullchain.pem
-fetch_cert_file "$REMOTE_CERT_DIR/privkey.pem" cache/tls/privkey.pem
+# Plain scp, nothing else - no sudo fallback, no elevation, no retry.
+# Trusts the account behind $CERT_HOST already has read access to both
+# files directly, per the user.
+scp "$CERT_HOST:$REMOTE_CERT_DIR/fullchain.pem" cache/tls/fullchain.pem
+scp "$CERT_HOST:$REMOTE_CERT_DIR/privkey.pem" cache/tls/privkey.pem
 chmod 600 cache/tls/privkey.pem
 
 # Confirms the two files actually belong together, the same check used
