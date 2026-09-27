@@ -19,11 +19,13 @@ printing. See "What release does" below for how.
 - **Users**: self-serve signup with just a name + PIN. Zero setup
   friction for users coming and going - no email,
   no password reset flow to build or support.
-- **Admins**: real accounts, but deliberately no self-service signup -
-  provisioned via `create_admin.py`, run directly on the server by whoever
-  controls it. Approving/releasing print jobs is a position of trust over
-  many users' shared printer time; open admin signup would defeat the
-  review gate's whole purpose.
+- **Admins**: real accounts, but deliberately no self-service signup.
+  The very first admin is provisioned via `create_admin.py`, run
+  directly on the server by whoever controls it; any admin can create
+  further admin accounts from `/admin/admins` afterward. Approving/
+  releasing print jobs is a position of trust over
+  many users' shared printer time; open (self-service) admin signup
+  would defeat the review gate's whole purpose.
 
 Sessions are signed cookies (Starlette's `SessionMiddleware`), independent
 per role (`user_id` / `admin_id` keys) - logging in as one doesn't grant
@@ -38,10 +40,14 @@ someone logs them out immediately even if they already have an open
 session. Deleting is blocked (`jobs.user_has_active_jobs`) while that user
 still has a job that isn't `done`/`failed`/`rejected` yet, naming who's
 blocking it; "delete all" is all-or-nothing, refusing entirely rather than
-partially deleting if anyone's blocked. This covers users only, not other
-admins - see README.md's To do list for why that's a separate, harder
-question (mainly: what stops an admin from locking everyone out by
-disabling/deleting every admin account, including their own).
+partially deleting if anyone's blocked.
+
+Any admin can also manage *other admin* accounts the same way from
+`/admin/admins` (create, disable/re-enable, delete, reset another's
+password) - see "Admins creating other admins, and a
+permanently-unremovable bootstrap admin" below for the
+`unremovable` flag that stops an admin from locking everyone out by
+disabling/deleting every admin account.
 
 ## Setup
 
@@ -66,8 +72,8 @@ No framework (Alembic, etc.) - deliberately, for something this small - so
 `db.py`'s `init_db()` (called on every startup, `main.py`'s
 `on_event("startup")`) does its own minimal version check instead. The
 schema version *is* the app version (`VERSION`, `version.py`) - not a
-second, separately-incrementing number - per the user: a schema change
-should always come with a version bump, so there's exactly one number to
+second, separately-incrementing number: a schema change
+always comes with a version bump, so there's exactly one number to
 keep track of, not two that can quietly drift apart. **This is a real
 policy, not just a mechanism: touching a table's columns and bumping
 `VERSION` are the same commit, always.** The first time this schema
@@ -307,9 +313,8 @@ style. Slicing and submitting are now two distinct, explicit actions:
   who submitted right away in the meantime. `created_at` still orders a
   user's own submissions list, and is what draft expiry (below) measures
   against.
-- **What happens to a draft nobody ever submits** - the open question this
-  feature originally raised: per the user, it auto-expires after an
-  admin-configurable number of days (`Settings.draft_expiry_days`,
+- **What happens to a draft nobody ever submits** - it auto-expires after
+  an admin-configurable number of days (`Settings.draft_expiry_days`,
   `/admin/settings`), not left as permanent clutter and not a fixed
   constant either, since there's no one right threshold for every
   deployment's traffic and storage. `cleanup_drafts.py` (same run-from-cron
@@ -345,13 +350,14 @@ instead of showing a stale form.
 
 ### Uploading `.obj` and `.zip` files
 
-**Why this exists:** per the user - many real-world downloads (a
+**Why this exists:** many real-world downloads (a
 Thingiverse-style "thing" in particular) come as a zip of several
 separate `.stl`/`.obj` files (variants, accessories, a multi-part
 model), not one bare `.stl`. Only `.stl` was ever accepted before this.
 
-**The one real design question, asked and confirmed before writing any
-code:** what happens when a zip has more than one model file? PrusaSlicer
+**The one real design question, confirmed before writing any
+code, was what happens when a zip has more than one model file.**
+PrusaSlicer
 loads all of them together onto one build plate. This app's entire
 slicing pipeline is built around **one object per job** on purpose
 (`slicing/stl_to_3mf.py` explicitly disables auto-arrange - `--arrange
@@ -709,11 +715,10 @@ already uses, rather than a raw error or silent no-op.
 
 ### Downloadable support bundle
 
-**Why this exists:** asked directly "what's next most important," this
-was recommended and built the same session - per the user's own earlier
-ask, "create a 'tar.gz' file that contains errors, model files, logs,
-etc. that would be helpful for offline bugfixes... After I setup the
-app/Pi, network, and printer in place, I want to be able to show up and
+**Why this exists:** a single downloadable bundle - a `.tar.gz` of
+errors, model files, and logs - covers offline bugfixing without
+needing to be at the Pi's own terminal for it. After the app/Pi,
+network, and printer are set up in place, an admin should be able to show up and
 collect the support files." This deployment has zero internet access at
 all (see project memory `queue3d-deployment-network`) - there's no way
 to relay a live problem back for help the normal way, so the plan is
@@ -831,9 +836,9 @@ change, not just assumed still true.)
 
 ### A real stuck-slicing incident: subprocess stdin inheritance
 
-**What happened, reported directly by the user:** "I uploaded an obj
-file and started the slicing process. The status shows submitted, but
-the progress bar is showing that it's still working... is it stuck?"
+**What happened:** an `.obj` file was uploaded and started slicing; the
+status showed `submitted`, with the progress bar appearing to still be
+working well past the point it should have finished.
 Checked the real running process, not just the database: both `slice.py`
 and its own child `mbotmake` were genuinely still alive, several minutes
 in, but at essentially zero CPU time - not computing, blocked. `mbotmake`
@@ -1023,17 +1028,17 @@ spans live inside `_jobs_table.html`, which htmx replaces wholesale on
 its own polling cycle, and a `<script>` tag doesn't re-run just because
 it got swapped back in.
 
-**A real bug caught before shipping, worth remembering:** `released_at`
+**Worth remembering:** `released_at`
 comes back from SQLite as a tzinfo-*naive* datetime, even though it's
 always written as UTC (`datetime.now(timezone.utc)`) - same gotcha
 `event.at.strftime(... 'UTC')` already works around elsewhere in this
 app. A plain `{{ eta.isoformat() }}` in the template would silently omit
 the UTC offset, and a browser's `new Date(...)` parses an offset-less
-ISO string as *local* time - every countdown would have been off by
+ISO string as *local* time, which would put every countdown off by
 however many hours from UTC, on every viewer's own clock, in a way that
-would never show up testing from a system already set to UTC. Caught
-only by checking what the rendered attribute value actually was and
-reasoning about how the browser would parse it - a passing render test
+would never show up testing from a system already set to UTC. Confirmed
+by checking what the rendered attribute value actually is and
+reasoning about how the browser parses it - a passing render test
 alone (attribute present, page loads) would not have caught this, and it
 was not caught by simply trying it against the real printer once.
 
@@ -1157,7 +1162,7 @@ jobs' "est. N min," not just `printing_eta()`), computed once per row in
 
 ### Automatic completion detection
 
-**Why this exists:** per the user, after this exact investigation:
+**Why this exists:** this exact investigation found that
 every real photo-capture failure that day traced back to the same root
 cause - the connection dying in the gap between a print *actually*
 finishing and an admin *noticing* and clicking "Mark done." Closing that
@@ -1173,8 +1178,8 @@ alone would only catch completion while someone happened to have the
 dashboard open - `jobs.start_auto_finish_poller()` (started once, from
 `main.py`'s startup handler) runs independently on a daemon thread,
 checking every 15 seconds via `jobs.check_and_finish_active_print()`:
-is anything `printing`? If not, skip the printer entirely - no network
-call, no cost, most of the time. If so, read `system_information()`
+if nothing is `printing`, it skips the printer entirely - no network
+call, no cost, most of the time. Otherwise it reads `system_information()`
 (the same call `print_progress()` already uses) and act only on an
 *explicit* positive signal from `current_process` - `complete`,
 `cancelled`, or a truthy `error` - never on absence or ambiguity. If
@@ -1320,8 +1325,8 @@ regardless of how it started. `jobs.untracked_print_in_progress()`
 layers the database on top of that: busy, but nothing in the queue is
 marked `printing` - it must have started some other way.
 
-**Two places this now matters, per the user** ("we should guard against
-sending a job while it's already mid-print"):
+**Two places this now matters, to guard against sending a job while
+it's already mid-print:**
 - `release()` checks live printer state in addition to its existing
   database-only "already printing" check - a second job can no longer
   be sent while the printer is physically busy, even if nothing in the
@@ -1378,7 +1383,7 @@ and end-to-end over real HTTP, confirming the full rendered message.
 
 ### Printer camera
 
-**Why this exists:** per the user, both the submitting user and an admin
+**Why this exists:** both the submitting user and an admin
 should be able to see what actually happened to a print, not just a status
 word - and an admin specifically needs to be able to visually confirm
 which physical print on the bed belongs to which submitter's claim.
@@ -1409,27 +1414,21 @@ printer, not in review:**
    ordinary request/response traffic, but raw JPEG bytes routinely contain
    byte values equal to `{`/`}`, and brace-counting straight into one
    crashes with a `UnicodeDecodeError` trying to `json.loads` binary
-   nonsense. The first fix attempt paused the background reader thread,
-   had the calling thread take over the raw socket directly, then
-   restarted the reader thread afterward - genuinely broken, caught by
-   live testing (a `mark_done` call hung indefinitely) before it ever
-   shipped: a thread blocked in `recv()` doesn't notice a "please stop"
-   flag until data actually arrives, so the two threads ended up racing to
-   read the same socket. The real fix keeps all of it on the *one* reader
+   nonsense. Everything stays on the *one* reader
    thread that's already reading the socket (`_read_loop`/
    `_consume_camera_frame`), handing a captured frame to the waiting
-   caller through a `queue.Queue` instead.
+   caller through a `queue.Queue` instead - a thread blocked in `recv()`
+   doesn't notice a "please stop" flag until data actually arrives, so
+   handing the socket off to a second thread mid-stream would just race
+   for it.
 
-   Getting frame boundaries right within that one thread took a second
-   round, also only caught live: the original assumption was that every
+   Frame boundaries within that one thread don't assume every
    single frame is preceded by its own `camera_frame` JSON-RPC
-   notification (matching how the very first frame looked), so
-   `_read_loop` would go back to normal JSON parsing after each frame,
-   expecting another notification next. That assumption was wrong -
-   subsequent frames in the stream aren't necessarily preceded by a fresh
-   notification - and guessing wrong meant trying to brace-count straight
-   into the next frame's raw binary header, the exact same crash as above.
-   The fix doesn't guess: while a capture is active (or was, recently -
+   notification (only the very first one necessarily is) - subsequent
+   frames in the stream aren't necessarily preceded by a fresh
+   notification, and guessing wrong would mean trying to brace-count
+   straight into the next frame's raw binary header, the exact same crash
+   as above. The fix doesn't guess: while a capture is active (or was, recently -
    see `_camera_mode_until`, a *sliding* deadline that keeps extending as
    long as frames keep arriving, since the printer keeps pushing for an
    unpredictable stretch after `end_camera_stream`), `_read_loop` peeks at
@@ -1542,14 +1541,9 @@ therefore can't survive an app restart - a real one happened between a
 photo-capture failure that correctly recorded `needs_pairing` and the
 next page load, silently resetting the banner back to `unknown` with no
 button, even though the connection genuinely still needed re-pairing.
-Rather than try to make the status survive restarts (persisting it to
-disk was considered and explicitly rejected - the deployment pattern
-this is actually built for, per the user, is being turned on once each
-weekday morning, i.e. restarting is the normal case, not the exception,
-so a disk-persisted "last known status" would just as often be stale
-*information* pretending to be current), the fix is structural: the
-status text stays best-effort and is never load-bearing for whether the
-fix is available. Clicking "Pair printer" is safe regardless of the
+Rather than try to make the status survive restarts, the fix is
+structural: the status text stays best-effort and is never load-bearing
+for whether the fix is available. Clicking "Pair printer" is safe regardless of the
 current status - `start_pairing()` only ever requests a new token over
 HTTP and saves it; it never touches or re-authenticates an
 already-`connected` client, so it can't break a connection that's
@@ -1592,8 +1586,8 @@ a possible failure.
 
 ### Account actions in the activity log
 
-**Why this exists:** per the user, "all actions should be captured in
-the activity log" - registration, disable, re-enable, and delete, not
+**Why this exists:** every account action is captured in
+the activity log, not just job actions - registration, disable, re-enable, and delete, not
 just job actions. `JobEvent.job_id` (schema `2.5.0`) is now nullable for
 exactly this: `None` for an account lifecycle action that isn't tied to
 any one job, with the affected user's name in `detail` instead of a
@@ -1640,21 +1634,12 @@ live one, regardless of how confident the migration looks on paper.
 
 ### Themes
 
-**Why this exists:** per the user, wanting to add more themes later
-(color changes, wallpaper, light/dark) - starting with converting the
-existing look into a real, named "Default" theme rather than just
-"whatever the CSS happens to say," so a future theme is a genuine
-alternative to switch to, not a rewrite of the only option that exists.
-
-**Per-account, not per-browser, and not site-wide.** Explicitly decided
-by the user over the two real alternatives: a per-browser preference
-(`localStorage`, no schema change needed) wouldn't follow someone to a
-different device, and the user wants it to "persist across logins";
-a single site-wide choice (one admin-set theme for everyone, like the
-shared printer this app is built around) was the other option, rejected
-in favor of letting each person - user or admin - pick their own.
+**Per-account, not per-browser, and not site-wide.** Each account -
+user or admin - picks its own theme and light/dark mode independently
+of any other account, persisting across logins and devices rather than
+living in the browser or applying site-wide to everyone at once.
 `User.theme`/`Admin.theme` (both nullable - `None` means "no preference
-set, use the default") are the real schema change this needs (`3.1.0`).
+set, use the default") are the schema change this needs (`3.1.0`).
 
 **`base.html`'s existing styles, refactored into CSS custom properties
 under `:root` - "Default" + "Light" - with zero visible change.** A
@@ -1691,16 +1676,11 @@ render, and `request` is already available in every template regardless
 of what its own route passed in (Starlette's Jinja2Templates adds it
 automatically), so this only needs a global function reading
 `request.session`, not a bigger context-passing change touching every
-router. **Caught in testing before this shipped:** a settings page's own
-context happened to also use the name `current_theme` for the *selected
-theme string* being displayed in its dropdown - since Jinja resolves a
-page's own context over a same-named global, `base.html`'s
-`current_theme(request)` call ended up trying to call that *string*,
-crashing every settings page with `TypeError: 'str' object is not
-callable`. Fixed by renaming the per-page variable to `selected_theme` -
-worth remembering as a real trap: a Jinja global and a template context
-key sharing a name silently shadows the global, and only breaks whatever
-tries to call it as a function.
+router. The per-page context key holding the *selected* theme string for
+a settings page's own dropdown is named `selected_theme`, not
+`current_theme` - a template context key sharing a name with a Jinja
+global shadows the global, and breaks whatever tries to call it as a
+function.
 
 **Everything self-hosted, no exceptions - this app runs with zero
 internet access (see "Deployment: zero internet access, by design"
@@ -1731,41 +1711,23 @@ in isolated testing: one shared cookie holding both a user session (mode
 `/dashboard` and `/admin/dashboard` each independently resolved to the
 right one.
 
-**"Default" renamed to "Basic"; BMMS becomes the actual default -
-ahead of deployment, per the user: "Change the name of the 'Default'
-theme to 'Basic'. Then select the 'BMMS' theme as default for all
-users and admins."** The rename itself is cosmetic (`THEMES["default"]`
-display name only - the id stays `"default"`, so no schema/data
-implications at all), but the second half genuinely isn't: it changes
-`themes.DEFAULT_THEME` from `"default"` to `"bmms"`, the same constant
-`current_theme()`/`current_mode()` (templates_env.py) fall back to for
-*any* signed-in account with no saved preference, and the same one
+**"Default" renamed to "Basic"; BMMS becomes the actual default, ahead
+of deployment.** The "Default" theme's display name changed to "Basic"
+(cosmetic only - `THEMES["default"]`'s display name, the id stays
+`"default"`, so no schema/data implications at all), and separately,
+"BMMS" became the actual default theme: `themes.DEFAULT_THEME` changed
+from `"default"` to `"bmms"`, the same constant `current_theme()`/
+`current_mode()` (templates_env.py) fall back to for *any* signed-in
+account with no saved preference, and the same one
 `routers/user.py`/`routers/admin.py`'s settings pages pre-select in the
-dropdown for one too.
-
-**Real bug this surfaced before it ever shipped, not a hypothetical:**
-until now, `DEFAULT_THEME` and "the theme a logged-out page (the two
-login pages, signup) renders as" happened to be the exact same value,
-so `current_theme()` used one `else` branch for both "no signed-in
-account at all" and "a signed-in account with no saved preference."
-The moment `DEFAULT_THEME` became `"bmms"`, that stopped being harmless:
-a logged-out page would have started rendering `data-theme="bmms"`
-too, wrapping the login form in BMMS's own sidebar layout and showing
-a *second*, theme-specific logo in that sidebar's header on top of the
-large letterhead one those pages already add themselves (see "The
-'BMMS' theme" below) - genuinely broken, not just cosmetically
-different. Fixed by splitting the two into separate constants:
-`themes.LOGGED_OUT_THEME` (always `"default"`/Basic - matching the
-user's own earlier framing, "I'm guessing the login pages are not part
-of the theme," now actually enforced by the code rather than true only
-by coincidence) and `DEFAULT_THEME` (what a real, signed-in account
-with no preference gets). Caught and fixed before ever being verified
-against a running server, by reasoning through the change rather than
-after seeing it break.
+dropdown for one too. A logged-out page (the two login pages, signup)
+renders as its own separate `themes.LOGGED_OUT_THEME` constant (always
+`"default"`/Basic) rather than following `DEFAULT_THEME` - kept as two
+distinct constants precisely so a future change to the signed-in
+default can never also change what a logged-out visitor sees.
 
 **Applying the new default to every *existing* account, not just
-future ones** - "select ... as default for all users and admins," not
-"for all new" ones - needed an actual data migration
+future ones** needed an actual data migration
 (`db._migrate_to_7_1_0`, schema `7.1.0`), the first one in this
 project with no schema change behind it at all (see that migration's
 own docstring, and `db.py`'s `MIGRATIONS` dict comment, for why it
@@ -1787,7 +1749,7 @@ confirming the migration only ever runs once per database.
 
 ### The "Console" theme - sidebar nav, bordered sections, full width
 
-**Why this exists:** per the user - the first real theme this app has
+**Why this exists:** the first real theme this app has
 ever had beyond "Default" (see "Themes" above for the machinery this
 was all built for, ahead of any second theme actually existing yet):
 page links as tabs down the left instead of a top row, each page's
@@ -1826,24 +1788,21 @@ plain block element with no styling of its own under Default, so this
 is a genuine no-op there - confirmed directly, not just reasoned about
 (every existing page rendered pixel-identical before and after).
 
-**A real bug caught only by actually looking at a rendered page, not by
-reading the CSS:** the section-wrapping script's original stopping
-condition was "the next `<h3>`" alone - on any page whose last section
-had nothing after it but the "queue3d vX.Y.Z" footer, that footer got
-swept inside the section's own bordered box too. Fixed by also stopping
-at a `<footer>` element, not just the next heading.
+The section-wrapping script's stopping
+condition is "the next `<h3>`, or a `<footer>` element" - not just the
+next heading alone, since on any page whose last section has nothing
+after it but the "queue3d vX.Y.Z" footer, stopping at headings alone
+would sweep that footer inside the section's own bordered box too.
 
-**Two of my own edits broke the app outright while writing this, in the
-exact same way twice** - explaining the nav's plain `<a>` tags and the
-footer-stopping fix both used the literal text `{% block nav %}` /
-`{% block content %}` inside a *CSS comment*, describing the markup
-being styled. Jinja parses `{%...%}` sequences anywhere in the file,
-with zero awareness of "this is inside a `/* CSS comment */`, not a real
-template tag" - so both comments became phantom, unclosed `{% block %}`
-tags, and every single page on the entire site 500'd with
-`TemplateSyntaxError: Unexpected end of template` until each was found
-(via `grep -n '{%\|%}'` across the file) and reworded to describe the
-same thing in plain English instead.
+**A real trap worth remembering: Jinja parses `{%...%}` sequences
+anywhere in a template file, including inside a CSS comment describing
+markup being styled, with zero awareness that it's inside
+`/* a comment */` rather than a real template tag.** A CSS comment
+using the literal text `{% block nav %}`/`{% block content %}` to
+describe the markup it styles becomes a phantom, unclosed `{% block %}`
+tag, crashing every single page on the site with
+`TemplateSyntaxError: Unexpected end of template` - describe that
+markup in plain English inside a CSS comment instead.
 
 **Colors** - light: a cool off-white page/sidebar (`#eef0f4`)  against a
 plain white content area, a deep navy (`#2b3a67`) section-title bar with
@@ -1893,10 +1852,10 @@ look like a color against either background.
 
 ### The "Savanna" theme - a real background photo, desert-sunrise colors
 
-**Why this exists:** per the user - the same Console layout (sidebar,
-full width, bordered sections), copied to a second theme with "a desert
-sunrise feel with the vibes from the opening scenes of the original
-Lion King movie," using a real background image.
+**Why this exists:** the same Console layout (sidebar,
+full width, bordered sections), copied to a second theme with a desert
+sunrise feel evoking the opening scenes of the original
+Lion King movie, using a real background image.
 
 **The structural CSS is shared with Console, not duplicated** - every
 layout rule that used to read `[data-theme="console"] header { ... }`
@@ -1911,8 +1870,7 @@ from a single string comparison to a `SECTION_THEMES` array checked with
 its id to that array, not copying the script.
 
 **A real, freely-licensed photo, not a stock asset pulled without
-checking - per the user, explicitly: "don't pull any images illegally.
-Any images used should be free and open to use."** Sourced from
+checking - every image used must be free and open to use.** Sourced from
 Wikimedia Commons, whose API exposes real, verifiable license metadata
 per file rather than trusting a filename or a search result blindly -
 queried directly (`action=query&prop=imageinfo&iiprop=url|extmetadata`)
@@ -1979,11 +1937,11 @@ looks pixel-identical to before.
 
 ### The "Fil" theme - an original mascot, not a licensed character
 
-**Why this exists:** per the user, a third theme with the same
-Console/Savanna layout was requested as a Mickey Mouse theme - "he
-recently went into public domain... having him peek from behind a
-corner, hang from the ceiling, etc." Turned down, not built as asked:
-only the specific 1928 *Steamboat Willie*/*Plane Crazy* character design
+**Why this exists:** a third theme with the same
+Console/Savanna layout, using an original mascot rather than
+Mickey Mouse (the character peeking from behind a corner, hanging
+from the ceiling, etc. - the pose ideas Fil now uses): only the
+specific 1928 *Steamboat Willie*/*Plane Crazy* character design
 actually entered the US public domain (the 95-year copyright term
 expiring Jan 1, 2024) - not "Mickey Mouse" broadly, and not the modern
 design a viewer would actually picture. More importantly, **trademark
@@ -2014,55 +1972,28 @@ scribbled zigzag marker mouth rather than a smooth cartoon smile, and
 bendy limbs drawn as thick rounded strokes (not filled shapes) so they
 read as wire, not a solid body.
 
-**A real appropriateness problem, caught by the user and fixed
-immediately, not something to gloss over:** that stick-figure pass's
-`fil-hang` pose attached the hanging strand of filament directly to the
-top of his *head*, meant to read as him dangling from the ceiling by
-his own thread. The user's own words: "the one dangling looks like
-suicide. This is not something that should be at a school." Correct,
-and a real miss on this app's own part - a school-deployed app is
-exactly the context where that association is least acceptable, and it
-should have been caught before shipping, not after. Fixed by changing
-what the strand attaches to entirely: it now ran to a closed fist, on
-an arm drawn raised up beside his head, gripping it - the same pose as
-a kid hanging from playground monkey bars, not a noose. The same turn
-also fixed `fil-peek`, which the user found "a little weird with just a
-floating head" - it now shows the near (right) half of his *whole*
-body (head, torso, one arm, one leg), drawn as a full figure straddling
-the svg's own left edge so the far half is simply never drawn, the same
-clipping idea as before just carried down his whole body instead of
-stopping at the head.
+`fil-hang` grips the top edge directly with a closed fist on a raised
+arm, with no separate strand drawn above it and no other element
+reaching toward the top edge - the same pose as a kid hanging from
+playground monkey bars. `theme-fil-hang.svg`'s own top comment documents
+this as a "don't reintroduce this" note, since a strand or any other
+element reaching to the top edge from his head or body reads as a
+noose - exactly the kind of thing a future edit could bring back
+without realizing why it matters.
 
-**That first `fil-hang` fix wasn't actually enough, and the user caught
-two more problems with it in the very next pass:** the thread running
-from the top edge down to the closed fist, at a glance, read as an
-obscene gesture rather than a grip - the user's words: "The closed fist
-with the string looks like he's 'flipping you off'." Separately, a
-decorative hair-curl doodle near the top of his head was reaching up
-toward the top edge too, which the user correctly pointed out brought
-the noose look right back even with the grip itself fixed: "Having it
-touch both the head and top still looks like suicide." Both fixed by
-removing anything that reaches toward the top edge except the one thing
-that should: his fist now touches the top edge directly, with no
-separate strand drawn above it at all, and the hair curl moved off to
-the side at head height instead. Documented in `theme-fil-hang.svg`'s
-own top comment as a concrete "don't reintroduce this" note, not just
-here, since it's exactly the kind of thing a future edit could
-accidentally bring back without realizing why it matters.
-
-Two poses, per the user's own examples of "fun": `fil-peek` leans out
-from behind the sidebar's own right edge facing the viewer head-on (per
-the user, after an earlier pass showed him in profile with only one eye
-visible); `fil-hang` hangs from the top of the browser window by one
+Two poses: `fil-peek` leans out
+from behind the sidebar's own right edge facing the viewer head-on
+(rather than in profile with only one eye visible, an earlier pass's
+version); `fil-hang` hangs from the top of the browser window by one
 fist gripping the top edge directly, the other arm swinging a
 miniature spool below him like a yoyo (a faint dashed arc sells the
-swing) - per the user's own suggestion, once the spool itself stopped
-being his body and needed somewhere else to live. The existing slow
+swing) - the spool now living there rather than doubling as his own
+body. The existing slow
 (`6s`), small (`±4deg`) CSS `@keyframes` swing on `fil-hang` carried
 over unchanged through every redesign - gentle enough to stay a mascot,
 not a distraction sitting next to actual queue/job data.
 
-**Each pose has a plain `title=""` hover tooltip** - per the user:
+**Each pose has a plain `title=""` hover tooltip:**
 "Peek-a-boo" on `fil-peek`, "Hi, I'm Fil" on `fil-hang`. A native
 browser tooltip rather than a custom one, since that needs nothing
 beyond the attribute itself - no JS, no extra CSS, nothing to vendor.
@@ -2106,7 +2037,7 @@ this third theme id.
 
 ### The "BMMS" theme - one specific school's own colors and logo
 
-**Why this exists:** per the user - the same shared sidebar/full-width/
+**Why this exists:** the same shared sidebar/full-width/
 bordered-section layout once more, this time built for the one specific
 school this app is actually deployed to, not a generic option meant for
 anyone: Black Mountain Middle School's own maroon-and-gold colors and
@@ -2161,16 +2092,15 @@ all three regardless of what theme is later selected by whoever signs
 up or logs in, the same for every visitor before any of them have an
 account at all.
 
-**Sized and laid out in two follow-up passes, both per direct user
-feedback, not guessed at upfront:** the sidebar logo (`.bmms-logo`)
-first shipped at a fixed 84px and read as "small and hard to read" -
-changed to `width: 85%` (a percentage of the sidebar's own width, not
-another fixed guess, per the user asking for "80-90% of the sidebar
-width"). The login-page logo first shipped small and left-aligned like
-the rest of that page's plain default layout - the user then asked to
-center the whole login form and make its logo "large... centered above
-the form," and, in the very next message, to size that logo
-specifically "50% wider than the form itself, like a letterhead." Since
+**Sized and laid out in two follow-up passes, not guessed at upfront:**
+the sidebar logo (`.bmms-logo`) first shipped at a fixed 84px and read
+as small and hard to read - changed to `width: 85%` (a percentage of
+the sidebar's own width, not another fixed guess, landing in the
+80-90% range that actually reads clearly). The login-page logo first
+shipped small and left-aligned like the rest of that page's plain
+default layout - changed to a large, centered logo above a centered
+login form, then sized specifically 50% wider than the form itself,
+like a letterhead. Since
 the login form's own `max-width` (the generic `form` rule, used
 everywhere else in the app too) is 320px, the logo's width is a literal
 480px (320 * 1.5) rather than an eyeballed "large" value -
@@ -2191,7 +2121,7 @@ logo file itself actually loads).
 
 ### Login rate-limiting
 
-**Why this exists:** per the user - PINs are short by design (low
+**Why this exists:** PINs are short by design (low
 signup friction), which also makes them easier to guess, and nothing
 previously slowed down repeated attempts at all, for either account
 type. An admin's password is a higher-stakes target than any one
@@ -2392,14 +2322,13 @@ users - reaching this page at all already requires `require_admin`, so
 this only ever grows the admin group from inside it, never from outside.
 No disable/reset-password for another admin here, unlike the Users page -
 not asked for, and every admin today has identical, full permissions
-with no scoping between them yet ("There may be other admin accounts
-later with limited permissions; but, that will be decided later," per
-the user - see README.md's to-do list).
+with no scoping between them yet - other admin accounts with more
+limited permissions is a possible future direction, not decided yet
+(see README.md's to-do list).
 
 **`models.Admin.unremovable`** (schema 6.4.0) is what makes any of this
-safe to add at all - per the user, directly: "Let's mark the admin
-created from the cmd we just did as 'unremovable'. That means that other
-admins cannot delete this user at all." `create_admin.py` now sets it on
+safe to add at all: the admin created via `create_admin.py` is marked
+unremovable, so no other admin can delete it. `create_admin.py` now sets it on
 every admin it creates; a fresh admin made through the new web UI gets
 the column's real default, `False`. Nothing anywhere can ever flip it
 in either direction through the UI - not an oversight, the whole point:
@@ -2425,9 +2354,8 @@ column": every Admin row that exists at the moment this migration runs
 was necessarily created via `create_admin.py`, since the web UI this
 ships alongside is the *only* other way one can ever come to exist -
 there was no such thing as a non-CLI-created admin before this exact
-migration. Backfilling this way satisfies the user's own request
-literally ("mark the admin created from the cmd we just did") with no
-need to know which username(s) to single out by hand, and stays exactly
+migration. Backfilling every existing admin this way needs no
+username(s) singled out by hand, and stays exactly
 consistent with the rule `create_admin.py` applies going forward.
 
 Verified in an isolated copy before touching the live database, same
@@ -2446,10 +2374,10 @@ server-side); confirmed a *different* admin can still delete it.
 
 ### Disable/reset-password for other admins, and self-service for everyone
 
-**Why this exists:** the very next question after the previous section
-shipped, per the user, directly: "Add reset-password, disable/enable for
-other admins (not permanent) now. Also, all users (admins included)
-should be able to reset their own password."
+**Why this exists:** the natural next step after the previous section
+shipped - reset-password and disable/enable for other admins (not
+permanent), plus letting every account (admins included) reset their
+own password.
 
 **`Admin.disabled`** (schema 6.5.0) is the same idea as `User.disabled`,
 added for the same reason and enforced the same way: `auth.get_current_admin`
@@ -2540,9 +2468,9 @@ activity log.
 ### A deleted admin's past reviews don't go silently orphaned
 
 **Why this exists:** the last open item from the Accounts to-do list,
-once admin deletion actually existed to make it a real question - per
-the user, directly: "Can the references for admins being deleted be
-replaced with admin's name as a string with deleted in parentheses?"
+once admin deletion actually existed to make it a real question -
+references to a deleted admin are replaced with that admin's name as a
+plain string, with "(deleted)" alongside it.
 
 **The actual reference in question turned out to be narrower than it
 sounded** - `Job.reviewed_by_admin_id`, a real foreign key to `Admin.id`
@@ -2700,8 +2628,8 @@ showed neither a timestamp nor a wait time on either page.
 **Why this exists:** per README.md's Appearance to-do list - every
 timestamp shown anywhere in the app was UTC, unlabeled as such in most
 places even though that's genuinely what was stored and compared
-against internally. "Should apply everywhere at once, not per-page" per
-the user - a site-wide admin setting, not a per-account preference like
+against internally. Applies everywhere at once, not per-page - a
+site-wide admin setting, not a per-account preference like
 theme/mode.
 
 **`Settings.display_timezone`** (schema `4.4.0`, an IANA zone name
@@ -2801,10 +2729,9 @@ it's been forgotten. Builds directly on the queue-wait timestamp/display
 work above (same "Queued" section) - this is the exact data that feature
 made visible, now actually split on.
 
-**The one design question the to-do list itself left open - confirmed
-directly with the user rather than guessed:** does the threshold apply
-to `printing` jobs too, or only `queued`/`approved`? Answer: queued/
-approved only. A printing job is being actively acted on, not sitting in
+**The one design question the to-do list itself left open:** the
+threshold applies to `queued`/`approved` jobs only, not `printing`
+ones. A printing job is being actively acted on, not sitting in
 an undecided backlog, and already has its own live progress/ETA display
 (see "Live print progress") - a second, different kind of staleness
 signal mixed into the same view would just be confusing. `jobs.is_old_job()`
@@ -2816,7 +2743,7 @@ the to-do list's own example value) - the shared, site-wide `Settings`
 singleton gets its third field, same pattern as `draft_expiry_days`/
 `display_timezone`.
 
-**Mutually exclusive, not just flagged - a real split, per the user:**
+**Mutually exclusive, not just flagged - a real split:**
 `_dashboard_context()` (the normal `/admin/dashboard` queue) now excludes
 anything `is_old_job()` returns true for, and `/admin/jobs/old`
 (`admin_old_jobs.html`) shows exactly that excluded set, computed by
@@ -2912,9 +2839,8 @@ to-do item never asked for - `_delete_job_genuinely()`'s shared
 Since extended twice, each time to exactly what was actually asked for
 rather than every terminal status at once: `slice_failed` (a draft that
 never successfully sliced has nothing worth keeping and no "submit"
-option either), and `rejected` (per the user - "I don't want to keep
-rejected jobs around," old USN `ddg.stl` jobs rejected back when the
-supports calculations were off, with no way to get rid of them, only
+option either), and `rejected` (old USN `ddg.stl` jobs rejected back when the
+supports calculations were off had no way to get rid of them, only
 "Restore & edit," which leaves the original rejected record sitting
 there regardless). Deliberately still not `done`/`failed`/`expired` -
 those raise different questions of their own (a done job is a real
@@ -2970,8 +2896,8 @@ snap-to-surface as a separate, materially bigger follow-up (real
 face-picking and rotation UI) - not attempted in the same pass.
 
 **`Job.scale_factor`** (schema `5.5.0`, defaults `1.0`, always uniform -
-never per-axis, so proportions can never distort, per the user
-explicitly: "maintaining the aspect ratio"). Applied in
+never per-axis, so proportions can never distort and the aspect ratio
+is always maintained). Applied in
 `slicing/stl_to_3mf.build_3mf()` by scaling every vertex *before*
 `center_vertices()` runs, not after - deliberate ordering: a uniform
 scale from the origin doesn't change where a mesh's area-weighted
@@ -2991,7 +2917,7 @@ previous state (status, scale) is left completely untouched, same
 uses.
 
 **Where this lives: the existing draft edit page (`job_edit.html`),
-not the upload form** - every one of the user's own motivating examples
+not the upload form** - every motivating example for this feature
 (a model that failed to slice, a model that doesn't fit) is about fixing
 something *already uploaded*, which is exactly what this page already
 exists for (re-slicing with new support settings). Scoped to
@@ -3052,10 +2978,10 @@ check (that check is a scale-invariant ratio), but *reorienting* it can
 angles through the real pipeline before writing any UI for this at all.
 
 **The highest-stakes correctness question this raised, verified
-numerically before trusting any of it:** does `THREE.BufferGeometry`'s
+numerically before trusting any of it:** whether `THREE.BufferGeometry`'s
 `.rotateX().rotateY().rotateZ()` (what the live preview already uses)
-compose the same way as a matching sequence of rotation matrices in
-Python (what has to run inside the actual slicing subprocess)? Confirmed
+composes the same way as a matching sequence of rotation matrices in
+Python (what has to run inside the actual slicing subprocess). Confirmed
 yes, to float32 precision, across 6 test cases including large/negative
 angles - by actually loading this project's own vendored Three.js build
 in a real browser and comparing its output point-for-point against
@@ -3196,10 +3122,10 @@ actually surfaces.
 
 ### On-canvas drag handles (model controls, part three)
 
-**Why this exists:** immediately after the rotation feature above
-shipped, the user asked directly: "Is it possible to have handles for
-the object in the preview to resize and rotate visually instead of only
-by numbers in the fields?" - the number fields plus click-to-snap cover
+**Why this exists:** the natural next step after the rotation feature
+above shipped - on-canvas handles to resize and rotate the object in
+the preview visually instead of only by numbers in the fields. The
+number fields plus click-to-snap cover
 precision and one specific reorientation, but not general-purpose
 "grab it and turn/resize it by eye," which is how most 3D editors work.
 
@@ -3339,9 +3265,9 @@ setting `63.47` into a `step="1"` copy of this field reported
 the server at all; the identical value against a `step="0.01"` field
 reported valid and reached `/jobs/{id}/reslice` correctly.
 
-**Fixed, not documented as a limitation** - per the user's own
-framing ("if that's a limitation, then the page must state that"),
-the right call here was to check whether it actually needed to *be* a
+**Fixed, not documented as a limitation** - a real limitation would
+need to be stated on the page, but the right call here was to check
+whether it actually needed to *be* a
 limitation first, and it didn't: the server side already accepted a
 plain `float` for every one of these fields with no integer
 requirement (`routers/user.py`'s `reslice()`, `jobs.start_reslice()`),
@@ -3424,12 +3350,10 @@ apply again: 45° and 60° both produced a genuine `.makerbot`; 15° and
 30° did not. Confirmed general, not a one-off.
 
 **This is what prompted the automatic-rotation-retry feature, built the
-same session:** per the user, directly - "Rotating the object resolved
-the slicing error. When receiving slicing errors, suggest rotating the
-object," followed immediately by "Or, try rotating the object
-automatically when running into slicing errors," and, once asked how
-aggressive that should be: "I don't think it would hurt to attempt
-rotation and reslice until all reasonable rotations have been tried."
+same session:** rotating the object resolved the slicing error, which
+motivated suggesting a rotation on a slicing error, then attempting
+rotation automatically on one instead of just suggesting it - retrying
+every reasonable rotation rather than stopping at the first one tried.
 
 `jobs.AUTO_ROTATE_CANDIDATES` is a fixed, bounded set of 11 rotations -
 quarter/eighth turns about Z (every real fix observed across all three
@@ -3621,14 +3545,14 @@ six-plus routes that need some subset of it:
   plain functions used as FastAPI dependencies (`Depends(...)`) on every
   listing route, so the full set of query params a filter form can ever
   submit is bound in exactly one shared place. `min_minutes`/
-  `max_minutes` are typed `str | None`, not `float | None`, on purpose -
-  a real bug caught before shipping: typing them as `float` let FastAPI's
+  `max_minutes` are typed `str | None`, not `float | None`, on purpose:
+  typing them as `float` lets FastAPI's
   own query-param coercion reject `""` with a 422, and a GET form submits
   *every* one of its fields regardless of whether it has a value - so
-  leaving either field blank (the overwhelmingly common case) broke
+  leaving either field blank (the overwhelmingly common case) would break
   *every* ordinary use of the filter form outright. Confirmed live
-  against a real running instance before and after the fix, not just
-  reasoned about - the failure mode isn't obvious from reading the code
+  against a real running instance - the failure mode isn't obvious from
+  reading the code
   alone, since a hand-built query string with only the params actually
   wanted (exactly what manual testing tends to do first) never
   reproduces it.
@@ -3638,12 +3562,12 @@ six-plus routes that need some subset of it:
   `routers/admin.py`'s queue-action routes (approve/reject/release/...),
   which are POSTs with no query-param dependency injection of their own.
 
-**Carrying a filter through an action, not just a page load:** a real
-gap caught before shipping, not just the read side - every admin queue
+**Carrying a filter through an action, not just a page load:** every
+admin queue
 action (approve/reject/release/mark done/mark failed/requeue/delete) is
 a `POST` to a fixed URL, and a plain `RedirectResponse("/admin/dashboard")`
 after one would silently drop back to unfiltered every single time, even
-though the action itself succeeded. Fixed two ways together:
+though the action itself succeeded. Handled two ways together:
 `routers/admin.py`'s `_query_suffix(request)` appends the current
 request's own query string to a redirect target, and every action
 `<form>`'s own `action=` attribute in `admin_dashboard.html`/
@@ -3782,8 +3706,7 @@ low-inventory check is only ever as fresh as the last time an admin
 updated it by hand.
 
 Before building any of it, investigated whether "how much filament will
-this use" was even answerable at all, per the user's own conditional
-framing ("if this is possible, let's add that too") - real test slice,
+this use" was even answerable at all - real test slice,
 not assumed: OrcaSlicer's gcode already carries `; filament used [g] =
 5.67`-style comments, but the sliced `.makerbot`'s own `meta.json`
 (mbotmake's real output, the same file `read_makerbot_duration_s`
@@ -3932,6 +3855,32 @@ the job reappeared on the admin dashboard, and the full audit trail
 lands on `slice_failed` with the job still gone from the admin
 dashboard, and that the new "Change color" link renders with the
 correct `#color`-anchored `href`.
+
+### Self-service help pages
+
+Two separate routes, not one page that shows different content by
+role: a shared `/help` (`routers/help.py`, template `help.html`),
+reachable with or without a login, covering registration/login,
+submitting a job (uploads, supports/style, color, scale/rotate), job
+statuses, editing/restoring/reprinting a job, and account settings; and
+a separate admin-only `/admin/help` (`routers/admin.py`, template
+`admin_help.html`, gated by `require_admin` like every other admin
+page) covering reviewing/approving/rejecting/releasing, printer
+pairing, users/admins/colors, and site settings/history/backups. Every
+user-facing page links to `/help` (deep-linked to the section actually
+relevant to it - e.g. the job-edit page links to `#submitting` and
+`#statuses`); every admin page links to `/admin/help`.
+
+**Never one route branching on which session-derived role happens to
+be present.** This app's session is one shared browser cookie holding
+`user_id`/`admin_id` independently - both can be valid at once in the
+same browser (an admin session in one tab, a user session in another),
+which every other page already handles correctly by requiring exactly
+one role (`require_user` or `require_admin`). A help page's content
+depends only on which of those two routes was requested and that
+route's own real, DB-backed role check - never on inspecting more than
+one optional session-derived dependency and picking whichever is
+truthy, which is the one thing this needs to never do again.
 
 ## 3D preview
 

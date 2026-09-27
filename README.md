@@ -1,6 +1,6 @@
 # queue3d
 
-Do you have a shared local 3D printer? If so, queue3d lets users upload and
+For a shared local 3D printer, queue3d lets users upload and
 slice their own models and submit them to a queue. An admin reviews each
 submission and releases approved jobs to the printer when ready.
 
@@ -247,12 +247,12 @@ sections for the full design rationale behind each.
   release, or move it back to the queue with a fresh wait clock - or
   delete it outright (one at a time or all at once), which genuinely
   removes the job and its model file with no undo, unlike every other
-  outcome in this app. Deliberately excludes `printing` jobs, confirmed
-  with the user - a print actively running is being acted on, not
+  outcome in this app. Deliberately excludes `printing` jobs - a print
+  actively running is being acted on, not
   sitting in an undecided backlog. The main dashboard flags how many
   are waiting, with a link straight to the backlog view.
-- **Delete your own queued job** - changed your mind about a submission
-  still awaiting a decision? Delete it directly from the dashboard,
+- **Delete your own queued job** - a submission
+  still awaiting a decision can be deleted directly from the dashboard,
   with a clear "this cannot be undone" confirmation first. Genuinely
   removes the job and its model file - the same real, unrecoverable
   delete an admin can do to a stale one (see "Old jobs" above), just
@@ -407,7 +407,7 @@ sections for the full design rationale behind each.
 - Done - the open question this item raised (does changing something on
   an active `queued`/`approved` job re-slice in place, keeping its
   queue position, or count as a new submission that goes to the end)
-  is resolved: a new submission, per the user - a fresh `queued_at`,
+  is resolved: a new submission - a fresh `queued_at`,
   same as a genuinely new one. The job-edit page itself (not
   `/jobs/{id}/preview`, which stays view-only) is now reachable from a
   queued/approved job's own dashboard row, with full resize/rotate/
@@ -504,18 +504,18 @@ sections for the full design rationale behind each.
   the header (`templates/base.html`).
 
 **Help / instructions**
-- A how-to page (or a small set of them, split by what the reader is
-  currently looking at, if that ends up clearer than one long page)
-  walking through everything from registration to submitting a job with
-  every feature along the way - supports, style choices, checking queue
-  position, reading the log, viewing a finished job's photo, all of it.
-  Linked from every page, for every user, not just buried somewhere.
-- A parallel instructions page for admins - reviewing/approving/
-  rejecting/releasing, reading the activity log, the printer status
-  banner and pairing, managing user accounts. Also linked from every
-  admin page. Should cover creating and managing *other admin* accounts
-  once that feature exists (see "Accounts" below - not built yet) - add
-  that section when that feature is actually built, not before.
+- Done - one shared, no-login-required `/help` page (`app/routers/help.py`)
+  covering registration/login, submitting a job (supports, style
+  choices, color), job statuses, editing/restoring/reprinting, and
+  account settings, with anchored sections linked from every relevant
+  user-facing page (login, signup, dashboard, settings, the job-edit
+  page). See `app/README.md`'s "Self-service help pages" section.
+- Done - a separate, admin-only `/admin/help` page covering
+  reviewing/approving/rejecting/releasing, users/admins/colors, and
+  site settings/history/backups, linked from every admin page - kept as
+  its own route rather than folded into the shared page above (see
+  `app/README.md`'s "Self-service help pages" section for why: the two
+  must never share one route's session-detected role).
 
 **Printer**
 - ~~Correct the fallback time estimate using real completion history~~
@@ -529,7 +529,7 @@ sections for the full design rationale behind each.
   between the physical print actually finishing and someone/something
   noticing.
 - A dedicated camera, independent of the printer's own flaky single-
-  session connection - per the user, after a string of real
+  session connection, motivated by a string of real
   photo-capture failures (all since fixed - see Features above) that
   were always the connection or a related bug, never the core capture
   logic. Photo capture does now work end-to-end for real, but the
@@ -546,7 +546,7 @@ sections for the full design rationale behind each.
   with a small clamp mount (a compact super-clamp + mini ball head, not
   a full articulating arm - the ESP32-CAM is featherweight) gripping an
   edge of the printer itself, Velcro not required. Deliberately not
-  built yet - per the user, waiting until the actual hardware is in hand
+  built yet - waiting until the actual hardware is in hand
   to test against rather than writing capture code blind. Once built:
   a generic "fetch a configured snapshot URL" capture path, swappable
   per printer (setting up cleanly for the already-planned second
@@ -617,8 +617,7 @@ sections for the full design rationale behind each.
   it; the activity log's own attribution (`JobEvent.actor`) was already
   immune to this, since it was a plain string snapshot from the start,
   never a live FK. Still open: no permission scoping between admins at
-  all yet - every one has identical, full access, "decided later" per
-  the user.
+  all yet - every one has identical, full access; decided later.
 
 **Deployment**
 - Done, on the real hardware: mDNS hostname, the full `deploy.sh`
