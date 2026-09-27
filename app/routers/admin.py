@@ -943,6 +943,23 @@ def _admin_settings_context(session: Session, admin: Admin, error: str | None = 
     }
 
 
+@router.get("/help")
+def help_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """Admin-only help/how-to, kept as its own route rather than folded
+    into the shared, no-login-required /help page (routers/help.py) -
+    see that module's docstring for the real incident that made "one
+    page, session-detected role" the wrong shape here: require_admin
+    means this can never render for anyone who isn't *currently* a
+    valid, signed-in admin, the same single-role contract every other
+    admin-only page already relies on - no guessing which of two
+    possibly-simultaneous session identities in the same browser this
+    request "really" is."""
+    return templates.TemplateResponse(request, "admin_help.html", {"admin": admin})
+
+
 @router.get("/settings")
 def settings_page(
     request: Request,

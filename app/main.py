@@ -9,7 +9,7 @@ from db import engine, init_db
 from jobs import start_auto_finish_poller
 from models import Settings
 from printer import close_connection
-from routers import admin, jobs, user
+from routers import admin, help, jobs, user
 from templates_env import set_display_timezone
 
 # docs_url/redoc_url disabled: FastAPI's built-in interactive docs load
@@ -89,3 +89,4 @@ def root():
 app.include_router(user.router)
 app.include_router(admin.router)
 app.include_router(jobs.router)
+app.include_router(help.router)
