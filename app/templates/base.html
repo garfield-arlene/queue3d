@@ -11,12 +11,17 @@
        app/README.md's "Themes" section for how a viewer's two separate
        stored choices (User.theme/theme_mode, Admin.theme/theme_mode)
        become the data-theme/data-mode attributes above. This :root block
-       *is* "Default" + "Light" - every other theme/mode combination adds
-       a [data-theme="<id>"] and/or [data-theme="<id>"][data-mode="dark"]
-       block below overriding just the tokens it wants different, not a
-       full copy of every rule in this file. Mode is a separate axis from
-       theme, not folded into it - per the user, every theme gets both a
-       light and a dark variant.
+       *is* "Basic" (id "default" - renamed from "Default" once it
+       stopped being the only theme) in "Light" mode - every other
+       theme/mode combination adds a [data-theme="<id>"] and/or
+       [data-theme="<id>"][data-mode="dark"] block below overriding just
+       the tokens it wants different, not a full copy of every rule in
+       this file. Mode is a separate axis from theme, not folded into it
+       - per the user, every theme gets both a light and a dark variant.
+       Note that "Basic" being id "default" is no longer the same thing
+       as being *the* default theme - see themes.py's DEFAULT_THEME vs.
+       LOGGED_OUT_THEME for how those diverged once BMMS became this
+       deployment's actual default for signed-in accounts.
 
        Hardcoded colors, not the CSS Color 4 system keywords Canvas/
        CanvasText an earlier version of this used: those tracked the OS's

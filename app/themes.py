@@ -18,7 +18,7 @@ Adding a theme: pick an id (lowercase, matches a CSS attribute selector
 `[data-theme="<id>"] { ... }` block (its light palette) and a
 `[data-theme="<id>"][data-mode="dark"] { ... }` block (its dark
 palette) in base.html's <style> - per the user, every theme gets both,
-not just Default.
+not just Basic.
 
 Mode (light/dark) is a separate axis from theme, not folded into it -
 also per the user, after starting out one way (this file originally had
@@ -29,11 +29,29 @@ independently, say, should work the same as any other combination.
 two separate stored choices into the two separate `data-theme`/
 `data-mode` attributes CSS actually keys off of."""
 
-DEFAULT_THEME = "default"
+DEFAULT_THEME = "bmms"
 DEFAULT_MODE = "light"
 
+# The id every logged-out page (the two login pages, signup) always
+# renders as, regardless of DEFAULT_THEME above - a deliberately separate
+# constant, not the same thing. DEFAULT_THEME is what a *signed-in*
+# account with no saved preference falls back to (see current_theme() in
+# templates_env.py) - per the user, "select the BMMS theme as default for
+# all users and admins." A logged-out request has no account to have a
+# preference at all, and those pages were hand-built and verified
+# around this one specific plain layout (see admin_login.html/
+# user_login.html/user_signup.html's own .login-page) - a sidebar
+# theme's structural CSS (a wrapped-in sidebar, a second .bmms-logo from
+# the header on top of that page's own large letterhead one) would
+# visually collide with it. Before
+# DEFAULT_THEME became "bmms" this distinction was invisible (both
+# constants happened to be "default"), which is exactly why it's worth
+# spelling out explicitly now rather than letting the two quietly drift
+# in different directions again next time either one changes.
+LOGGED_OUT_THEME = "default"
+
 THEMES = {
-    "default": "Default",
+    "default": "Basic",
     # Left-sidebar nav (the same {% block nav %} links every page already
     # has, just laid out as a vertical column instead of a top row),
     # bordered/titled sections, and a full browser-width layout instead
@@ -84,13 +102,18 @@ THEMES = {
     # (maroon and gold, per the user) and school logo
     # (app/static/bmms-logo.png - the school's own public logo, the same
     # image found via a plain web search, not anything sensitive).
-    # Unlike Console/Savanna/Fil, this theme also reaches onto the login
-    # pages (admin_login.html, user_login.html) - those render before
-    # any account (and therefore any account's saved theme) exists for
-    # the request, so current_theme() always resolves to "default" there
-    # regardless of this theme's own existence; the login templates show
-    # the school logo unconditionally instead of through the theme
-    # mechanism, per the user wanting it there regardless.
+    # Unlike Console/Savanna/Fil, this theme also reaches onto the
+    # logged-out pages (admin_login.html, user_login.html, and
+    # user_signup.html - the last one only added once the user noticed
+    # it had been missed) - those render before any account (and
+    # therefore any account's saved theme) exists for the request, so
+    # current_theme() always resolves to LOGGED_OUT_THEME there
+    # regardless of this theme's own existence (see that constant's own
+    # comment above); those templates show the school logo
+    # unconditionally instead of through the theme mechanism, per the
+    # user wanting it there regardless. Also this app's actual
+    # DEFAULT_THEME (above) - per the user, ahead of deployment: "select
+    # the BMMS theme as default for all users and admins."
     "bmms": "BMMS",
 }
 

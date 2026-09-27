@@ -1,12 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Sign up - queue3d{% endblock %}
 {% block content %}
-  <h2>Sign up</h2>
-  {% if error %}<p class="error">{{ error }}</p>{% endif %}
-  <form method="post" action="/signup">
-    <label>Name<br><input name="name" value="{{ name or '' }}" required autofocus></label>
-    <label>Choose a PIN (4+ digits)<br><input name="pin" type="password" inputmode="numeric" minlength="4" required></label>
-    <button type="submit">Sign up</button>
-  </form>
-  <p class="muted">Already signed up? <a href="/login">Log in</a> instead.</p>
+  <!-- .login-page (base.html) centers all of this - logo, heading, form
+       - same treatment as admin_login.html/user_login.html, per the
+       user noticing this page (reachable before any account exists too,
+       same as those two) had been missed. The logo itself is always
+       shown here regardless of theme, for the same reason as those two
+       pages - see their own comments and app/README.md's "BMMS" theme
+       section. -->
+  <div class="login-page">
+    <img src="/static/bmms-logo.png" alt="Black Mountain Middle School Raiders logo" class="login-logo">
+    <h2>Sign up</h2>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form method="post" action="/signup">
+      <label>Name<br><input name="name" value="{{ name or '' }}" required autofocus></label>
+      <label>Choose a PIN (4+ digits)<br><input name="pin" type="password" inputmode="numeric" minlength="4" required></label>
+      <button type="submit">Sign up</button>
+    </form>
+    <p class="muted">Already signed up? <a href="/login">Log in</a> instead.</p>
+  </div>
 {% endblock %}

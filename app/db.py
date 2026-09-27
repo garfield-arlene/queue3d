@@ -348,13 +348,47 @@ def _migrate_to_6_6_0(conn):
         )
 
 
-# Keyed by the app VERSION a schema change shipped in, not a separate
-# incrementing number - per the user, a schema change should always come
-# with a version bump, so there's exactly one number to keep track of,
-# not two that can drift apart (which is exactly what happened: the fix
-# above shipped without bumping VERSION at the time, so nothing recorded
-# that this database needed it). Applied in ascending version order,
-# regardless of dict insertion order - see _version_tuple.
+def _migrate_to_7_1_0(conn):
+    """No schema change at all - a pure data migration, run through this
+    same mechanism anyway (see this dict's own comment below: "a future
+    migration" was never written as schema-only) because it's exactly
+    what this app already needed to make "bump VERSION, pull, restart"
+    apply it, the same as any real schema change.
+
+    BMMS became this deployment's actual default theme here (see
+    themes.py's DEFAULT_THEME) - per the user, ahead of deployment:
+    "select the BMMS theme as default for all users and admins." Clears
+    every User/Admin's theme column back to NULL - not literally 'bmms'
+    - rather than leaving whatever each account already had (NULL for
+    one that never touched the setting, or an explicit id for one that
+    did, including 'default' itself from back when that was the only
+    option). NULL already means "no preference, follow whatever the
+    current default is" (see current_theme() in templates_env.py) - the
+    exact same account, before this ran, would have picked up a new
+    DEFAULT_THEME automatically for free the moment it existed. Writing
+    NULL instead of the literal string 'bmms' keeps that true going
+    forward too: if DEFAULT_THEME is ever changed again later, every
+    account this migration touches follows it the same way, rather than
+    silently staying pinned to 'bmms' specifically because a one-time
+    migration happened to hardcode it. theme_mode (light/dark) is left
+    untouched entirely - the user asked to change the theme, not
+    anyone's separate light/dark preference."""
+    conn.execute(text("UPDATE user SET theme = NULL"))
+    conn.execute(text("UPDATE admin SET theme = NULL"))
+
+
+# Keyed by the app VERSION a schema (or, as of 7.1.0, sometimes pure
+# data) change shipped in, not a separate incrementing number - per the
+# user, a schema change should always come with a version bump, so
+# there's exactly one number to keep track of, not two that can drift
+# apart (which is exactly what happened: the fix above shipped without
+# bumping VERSION at the time, so nothing recorded that this database
+# needed it). Applied in ascending version order, regardless of dict
+# insertion order - see _version_tuple. Every migration here still runs
+# through the exact same "already applied?" version check even when
+# there's no ALTER TABLE at all (see _migrate_to_7_1_0) - a one-time data
+# change needs the same "did this database already get this" guarantee a
+# schema change does, and this mechanism already provides it for free.
 #
 # Adding a future migration: bump app/VERSION, write a new function next
 # to _migrate_to_2_1_0, and add it here keyed by that same new version.
@@ -375,6 +409,7 @@ MIGRATIONS = {
     "6.4.0": _migrate_to_6_4_0,
     "6.5.0": _migrate_to_6_5_0,
     "6.6.0": _migrate_to_6_6_0,
+    "7.1.0": _migrate_to_7_1_0,
 }
 
 

@@ -16,7 +16,7 @@ from sqlmodel import Session
 
 from db import engine
 from models import Admin, User
-from themes import DEFAULT_MODE, DEFAULT_THEME
+from themes import DEFAULT_MODE, DEFAULT_THEME, LOGGED_OUT_THEME
 from version import APP_VERSION
 
 templates = Jinja2Templates(directory="templates")
@@ -69,12 +69,28 @@ def _signed_in_account(request):
 
 def current_theme(request) -> str:
     """The signed-in viewer's own theme choice (see themes.py,
-    models.User.theme/Admin.theme), or themes.DEFAULT_THEME for a
-    logged-out page or an account that's never set one. Registered as a
-    Jinja global rather than something every route has to thread through
-    its own context - see _signed_in_account() above for why."""
+    models.User.theme/Admin.theme), themes.DEFAULT_THEME for a signed-in
+    account that's never set one, or themes.LOGGED_OUT_THEME for a page
+    with no signed-in account at all. Registered as a Jinja global rather
+    than something every route has to thread through its own context -
+    see _signed_in_account() above for why.
+
+    The logged-out case is deliberately its own fixed constant, not
+    DEFAULT_THEME - see LOGGED_OUT_THEME's own comment in themes.py. Real
+    bug this fixed, not a hypothetical: before DEFAULT_THEME became
+    "bmms" (per the user, "select the BMMS theme as default for all
+    users and admins"), the two constants happened to hold the same
+    value, so collapsing this into one `else` branch was invisible - the
+    moment they diverged, a logged-out page (which has its own hand-built
+    plain layout - see admin_login.html/user_login.html/user_signup.html's
+    own .login-page) would have started rendering as whatever DEFAULT_THEME
+    is instead, wrapping the login form in a sidebar theme's structural
+    CSS and showing a second, theme-specific logo alongside the one those
+    templates already add themselves."""
     account = _signed_in_account(request)
-    return account.theme if account and account.theme else DEFAULT_THEME
+    if account is None:
+        return LOGGED_OUT_THEME
+    return account.theme or DEFAULT_THEME
 
 
 def current_mode(request) -> str:

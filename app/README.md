@@ -1731,6 +1731,60 @@ in isolated testing: one shared cookie holding both a user session (mode
 `/dashboard` and `/admin/dashboard` each independently resolved to the
 right one.
 
+**"Default" renamed to "Basic"; BMMS becomes the actual default -
+ahead of deployment, per the user: "Change the name of the 'Default'
+theme to 'Basic'. Then select the 'BMMS' theme as default for all
+users and admins."** The rename itself is cosmetic (`THEMES["default"]`
+display name only - the id stays `"default"`, so no schema/data
+implications at all), but the second half genuinely isn't: it changes
+`themes.DEFAULT_THEME` from `"default"` to `"bmms"`, the same constant
+`current_theme()`/`current_mode()` (templates_env.py) fall back to for
+*any* signed-in account with no saved preference, and the same one
+`routers/user.py`/`routers/admin.py`'s settings pages pre-select in the
+dropdown for one too.
+
+**Real bug this surfaced before it ever shipped, not a hypothetical:**
+until now, `DEFAULT_THEME` and "the theme a logged-out page (the two
+login pages, signup) renders as" happened to be the exact same value,
+so `current_theme()` used one `else` branch for both "no signed-in
+account at all" and "a signed-in account with no saved preference."
+The moment `DEFAULT_THEME` became `"bmms"`, that stopped being harmless:
+a logged-out page would have started rendering `data-theme="bmms"`
+too, wrapping the login form in BMMS's own sidebar layout and showing
+a *second*, theme-specific logo in that sidebar's header on top of the
+large letterhead one those pages already add themselves (see "The
+'BMMS' theme" below) - genuinely broken, not just cosmetically
+different. Fixed by splitting the two into separate constants:
+`themes.LOGGED_OUT_THEME` (always `"default"`/Basic - matching the
+user's own earlier framing, "I'm guessing the login pages are not part
+of the theme," now actually enforced by the code rather than true only
+by coincidence) and `DEFAULT_THEME` (what a real, signed-in account
+with no preference gets). Caught and fixed before ever being verified
+against a running server, by reasoning through the change rather than
+after seeing it break.
+
+**Applying the new default to every *existing* account, not just
+future ones** - "select ... as default for all users and admins," not
+"for all new" ones - needed an actual data migration
+(`db._migrate_to_7_1_0`, schema `7.1.0`), the first one in this
+project with no schema change behind it at all (see that migration's
+own docstring, and `db.py`'s `MIGRATIONS` dict comment, for why it
+still goes through the exact same version-keyed mechanism as a real
+`ALTER TABLE`). Clears every `User`/`Admin.theme` back to `NULL` rather
+than writing the literal string `"bmms"` - `NULL` already means "no
+preference, follow whatever `DEFAULT_THEME` currently is," so an
+account touched by this migration keeps following `DEFAULT_THEME`
+automatically if it's ever changed again later, the same way it would
+have before this migration ran, rather than staying permanently pinned
+to `"bmms"` specifically because a one-time script happened to hardcode
+it. `theme_mode` (light/dark) is left completely untouched - only the
+theme was asked for. Verified with a real simulated upgrade (an
+isolated database seeded with pre-existing accounts on explicit
+themes, `schemaversion` rolled back to `7.0.0`, then `init_db()` run
+again): every account's theme cleared to `NULL` as expected, and a
+second `init_db()` run afterward left a since-changed theme alone,
+confirming the migration only ever runs once per database.
+
 ### The "Console" theme - sidebar nav, bordered sections, full width
 
 **Why this exists:** per the user - the first real theme this app has
@@ -2087,20 +2141,25 @@ already established (`--text` alone isn't reliably readable against a
 sidebar that doesn't itself change with mode).
 
 **The logo also appears somewhere neither Console, Savanna, nor Fil
-ever needed to reach: the login pages.** `current_theme()`
-(templates_env.py) always resolves to `"default"` for a logged-out
-request - there's no signed-in account yet to have a saved theme choice
-- so `[data-theme="bmms"]`'s own CSS can never apply to
-`admin_login.html`/`user_login.html` no matter what theme exists. The
-user's own words correctly anticipated this: "I'm guessing the login
-pages are not part of the theme. I still want this on the login
-pages." So the logo is shown there unconditionally instead, added
-directly to both login templates rather than through the theme
-mechanism, via a plain (non-theme-gated) `.login-logo` CSS rule and a
-`.login-page` wrapper div - it shows up on the login pages regardless
-of what theme is later selected by whoever logs in, same as it would
-look identical to every visitor before any of them have an account at
-all.
+ever needed to reach: the logged-out pages.** `current_theme()`
+(templates_env.py) always resolves to `themes.LOGGED_OUT_THEME` for a
+logged-out request - there's no signed-in account yet to have a saved
+theme choice - so `[data-theme="bmms"]`'s own CSS can never apply to
+`admin_login.html`/`user_login.html`/`user_signup.html` no matter what
+theme exists (see "'Default' renamed to 'Basic'; BMMS becomes the
+actual default," above, for the real bug this distinction fixed once
+BMMS also became this app's actual `DEFAULT_THEME`). The user's own
+words correctly anticipated this, for the two login pages at least:
+"I'm guessing the login pages are not part of the theme. I still want
+this on the login pages." (The signup page was missed in that first
+pass, and added once the user separately noticed: "The signup page
+form is not centered with the logo.") So the logo is shown there
+unconditionally instead, added directly to all three templates rather
+than through the theme mechanism, via a plain (non-theme-gated)
+`.login-logo` CSS rule and a `.login-page` wrapper div - it shows up on
+all three regardless of what theme is later selected by whoever signs
+up or logs in, the same for every visitor before any of them have an
+account at all.
 
 **Sized and laid out in two follow-up passes, both per direct user
 feedback, not guessed at upfront:** the sidebar logo (`.bmms-logo`)
@@ -2121,13 +2180,14 @@ while the form itself (a block with its own fixed max-width, so
 a block, with `text-align: left` reset inside it so the labels/inputs
 themselves don't also center.
 
-Verified the same way as every theme before it, repeated after both
-follow-up sizing passes: a real isolated copy, Playwright screenshots
-(throwaway venv, cleaned up after) of both login pages (fully logged
-out, confirming the logo appears with no theme applied at all, at its
-current size/position) and the three-section Settings page in both
-light and dark mode, zero console errors, zero failed requests
-(confirming the logo file itself actually loads).
+Verified the same way as every theme before it, repeated after every
+follow-up pass (both sizing passes, and again once signup was added):
+a real isolated copy, Playwright screenshots (throwaway venv, cleaned
+up after) of all three logged-out pages (fully logged out, confirming
+the logo appears with no theme applied at all, at its current
+size/position) and the three-section Settings page in both light and
+dark mode, zero console errors, zero failed requests (confirming the
+logo file itself actually loads).
 
 ### Login rate-limiting
 

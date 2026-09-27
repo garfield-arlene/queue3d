@@ -134,12 +134,12 @@ Managing user accounts:
 - **Per-account theme and light/dark mode selection** - both users and
   admins get their own settings page to pick a UI theme and a light/dark
   mode independently, persisting across logins/devices (not a
-  browser-only preference). The current look is now a real, named
-  "Default" theme (in its "Light" mode) rather than just "whatever the
-  CSS says" - `base.html`'s styles are CSS custom properties a future
-  theme/mode combination overrides selectively, with zero visible change
-  to how the app looked before this. See `app/README.md`'s "Themes"
-  section.
+  browser-only preference). The original look is now a real, named
+  "Basic" theme (renamed from "Default" once BMMS became this
+  deployment's actual default - see below) rather than just "whatever
+  the CSS says" - `base.html`'s styles are CSS custom properties a
+  theme/mode combination overrides selectively. See `app/README.md`'s
+  "Themes" section.
 - **"Console," "Savanna," "Fil," and "BMMS" themes** - four genuinely
   different themes (not just color swaps), sharing one layout: page
   links as tabs down a left sidebar instead of a top row, each page's
@@ -150,8 +150,10 @@ Managing user accounts:
   the sidebar's edge, dangling from the top of the window) instead of a
   photo; BMMS is built for this app's actual deployment site - Black
   Mountain Middle School's own maroon-and-gold colors and Raiders logo,
-  also shown on the login pages regardless of theme. All four ship both
-  Light and Dark modes. See `app/README.md`'s "The 'Console' theme,"
+  also shown on the login/signup pages regardless of theme, and the
+  actual default for every account with no preference of its own set
+  (previously "Basic"/"default"). All four ship both Light and Dark
+  modes. See `app/README.md`'s "The 'Console' theme,"
   "The 'Savanna' theme," "The 'Fil' theme," and "The 'BMMS' theme"
   sections.
 - **Automatic completion detection** - a background poller notices a
