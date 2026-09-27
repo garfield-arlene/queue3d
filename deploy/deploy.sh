@@ -11,9 +11,9 @@
 # before this, since the Pi itself never touches the network. Also needs
 # deploy/cache/tls/fullchain.pem and privkey.pem - a real TLS certificate,
 # issued elsewhere (see deploy/README.md's "TLS certificate" section) and
-# copied there - run ./prep_deploy.sh <user@cert-host> <remote-fullchain-
-# path> <remote-privkey-path> first to fetch it (and pull the latest
-# code) in one step, or copy the two files there by hand; there's no
+# copied there - run ./prep_deploy.sh <cert-host> <remote-cert-dir> first
+# to fetch it (and pull the latest code) in one step, or copy the two
+# files there by hand; there's no
 # self-signed fallback and no way for
 # this deployment to obtain one on its own.
 #

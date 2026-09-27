@@ -18,28 +18,29 @@
 # a pty this script allocates for exactly that - not silently skipped or
 # swallowed).
 #
-# The two remote files are each their own full path, not one shared
-# directory plus assumed standard filenames - not every setup keeps
-# fullchain.pem/privkey.pem together the way certbot's own default
-# /etc/letsencrypt/live/<domain>/ layout does. Deliberately nothing about
-# any of this - the cert-issuing host, or either file's actual path - is
-# hardcoded anywhere below, even as a default: all three are only ever
-# passed in at the command line, per the user, so none of it ends up
-# committed to this (public) repo.
+# Only two things this needs to know, and only two arguments it takes -
+# the cert host, and the one directory on it holding both fullchain.pem
+# and privkey.pem together (certbot's own standard layout, and per the
+# user, the actual layout here too). Deliberately neither is hardcoded
+# anywhere below, even as a default - both are only ever passed in at
+# the command line, per the user, so neither ends up committed to this
+# (public) repo.
 #
-# Usage: ./prep_deploy.sh <user@cert-host> <remote-fullchain-path> <remote-privkey-path>
-# Example: ./prep_deploy.sh certadmin@your-home-server /etc/letsencrypt/live/your-domain/fullchain.pem /etc/letsencrypt/live/your-domain/privkey.pem
+# Usage: ./prep_deploy.sh <cert-host> <remote-cert-dir>
+# Example: ./prep_deploy.sh certadmin@your-home-server /etc/letsencrypt/live/your-domain
+# <cert-host> works the same as ./deploy.sh's own <host> argument - a
+# bare hostname, user@host, or a ~/.ssh/config Host alias all work,
+# since this is passed straight through to ssh/scp exactly as typed.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [ $# -ne 3 ]; then
-  echo "Usage: $0 <user@cert-host> <remote-fullchain-path> <remote-privkey-path>" >&2
-  echo "Example: $0 certadmin@your-home-server /path/to/fullchain.pem /path/to/privkey.pem" >&2
+if [ $# -ne 2 ]; then
+  echo "Usage: $0 <cert-host> <remote-cert-dir>" >&2
+  echo "Example: $0 certadmin@your-home-server /path/to/cert/dir" >&2
   exit 1
 fi
 CERT_HOST="$1"
-REMOTE_FULLCHAIN="$2"
-REMOTE_PRIVKEY="$3"
+REMOTE_CERT_DIR="$2"
 
 # This script lives in deploy/, but git itself only cares that we're
 # somewhere inside the repo - one level up either way. Checked explicitly
@@ -76,7 +77,7 @@ git pull --ff-only
 cd deploy
 mkdir -p cache/tls
 
-echo "Fetching the TLS certificate from $CERT_HOST ..."
+echo "Fetching the TLS certificate from $CERT_HOST:$REMOTE_CERT_DIR ..."
 # Tries a plain scp first - works fine if that account can already read
 # these files directly. Falls back to `ssh -t ... sudo cat` (a real
 # interactive sudo password prompt, over a pty ssh allocates specifically
@@ -95,8 +96,8 @@ fetch_cert_file() {
   ssh -t "$CERT_HOST" "sudo cat '$remote_path'" > "$local_path"
 }
 
-fetch_cert_file "$REMOTE_FULLCHAIN" cache/tls/fullchain.pem
-fetch_cert_file "$REMOTE_PRIVKEY" cache/tls/privkey.pem
+fetch_cert_file "$REMOTE_CERT_DIR/fullchain.pem" cache/tls/fullchain.pem
+fetch_cert_file "$REMOTE_CERT_DIR/privkey.pem" cache/tls/privkey.pem
 chmod 600 cache/tls/privkey.pem
 
 # Confirms the two files actually belong together, the same check used

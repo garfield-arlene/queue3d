@@ -267,47 +267,40 @@ instead on a machine that does have internet, for a real domain the
 user already controls (a subdomain of an existing personal domain,
 `q3d.home.mygarfield.us`), then copied here.
 
-**`./prep_deploy.sh <user@cert-host> <remote-fullchain-path>
-<remote-privkey-path>`** does this (and pulls the latest code first) in
-one step - run it on your Mac before `./deploy.sh` whenever you're
-about to deploy, or the cert is due for renewal. `<user@cert-host>` is
-the machine that runs certbot - a *third* machine, distinct from both
-the Pi (`./deploy.sh`'s own target) and this Mac; a first example here
-used `pi@homeserver.local`, which read as if it meant the Pi itself and
-caused exactly that confusion in practice. The other two arguments are
-each file's own full remote path, not one shared directory plus assumed
-standard filenames - not every setup keeps `fullchain.pem`/`privkey.pem`
-together the way certbot's own default
-`/etc/letsencrypt/live/<domain>/` layout does (an earlier version of
-this script assumed exactly that single-shared-directory layout, before
-a real, differently-laid-out setup needed each path specified on its
-own). Nothing here is hardcoded anywhere in the script, even as a
-default - the cert-issuing host and both file paths are only ever
-passed in at the command line, per the user, so none of it ends up
-committed to this (public) repo:
+**`./prep_deploy.sh <cert-host> <remote-cert-dir>`** does this (and
+pulls the latest code first) in one step - run it on your Mac before
+`./deploy.sh` whenever you're about to deploy, or the cert is due for
+renewal. Only two things it needs to know, and only two arguments it
+takes: `<cert-host>` is the machine that runs certbot - a *third*
+machine, distinct from both the Pi (`./deploy.sh`'s own separate
+target) and this Mac, and works exactly like `./deploy.sh`'s own
+`<host>` argument (bare hostname, `user@host`, or a `~/.ssh/config`
+Host alias, passed straight through to ssh/scp as typed) - and
+`<remote-cert-dir>` is the one directory on it holding both
+`fullchain.pem` and `privkey.pem` together, certbot's own standard
+layout. Neither is hardcoded anywhere in the script, even as a default
+- both are only ever passed in at the command line, per the user, so
+neither ends up committed to this (public) repo:
 
 ```bash
-./prep_deploy.sh certadmin@your-home-server \
-  /etc/letsencrypt/live/q3d.home.mygarfield.us/fullchain.pem \
-  /etc/letsencrypt/live/q3d.home.mygarfield.us/privkey.pem
+./prep_deploy.sh certadmin@your-home-server /etc/letsencrypt/live/q3d.home.mygarfield.us
 ```
 
 Needs your own key already added to that machine's `authorized_keys`,
 the same way it already is for the Pi - a one-time `ssh-copy-id` (or
-manual append) if it isn't there yet. It fetches each file from
-`<user@cert-host>` into `deploy/cache/tls/fullchain.pem`/`privkey.pem` -
-a plain read first, and if that account can't read a file directly
-(certbot leaves `privkey.pem` root-only by default, so this is the
-common case, not the exception), automatically falls back to `ssh -t
-... sudo cat` instead: a real interactive sudo password prompt, over a
-pty allocated specifically so that prompt can actually appear, not
-silently skipped or left to fail with a confusing permission error.
-Confirms the two files actually match each other afterward either way
-(the same `openssl ... -modulus` check done by hand the first time this
-cert was wired in - catches a fetch that grabbed a stale/mismatched
-pair, or the wrong path typed above, rather than that only surfacing
-later as a broken HTTPS setup on the Pi), and prints the cert's valid
-dates.
+manual append) if it isn't there yet. It fetches both files from
+`<cert-host>` into `deploy/cache/tls/` - a plain read first, and if
+that account can't read a file directly (certbot leaves `privkey.pem`
+root-only by default, so this is the common case, not the exception),
+automatically falls back to `ssh -t ... sudo cat` instead: a real
+interactive sudo password prompt, over a pty allocated specifically so
+that prompt can actually appear, not silently skipped or left to fail
+with a confusing permission error. Confirms the two files actually
+match each other afterward either way (the same `openssl ... -modulus`
+check done by hand the first time this cert was wired in - catches a
+fetch that grabbed a stale/mismatched pair, rather than that only
+surfacing later as a broken HTTPS setup on the Pi), and prints the
+cert's valid dates.
 
 **Doing it by hand instead** (what `prep_deploy.sh` above actually
 automates) still works fine, if you'd rather not set up SSH access
