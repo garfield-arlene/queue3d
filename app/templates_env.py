@@ -48,7 +48,25 @@ def _signed_in_account(request):
     A short-lived Session of its own, not the request's - by the time
     base.html renders, most routes' own Session is already doing (or has
     done) other things, and this is cheap enough (one indexed primary-key
-    lookup) that sharing one properly isn't worth the plumbing."""
+    lookup) that sharing one properly isn't worth the plumbing.
+
+    The three auth-form pages always resolve to None here, even for a
+    visitor who happens to already have a valid session - a real, caught
+    bug, not a hypothetical: none of these routes redirect an
+    already-signed-in visitor away (GET /admin/login always just renders
+    the form, session or not), so an admin/user who navigates back to
+    their own login page - a bookmark, browser back, a stale second tab -
+    would otherwise see current_theme()/current_mode() resolve to their
+    own saved theme, layering that theme's sidebar (see base.html's
+    shared structural CSS) on top of these pages' own hand-built plain
+    layout (see admin_login.html/user_login.html/user_signup.html's own
+    .login-page) - the exact visual collision LOGGED_OUT_THEME exists to
+    prevent in the first place, just reached through a stale session
+    instead of a missing one. These three pages are meant to look
+    identically plain to every visitor regardless of who they are or
+    were."""
+    if request.url.path in ("/admin/login", "/login", "/signup"):
+        return None
     admin_id = request.session.get("admin_id")
     user_id = request.session.get("user_id")
     is_admin_path = request.url.path.startswith("/admin")
