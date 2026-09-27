@@ -73,13 +73,6 @@ fi
 MISSING_PKGS=""
 command -v nginx >/dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS nginx"
 dpkg -s python3-venv >/dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS python3-venv"
-# dnsmasq resolves q3d.home.mygarfield.us to this Pi on the deployment
-# network - see the "DNS" section in deploy/README.md's "TLS
-# certificate" writeup for why this exists at all (the real cert is
-# useless if the hostname it's issued for can't even resolve, and the
-# router on the actual deployment network has no usable DNS service of
-# its own to add that record to).
-command -v dnsmasq >/dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS dnsmasq"
 if [ -n "$MISSING_PKGS" ]; then
   echo "Installing missing OS packages ($MISSING_PKGS) - needs internet..."
   if ! (DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y $MISSING_PKGS); then
@@ -253,6 +246,34 @@ mkdir -p "$SSL_DIR"
 cp "$STAGING_DIR/fullchain.pem" "$SSL_DIR/queue3d-fullchain.pem"
 cp "$STAGING_DIR/privkey.pem" "$SSL_DIR/queue3d-privkey.pem"
 chmod 600 "$SSL_DIR/queue3d-privkey.pem"
+
+# dnsmasq itself, installed offline from the .deb files
+# fetch_bundle_assets.sh staged (deploy/cache/debs/, synced by deploy.sh
+# to $STAGING_DIR/debs/) via `apt-get install ./*.deb`, NOT a live
+# `apt-get install dnsmasq`. Real incident, not a hypothetical: this
+# used to be grouped with nginx/python3-venv above under "only needs
+# internet once, during initial setup" - wrong for dnsmasq specifically,
+# since it was added long after this deployment's Pi had already lost
+# internet access for good, so the live install just failed outright
+# the first time this actually ran on the real, offline network. `apt-
+# get install ./*.deb` (not `dpkg -i`) resolves the bundled dependency
+# set against what's already installed and needs no network access for
+# local file arguments - safe to run on every deploy, not just the
+# first: it reports "already the newest version" and does nothing once
+# installed. `--no-install-recommends` matches how the bundled
+# dependency set itself was resolved (see fetch_bundle_assets.sh's own
+# comment) - without it, apt also wants a dbus/libapparmor1/
+# dns-root-data/adduser cluster that dnsmasq doesn't actually need for
+# anything this app uses it for. Any future new OS package dependency
+# needs this same treatment, not the nginx/python3-venv one.
+if [ ! -d "$STAGING_DIR/debs" ] || [ -z "$(ls -A "$STAGING_DIR/debs" 2>/dev/null)" ]; then
+  echo "ERROR: $STAGING_DIR/debs is missing or empty - deploy.sh should have" >&2
+  echo "synced deploy/cache/debs/ here. Run ./fetch_bundle_assets.sh on a" >&2
+  echo "machine with internet, then redeploy." >&2
+  exit 1
+fi
+echo "Installing dnsmasq from the staged .deb files (offline, no network needed)..."
+(cd "$STAGING_DIR/debs" && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y ./*.deb)
 
 # Local DNS override for q3d.home.mygarfield.us -> this Pi - per the
 # user: the router on the real deployment network has no usable DNS

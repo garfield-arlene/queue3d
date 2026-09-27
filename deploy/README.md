@@ -208,6 +208,44 @@ machine - that still needs the real Pi. Re-run this whenever
 the cache persists between
 deploys and there's nothing to re-fetch.
 
+Also populates `deploy/cache/debs/` with `dnsmasq` (arm64) and its full
+dependency closure, for `remote_install.sh`'s own offline `apt-get
+install --no-install-recommends ./*.deb` - **a real incident, not a
+hypothetical precaution**: `dnsmasq` was originally apt-get installed
+live, directly on the Pi, on the theory that (like `nginx`/
+`python3-venv`) it only needed internet once, during initial setup.
+Wrong for `dnsmasq` specifically - it was added long after the real
+Pi's initial setup had already happened, on a network that by then had
+none, and the live install just failed outright the first time this
+actually ran there; the failure mode was subtle rather than an obvious
+crash, since `command -v dnsmasq` can return true for a system that
+only has `dnsmasq-base` (a different package, no systemd unit) already
+present some other way, so `systemctl status dnsmasq` came back "unit
+not found" well after the deploy had otherwise "completed." **Any
+future new OS package dependency needs this same treatment** (staged
+here, installed offline in `remote_install.sh`), not the live
+`apt-get install` nginx/python3-venv still correctly use for their own,
+genuinely-once, initial-setup-only case.
+
+Verified by actually installing this exact package set with a real,
+network-blocked `apt-get install --no-install-recommends ./*.deb` in a
+throwaway container and confirming `dnsmasq` ends up genuinely
+`install ok installed` with its systemd unit present on disk - not
+just that dependency resolution looked plausible on paper (a first,
+less careful pass silently omitted two real dependencies, `netbase`/
+`runit-helper`, caught only because this install test failed without
+them). One thing this verification could *not* cover: actually
+executing the real arm64 `.deb` files' own maintainer scripts on arm64
+hardware - this dev machine has no arm64 execution capability
+(`qemu-user-static`/binfmt isn't set up here) - so the completed test
+above used the equivalent amd64 packages of the exact same names and
+versions to prove the *dependency graph* is complete (architecture-
+independent - Debian declares the same `Depends` relationships for
+both), while the real arm64 files were separately confirmed to be
+genuine, valid, correctly-architected `.deb` archives. The real Pi
+itself is still the final confirmation, the same honest caveat the
+wheels/OrcaSlicer verification above already carries.
+
 ### 6. Deploy
 
 ```bash

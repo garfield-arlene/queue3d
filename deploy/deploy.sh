@@ -46,6 +46,10 @@ if ! ls cache/OrcaSlicer-aarch64-*.AppImage >/dev/null 2>&1; then
   echo "No cached OrcaSlicer AppImage - run ./fetch_bundle_assets.sh first." >&2
   exit 1
 fi
+if [ ! -d cache/debs ] || [ -z "$(ls -A cache/debs 2>/dev/null)" ]; then
+  echo "deploy/cache/debs is empty - run ./fetch_bundle_assets.sh on a machine with internet first." >&2
+  exit 1
+fi
 # A real, publicly-trusted TLS certificate, not self-signed (see
 # deploy/README.md's "TLS certificate" section for why, and how to get
 # one) - this deployment has no internet access itself, so it can never
@@ -121,6 +125,8 @@ echo "  wheels/ ..."
 rsync -az "${RSYNC_PROGRESS[@]}" cache/wheels "$TARGET:$STAGING_DIR/"
 echo "  OrcaSlicer AppImage ..."
 rsync -az "${RSYNC_PROGRESS[@]}" cache/OrcaSlicer-aarch64-*.AppImage "$TARGET:$STAGING_DIR/"
+echo "  dnsmasq + dependencies (.deb) ..."
+rsync -az "${RSYNC_PROGRESS[@]}" cache/debs "$TARGET:$STAGING_DIR/"
 echo "  TLS certificate ..."
 # Already going over SSH like everything else here, so this is no less
 # protected in transit than the app source itself - rsync's own -p isn't
