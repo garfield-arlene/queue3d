@@ -79,21 +79,35 @@ mkdir -p cache/tls
 
 echo "Fetching the TLS certificate from $CERT_HOST:$REMOTE_CERT_DIR ..."
 # Tries a plain scp first - works fine if that account can already read
-# these files directly. Falls back to `ssh -t ... sudo cat` (a real
-# interactive sudo password prompt, over a pty ssh allocates specifically
-# so that prompt can actually appear) since a plain scp has no way to
-# escalate privilege at all, and certbot's privkey.pem is root-only by
-# default on most setups. PEM files are plain ASCII text (base64 between
-# BEGIN/END markers), not binary - confirmed by hand that forcing a pty
-# doesn't mangle line endings or otherwise corrupt content like it could
-# for a raw binary stream, so this is safe, not just convenient.
+# these files directly. Falls back to sudo on $CERT_HOST if that account
+# can't (certbot's privkey.pem is root-only by default on most setups) -
+# but deliberately NOT `ssh -t ... sudo cat > local_path`: with -t, the
+# *entire* remote pty's output (including sudo's own password prompt,
+# wherever it writes it) shares the same channel this local ssh process
+# treats as the command's stdout, so redirecting that straight into the
+# cert file either swallows the prompt into the file invisibly (looks
+# like a hang - you're actually being asked for a password you can't
+# see) or, if you type blindly and it works anyway, corrupts the file
+# with the prompt text prepended to it. Real bug, caught on the user's
+# own report of exactly this happening, not a hypothetical.
+#
+# Instead: elevate and stage a world-readable copy in /tmp first (that
+# command's own output is never captured anywhere, so a password prompt
+# during it is harmless no matter where it's written), then fetch that
+# staged copy with a completely separate, ordinary, non-interactive scp
+# - the actual file content never shares a stream with anything
+# interactive at all. Cleaned up immediately after either way, since it
+# briefly sits world-readable on $CERT_HOST.
 fetch_cert_file() {
   local remote_path="$1" local_path="$2"
   if scp -q "$CERT_HOST:$remote_path" "$local_path" 2>/dev/null; then
     return 0
   fi
-  echo "  $remote_path isn't readable directly - retrying via sudo on $CERT_HOST (you may be asked for its password):"
-  ssh -t "$CERT_HOST" "sudo cat '$remote_path'" > "$local_path"
+  echo "  $remote_path isn't readable directly - using sudo on $CERT_HOST to stage a readable copy (you may be asked for its password):"
+  local remote_tmp="/tmp/queue3d-prep-deploy-$$-$(basename "$remote_path")"
+  ssh -t "$CERT_HOST" "sudo sh -c \"cp '$remote_path' '$remote_tmp' && chmod 644 '$remote_tmp'\""
+  scp -q "$CERT_HOST:$remote_tmp" "$local_path"
+  ssh "$CERT_HOST" "rm -f '$remote_tmp'"
 }
 
 fetch_cert_file "$REMOTE_CERT_DIR/fullchain.pem" cache/tls/fullchain.pem
