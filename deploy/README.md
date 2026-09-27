@@ -276,25 +276,36 @@ machine, distinct from both the Pi (`./deploy.sh`'s own separate
 target) and this Mac, and works exactly like `./deploy.sh`'s own
 `<host>` argument (bare hostname, `user@host`, or a `~/.ssh/config`
 Host alias, passed straight through to ssh/scp as typed) - and
-`<remote-cert-dir>` is the one directory on it holding both
-`fullchain.pem` and `privkey.pem` together, certbot's own standard
-layout. Neither is hardcoded anywhere in the script, even as a default
-- both are only ever passed in at the command line, per the user, so
-neither ends up committed to this (public) repo:
+`<remote-cert-dir>` is the one directory on it holding the current
+certificate and key. No filenames are assumed beyond the
+`fullchain*.pem`/`privkey*.pem` prefix: certbot's `live/<domain>/` uses
+the bare, un-numbered `fullchain.pem`/`privkey.pem` (symlinks into
+`archive/`), but `archive/<domain>/` - a perfectly valid, real directory
+to point this at - numbers every one instead (`fullchain1.pem`,
+`fullchain2.pem`, ... each renewal), never the bare name at all.
+Neither the host nor the directory is hardcoded anywhere in the script,
+even as a default - both are only ever passed in at the command line,
+per the user, so neither ends up committed to this (public) repo:
 
 ```bash
 ./prep_deploy.sh certadmin@your-home-server /etc/letsencrypt/live/q3d.home.mygarfield.us
+# or, pointed at archive/ instead of live/:
+./prep_deploy.sh certadmin@your-home-server /etc/letsencrypt/archive/q3d.home.mygarfield.us
 ```
 
 Needs your own key already added to that machine's `authorized_keys`,
 the same way it already is for the Pi, connecting as an account that
-can already read both files directly - no sudo, no elevation, no
-fallback of any kind. Per the user, whose account on that machine is
-already set up with exactly that access: this script trusts it and
-just copies the files with a plain `scp`, nothing more. It fetches both
-into `deploy/cache/tls/`, confirms they actually match each other
-afterward (the same `openssl ... -modulus` check done by hand the
-first time this cert was wired in - catches a fetch that grabbed a
+can already read everything in that directory directly - no sudo, no
+elevation, no fallback of any kind. Per the user, whose account on that
+machine is already set up with exactly that access: this script trusts
+it and just copies the files with a plain `scp`, nothing more. Pulls
+the whole directory into a throwaway local temp dir (cleaned up on
+exit, success or failure), then picks the highest-numbered
+`fullchain*.pem`/`privkey*.pem` pair there (a natural/version sort, not
+alphabetical - `fullchain2.pem` has to sort after `fullchain10.pem`
+correctly) into `deploy/cache/tls/`, confirms they actually match each
+other (the same `openssl ... -modulus` check done by hand the first
+time this cert was wired in - catches a fetch that grabbed a
 stale/mismatched pair, rather than that only surfacing later as a
 broken HTTPS setup on the Pi), and prints the cert's valid dates.
 

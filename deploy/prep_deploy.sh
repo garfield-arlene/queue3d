@@ -18,12 +18,21 @@
 # and just copies the files.
 #
 # Only two things this needs to know, and only two arguments it takes -
-# the cert host, and the one directory on it holding both fullchain.pem
-# and privkey.pem together (certbot's own standard layout, and per the
-# user, the actual layout here too). Deliberately neither is hardcoded
-# anywhere below, even as a default - both are only ever passed in at
-# the command line, per the user, so neither ends up committed to this
-# (public) repo.
+# the cert host, and the one directory on it holding the current
+# certificate and key. No filenames are assumed there beyond the
+# fullchain*.pem/privkey*.pem prefix: certbot's live/<domain>/ uses the
+# bare, un-numbered fullchain.pem/privkey.pem (symlinks into archive/),
+# but archive/<domain>/ - a perfectly valid, real directory to point
+# this at, and the one an earlier, wrong assumption here broke for -
+# numbers every one of them instead (fullchain1.pem, fullchain2.pem, ...
+# each renewal), never the bare name at all. Rather than guess which
+# scheme <remote-cert-dir> uses, this pulls every file in it and picks
+# the right ones locally once their real names are known - the highest-
+# numbered fullchain*.pem/privkey*.pem, or the only one there if it's
+# not numbered at all. Deliberately neither the cert host nor its
+# directory is hardcoded anywhere below, even as a default - both are
+# only ever passed in at the command line, per the user, so neither
+# ends up committed to this (public) repo.
 #
 # Usage: ./prep_deploy.sh <cert-host> <remote-cert-dir>
 # Example: ./prep_deploy.sh certadmin@your-home-server /etc/letsencrypt/live/your-domain
@@ -78,10 +87,32 @@ mkdir -p cache/tls
 
 echo "Fetching the TLS certificate from $CERT_HOST:$REMOTE_CERT_DIR ..."
 # Plain scp, nothing else - no sudo fallback, no elevation, no retry.
-# Trusts the account behind $CERT_HOST already has read access to both
-# files directly, per the user.
-scp "$CERT_HOST:$REMOTE_CERT_DIR/fullchain.pem" cache/tls/fullchain.pem
-scp "$CERT_HOST:$REMOTE_CERT_DIR/privkey.pem" cache/tls/privkey.pem
+# Trusts the account behind $CERT_HOST already has read access to
+# everything in that directory, per the user. Pulls the whole directory
+# (the wildcard is quoted as one piece with the host:path spec so *it*,
+# not this local shell, expands it - a remote-side glob, same as
+# `scp host:'/path/*.ext' local/` always works) into a throwaway local
+# temp dir, cleaned up on exit regardless of how this script finishes.
+FETCH_TMP="$(mktemp -d)"
+trap 'rm -rf "$FETCH_TMP"' EXIT
+scp -rq "$CERT_HOST:$REMOTE_CERT_DIR/*" "$FETCH_TMP/"
+
+# -V is a natural/version sort, not plain alphabetical - fullchain2.pem
+# has to sort after fullchain10.pem correctly, which plain `sort` gets
+# wrong (comparing "1" before "2" character-by-character). `tail -n1`
+# then picks the highest-numbered one - the current cert - or the only
+# match if <remote-cert-dir> is a live/ directory using the bare,
+# un-numbered name instead.
+fullchain_src="$(find "$FETCH_TMP" -maxdepth 1 -name 'fullchain*.pem' | sort -V | tail -n1)"
+privkey_src="$(find "$FETCH_TMP" -maxdepth 1 -name 'privkey*.pem' | sort -V | tail -n1)"
+if [ -z "$fullchain_src" ] || [ -z "$privkey_src" ]; then
+  echo "No fullchain*.pem/privkey*.pem pair found in $CERT_HOST:$REMOTE_CERT_DIR - it fetched:" >&2
+  ls "$FETCH_TMP" >&2
+  exit 1
+fi
+echo "Using $(basename "$fullchain_src") and $(basename "$privkey_src")"
+cp "$fullchain_src" cache/tls/fullchain.pem
+cp "$privkey_src" cache/tls/privkey.pem
 chmod 600 cache/tls/privkey.pem
 
 # Confirms the two files actually belong together, the same check used
