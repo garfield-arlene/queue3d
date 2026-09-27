@@ -11,12 +11,17 @@
        app/README.md's "Themes" section for how a viewer's two separate
        stored choices (User.theme/theme_mode, Admin.theme/theme_mode)
        become the data-theme/data-mode attributes above. This :root block
-       *is* "Default" + "Light" - every other theme/mode combination adds
-       a [data-theme="<id>"] and/or [data-theme="<id>"][data-mode="dark"]
-       block below overriding just the tokens it wants different, not a
-       full copy of every rule in this file. Mode is a separate axis from
-       theme, not folded into it - per the user, every theme gets both a
-       light and a dark variant.
+       *is* "Basic" (id "default" - renamed from "Default" once it
+       stopped being the only theme) in "Light" mode - every other
+       theme/mode combination adds a [data-theme="<id>"] and/or
+       [data-theme="<id>"][data-mode="dark"] block below overriding just
+       the tokens it wants different, not a full copy of every rule in
+       this file. Mode is a separate axis from theme, not folded into it
+       - per the user, every theme gets both a light and a dark variant.
+       Note that "Basic" being id "default" is no longer the same thing
+       as being *the* default theme - see themes.py's DEFAULT_THEME vs.
+       LOGGED_OUT_THEME for how those diverged once BMMS became this
+       deployment's actual default for signed-in accounts.
 
        Hardcoded colors, not the CSS Color 4 system keywords Canvas/
        CanvasText an earlier version of this used: those tracked the OS's
@@ -42,6 +47,159 @@
       --text: #e8e8e8;
       --error: #ff6b6b;
     }
+
+    /* Console theme (see themes.py) - its own layout tokens on top of
+       the shared --bg/--text/--error/--border* ones above, since this is
+       the first theme that needs more than a color swap: a distinct
+       sidebar background, a distinct content-area background, and a
+       section-title accent color strong enough to read as a real
+       "titlebar" against either. Both modes defined here, right next to
+       each other, same as every other theme's pair - light first (this
+       block), dark immediately below overriding just what changes. */
+    [data-theme="console"] {
+      color-scheme: light;
+      --bg: #eef0f4;
+      --text: #1a1a1a;
+      --error: #c0392b;
+      --border: #d0d4dc;
+      --border-strong: #b7bdc9;
+      --detail-bg: #8881;
+      --sidebar-bg: #e4e7ee;
+      --content-bg: #ffffff;
+      /* Same indigo as the dark palette below, not a separate, darker
+         navy - per the user, after the original #2b3a67 read as barely
+         distinguishable from black/gray on a light background. A color
+         this saturated needs the same value in both modes to actually
+         look "blue" against either background; a duller shade chosen to
+         feel more "light mode-appropriate" just came across as no color
+         at all. */
+      --section-title-bg: #3b5bdb;
+      --section-title-text: #f4f6fb;
+    }
+    [data-theme="console"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #14171c;
+      --text: #e8e8e8;
+      --error: #ff6b6b;
+      --border: #333a47;
+      --border-strong: #454e5e;
+      --sidebar-bg: #191d24;
+      --content-bg: #1c2029;
+      --section-title-bg: #3b5bdb;
+      --section-title-text: #f4f6fb;
+    }
+
+    /* Savanna theme (see themes.py) - the same sidebar/full-width/
+       bordered-section layout as Console (shared structural rules below,
+       keyed off both [data-theme="console"] and [data-theme="savanna"]
+       at once) with a warm desert-sunrise palette and a background photo
+       behind the sidebar instead of a flat color - per the user. Warm
+       browns/creams and a burnt-amber section-title accent instead of
+       Console's cool grays/indigo; --sidebar-bg here is only the
+       *fallback* color (shown briefly before the image loads, or if it
+       fails to), the real look comes from the header's own
+       background-image rule further down. */
+    [data-theme="savanna"] {
+      color-scheme: light;
+      --bg: #fbf3e7;
+      --text: #2e2013;
+      --error: #c0392b;
+      --border: #e6d7bd;
+      --border-strong: #d3bf9c;
+      --detail-bg: #8881;
+      --sidebar-bg: #2b1a12;
+      --content-bg: #fffaf2;
+      /* Same amber as the dark palette below, for the same reason
+         Console's two section-title-bg values match each other - a
+         color this saturated needs to stay consistent to read as an
+         actual accent color in both modes, not a washed-out variant of
+         itself in one of them. */
+      --section-title-bg: #c9622a;
+      --section-title-text: #fdf6ec;
+    }
+    [data-theme="savanna"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #1c140f;
+      --text: #ecdfcd;
+      --error: #ff6b6b;
+      --border: #3d2e21;
+      --border-strong: #52402f;
+      --sidebar-bg: #150d09;
+      --content-bg: #241a13;
+      --section-title-bg: #c9622a;
+      --section-title-text: #fdf6ec;
+    }
+
+    /* Fil theme (see themes.py) - same shared sidebar/full-width/
+       bordered-section layout again, this time with a plain, bright
+       minty palette instead of a photo, since the actual personality
+       here comes from the mascot images further down rather than the
+       background. --section-title-bg reuses Fil's own body color
+       (#12b5a6, see theme-fil-*.svg) so the section titles read as "his"
+       color in both modes, same reasoning as Console/Savanna's own
+       section-title-bg choice above. */
+    [data-theme="fil"] {
+      color-scheme: light;
+      --bg: #f5fbfa;
+      --text: #123330;
+      --error: #c0392b;
+      --border: #cdeae5;
+      --border-strong: #a9dcd4;
+      --detail-bg: #8881;
+      --sidebar-bg: #e3f6f3;
+      --content-bg: #ffffff;
+      --section-title-bg: #12b5a6;
+      --section-title-text: #f4fffd;
+    }
+    [data-theme="fil"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #101a19;
+      --text: #dff5f2;
+      --error: #ff6b6b;
+      --border: #1e3532;
+      --border-strong: #2c4b47;
+      --sidebar-bg: #0b1414;
+      --content-bg: #16211f;
+      --section-title-bg: #12b5a6;
+      --section-title-text: #f4fffd;
+    }
+
+    /* BMMS theme (see themes.py) - Black Mountain Middle School's own
+       maroon-and-gold colors, per the user, not a generic palette
+       invented for this app. --sidebar-bg is a fixed maroon in both
+       modes rather than flipping light/dark like Console's own sidebar
+       does - school colors are a fixed identity, not something that
+       should look "washed out" in light mode - the same reasoning
+       Savanna's photo-sidebar already established, just with a flat
+       color here instead of an image. --section-title-bg/text (a
+       brighter maroon with gold text) stays fixed across modes too, for
+       the same "a saturated accent needs to stay saturated in both
+       palettes" reason as every other theme's own section-title color. */
+    [data-theme="bmms"] {
+      color-scheme: light;
+      --bg: #faf5ea;
+      --text: #2a1013;
+      --error: #c0392b;
+      --border: #e8d9b0;
+      --border-strong: #d4bc7a;
+      --detail-bg: #8881;
+      --sidebar-bg: #4a0d15;
+      --content-bg: #fffdf7;
+      --section-title-bg: #7a1420;
+      --section-title-text: #f0c975;
+    }
+    [data-theme="bmms"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #140f0c;
+      --text: #f3e9da;
+      --error: #ff6b6b;
+      --border: #3a2a1c;
+      --border-strong: #55402a;
+      --sidebar-bg: #4a0d15;
+      --content-bg: #1c1613;
+      --section-title-bg: #7a1420;
+      --section-title-text: #f0c975;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -60,6 +218,25 @@
     button { font-size: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
     .error { color: var(--error); }
     .muted { opacity: 0.7; font-size: 0.9rem; }
+    /* The school logo and its surrounding centered layout on the two
+       login pages (admin_login.html, user_login.html) - a plain rule,
+       not theme-gated like .bmms-logo above, since it's meant to show
+       up there regardless of theme (see those templates' own comments
+       for why). Per the user, after the first version (a small
+       left-aligned logo above an otherwise left-aligned page): a large,
+       centered logo above a centered form. .login-page centers
+       everything (the logo, "Log in" heading, error/muted text) via
+       text-align, then the form - a block with its own fixed max-width,
+       so text-align alone can't center it - gets margin: 0 auto to
+       center as a block instead, with text-align reset to left inside
+       it since centering the labels/inputs themselves would look odd.
+       The logo's own width is 480px - 50% wider than the form's own
+       320px (the generic `form` rule's max-width above), like a
+       letterhead spanning wider than the form it sits above - per the
+       user, not an arbitrary "large" size. */
+    .login-logo { display: block; width: 480px; max-width: 90%; height: auto; margin: 0 auto 1.5rem; }
+    .login-page { text-align: center; }
+    .login-page form { margin: 0 auto; text-align: left; }
     /* A one-time success/informational message (e.g. a freshly-reset PIN,
        shown exactly once) - built from the same neutral tokens as
        details.tech-detail's box below rather than a new semantic color,
@@ -98,14 +275,375 @@
       padding: 0.5rem;
       border-radius: 4px;
     }
+
+    /* Console theme layout - see the token block above for its colors.
+       Everything below is structural, not color, which is why it's kept
+       separate: this is the actual "sidebar tabs, bordered sections,
+       full browser width" ask, all achievable in CSS alone against the
+       exact same markup every other theme uses (the sidebar is just
+       <header> restyled from a horizontal top bar into a vertical
+       column; <main> - added specifically so this theme has a second
+       flex sibling to size against - already sits next to it either
+       way) except for one thing: grouping a <h3> with the content that
+       follows it, up to the next <h3>, into one bordered box. CSS has no
+       "these siblings, up to a stopping point" selector, so that part is
+       the small inline script at the bottom of this file instead -
+       gated to only run under this theme, touching no template. */
+    /* Shared by every sidebar-layout theme (Console, Savanna, and any
+       future one) - kept as one set of structural rules, keyed off
+       multiple [data-theme] selectors at once, rather than duplicating
+       the same layout per theme; only the color tokens and (for Savanna)
+       the header's own background-image differ per theme from here on. */
+    [data-theme="console"] body,
+    [data-theme="savanna"] body,
+    [data-theme="fil"] body,
+    [data-theme="bmms"] body {
+      max-width: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      align-items: stretch;
+      min-height: 100vh;
+    }
+    [data-theme="console"] header,
+    [data-theme="savanna"] header,
+    [data-theme="fil"] header,
+    [data-theme="bmms"] header {
+      flex: 0 0 220px;
+      box-sizing: border-box;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      gap: 0.25rem;
+      margin-bottom: 0;
+      padding: 1.5rem 1rem;
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border-strong);
+      position: sticky;
+      top: 0;
+      align-self: flex-start;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    [data-theme="console"] header h1,
+    [data-theme="savanna"] header h1,
+    [data-theme="fil"] header h1,
+    [data-theme="bmms"] header h1 {
+      margin: 0 0 1rem 0.25rem;
+    }
+    /* Every page's own nav block is a flat list of <a> tags (plus one
+       <form> for Log out) - turned into a vertical stack of tab-like
+       rows here, purely by restyling that same markup, not by changing
+       it. */
+    [data-theme="console"] header a,
+    [data-theme="console"] header form,
+    [data-theme="savanna"] header a,
+    [data-theme="savanna"] header form,
+    [data-theme="fil"] header a,
+    [data-theme="fil"] header form,
+    [data-theme="bmms"] header a,
+    [data-theme="bmms"] header form {
+      display: block;
+    }
+    [data-theme="console"] header a,
+    [data-theme="savanna"] header a,
+    [data-theme="fil"] header a,
+    [data-theme="bmms"] header a {
+      padding: 0.6rem 0.75rem;
+      border-radius: 4px;
+      color: var(--text);
+    }
+    [data-theme="console"] header a:hover,
+    [data-theme="savanna"] header a:hover,
+    [data-theme="fil"] header a:hover,
+    [data-theme="bmms"] header a:hover {
+      background: var(--border);
+    }
+    [data-theme="console"] header form,
+    [data-theme="savanna"] header form,
+    [data-theme="fil"] header form,
+    [data-theme="bmms"] header form {
+      margin-top: 0.5rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+    }
+    [data-theme="console"] header form button,
+    [data-theme="savanna"] header form button,
+    [data-theme="fil"] header form button,
+    [data-theme="bmms"] header form button {
+      width: 100%;
+    }
+    [data-theme="console"] main,
+    [data-theme="savanna"] main,
+    [data-theme="fil"] main,
+    [data-theme="bmms"] main {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 2rem 2.5rem;
+      background: var(--content-bg);
+    }
+    /* The section-box look itself - .theme-section is added by the
+       inline script below, wrapping a <h3> and everything after it up to
+       the next one (or the end of the page). The title bar is the <h3>
+       itself, styled to fill the section's full width in a contrasting
+       color, per the user ("a contrasting color for section titles to
+       make them stand out more") - not just a colored underline. Named
+       generically (not "console-section") since Savanna reuses the exact
+       same class/script now too - the only thing that changes per theme
+       is what --section-title-bg/--section-title-text/--border-strong
+       actually resolve to. */
+    [data-theme="console"] .theme-section,
+    [data-theme="savanna"] .theme-section,
+    [data-theme="fil"] .theme-section,
+    [data-theme="bmms"] .theme-section {
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      margin-bottom: 1.5rem;
+      overflow: hidden;
+    }
+    [data-theme="console"] .theme-section > h3,
+    [data-theme="savanna"] .theme-section > h3,
+    [data-theme="fil"] .theme-section > h3,
+    [data-theme="bmms"] .theme-section > h3 {
+      margin: 0;
+      padding: 0.6rem 1rem;
+      background: var(--section-title-bg);
+      color: var(--section-title-text);
+    }
+    [data-theme="console"] .theme-section > :not(h3),
+    [data-theme="savanna"] .theme-section > :not(h3),
+    [data-theme="fil"] .theme-section > :not(h3),
+    [data-theme="bmms"] .theme-section > :not(h3) {
+      margin-left: 1rem;
+      margin-right: 1rem;
+    }
+    [data-theme="console"] .theme-section > *:last-child,
+    [data-theme="savanna"] .theme-section > *:last-child,
+    [data-theme="fil"] .theme-section > *:last-child,
+    [data-theme="bmms"] .theme-section > *:last-child {
+      margin-bottom: 1rem;
+    }
+    [data-theme="console"] .theme-section > table,
+    [data-theme="savanna"] .theme-section > table,
+    [data-theme="fil"] .theme-section > table,
+    [data-theme="bmms"] .theme-section > table {
+      /* The one child that should reach the section's own edges rather
+         than sit inset like everything else - a table's own header row
+         already reads as a boundary, and insetting it just wastes width
+         a table specifically wants. */
+      margin-left: 0;
+      margin-right: 0;
+      width: 100%;
+    }
+
+    /* Savanna-specific: the sidebar's background photo (see themes.py
+       for its source/license) instead of a flat color - added after the
+       shared header rule above so its background-image (a separate
+       longhand property) layers on top of that rule's own
+       background-color without needing to repeat every other header
+       property here too. A dark scrim (the two identical color stops in
+       each linear-gradient - not really a "gradient", just a flat tint
+       stacked on top of the photo) keeps the light nav text readable
+       against the photo's own bright band of sunset-orange sky; dark
+       mode uses a heavier one, evoking dusk rather than daybreak over
+       the same image, same idea as Console's own light/dark sidebar
+       distinction. Nav text and hover state are overridden to a fixed
+       light color regardless of mode - unlike Console, where --text
+       already provides enough contrast against a flat sidebar color in
+       both modes, a photo's own brightness varies across it, so a single
+       reliably-light color (plus the scrim above) is what actually stays
+       readable everywhere on it, in either mode. */
+    [data-theme="savanna"] header {
+      background-image: linear-gradient(rgba(20, 10, 5, 0.35), rgba(20, 10, 5, 0.35)), url("/static/theme-savanna-sunset.jpg");
+      background-size: cover;
+      background-position: left center;
+    }
+    [data-theme="savanna"][data-mode="dark"] header {
+      background-image: linear-gradient(rgba(10, 5, 5, 0.65), rgba(10, 5, 5, 0.65)), url("/static/theme-savanna-sunset.jpg");
+    }
+    [data-theme="savanna"] header,
+    [data-theme="savanna"] header a {
+      color: #fdf6ec;
+    }
+    [data-theme="savanna"] header a:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+    [data-theme="savanna"] header form button {
+      background: var(--section-title-bg);
+      color: var(--section-title-text);
+      border: none;
+    }
+
+    /* BMMS-specific: the same "fixed light nav text regardless of mode"
+       override as Savanna above, for the same reason - --sidebar-bg
+       here is a fixed maroon in both light and dark mode rather than
+       something that flips with Console's own light/dark distinction,
+       so --text (dark in light mode, for readability against the
+       *content* area) isn't reliably readable against it either. */
+    [data-theme="bmms"] header,
+    [data-theme="bmms"] header a {
+      color: #f0dfb0;
+    }
+    [data-theme="bmms"] header a:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+    [data-theme="bmms"] header form button {
+      background: var(--section-title-bg);
+      color: var(--section-title-text);
+      border: none;
+    }
+
+    /* Fil-specific: the two mascot images (see the <body> markup below
+       and theme-fil-*.svg) - both <img> tags are always present in the
+       markup on every theme, so JS never needs to add/remove them; they
+       just stay hidden except under this one theme. Fixed positioning
+       (not part of the normal document flow) so they float over the
+       page the same way a real desk mascot would sit on top of a
+       screen, rather than pushing any real content around; pointer-
+       events: none by default so they can never intercept a click meant
+       for whatever happens to be underneath them - overridden back to
+       auto on each one below, since a native title-attribute tooltip
+       (see the <img> tags' own title="") needs an element to actually
+       receive the hover for the browser to show it at all. Both are
+       small and sit mostly over padding/gutter space rather than real
+       controls, so the trade-off stays worth it for a hover greeting -
+       revisit if either one ever ends up sitting on top of something
+       actually clickable. */
+    .fil-peek, .fil-hang {
+      display: none;
+      position: fixed;
+      pointer-events: none;
+      z-index: 5;
+    }
+    /* Positioned so the svg's own left edge - where his body is cut off,
+       showing only the near half of him (see theme-fil-peek.svg's own
+       comment) - lines up exactly with the sidebar's own 220px width
+       (the shared header rule's flex-basis above), so he reads as
+       leaning out from behind its edge into the content area, the same
+       "peek around a corner" pose the user asked for. */
+    [data-theme="fil"] .fil-peek {
+      display: block;
+      left: 220px;
+      top: 38vh;
+      width: 56px;
+      height: auto;
+      pointer-events: auto;
+    }
+    /* Hangs from the top of the browser window itself, gripping his own
+       strand of filament with one hand (drawn into the svg's own top
+       edge) - like a kid on playground monkey bars, not by his neck (an
+       earlier version attached the strand to his head instead of a
+       hand, which read as a noose on review - wrong for a school app,
+       fixed here). The gentle swing below is slow and small on purpose
+       - a mascot, not a distraction from the actual queue/job data next
+       to it. */
+    [data-theme="fil"] .fil-hang {
+      display: block;
+      top: 0;
+      right: 60px;
+      width: 90px;
+      height: auto;
+      transform-origin: top center;
+      animation: fil-swing 6s ease-in-out infinite;
+      pointer-events: auto;
+    }
+    @keyframes fil-swing {
+      0%, 100% { transform: rotate(-4deg); }
+      50% { transform: rotate(4deg); }
+    }
+
+    /* BMMS-specific: the school's own logo (app/static/bmms-logo.png),
+       shown near the "queue3d" title in the sidebar header - always in
+       the markup (see the <body> below), hidden by default the same way
+       Fil's mascot images are, so nothing but CSS has to know which
+       theme is active. align-self overrides the header's own
+       align-items: stretch (every other header child is meant to fill
+       the sidebar's width; the logo should just be its own size,
+       centered) - unlike Fil's images, this one sits in normal document
+       flow (not position: fixed) since it's part of the header's own
+       layout, not a floating decoration on top of the page. Sized as a
+       percentage of the sidebar's own width (not a fixed px value) per
+       the user, after an initial smaller version read as "small and
+       hard to read." */
+    .bmms-logo {
+      display: none;
+    }
+    [data-theme="bmms"] .bmms-logo {
+      display: block;
+      align-self: center;
+      width: 85%;
+      height: auto;
+      margin-bottom: 0.75rem;
+    }
   </style>
+  <script>
+    // The one part of any sidebar-layout theme (Console, Savanna - see
+    // themes.py) that genuinely needs script, not just CSS: grouping
+    // each <h3> and the content that follows it - up to the next <h3>,
+    // or the end of the page - into one bordered box (.theme-section,
+    // styled above). CSS has no selector for "these siblings, up to a
+    // stopping point," and every theme before Console only needed color
+    // swaps, so there was nothing here to hook into before it existed.
+    // Shared by every theme that wants this treatment (SECTION_THEMES
+    // below), not copy-pasted per theme, and re-run after every htmx
+    // swap (some sections - the jobs table, the printer status banner -
+    // replace themselves via hx-swap), not just on initial load, so a
+    // background refresh can't silently leave a swapped-in section
+    // unboxed.
+    const SECTION_THEMES = ["console", "savanna", "fil", "bmms"];
+    function applyThemeSections() {
+      if (!SECTION_THEMES.includes(document.documentElement.getAttribute("data-theme"))) return;
+      // A descendant selector, not just direct children of <main> - some
+      // section headings (_jobs_table.html's "Your submissions") sit
+      // inside their own wrapper div (#jobs-table, swapped wholesale by
+      // htmx), not straight under <main> like most others. The wrapping
+      // below only ever touches the heading's own immediate siblings
+      // either way, so it groups correctly at whatever depth a given
+      // heading actually sits at.
+      document.querySelectorAll("main h3").forEach((heading) => {
+        if (heading.parentElement.classList.contains("theme-section")) return; // already wrapped
+        const section = document.createElement("div");
+        section.className = "theme-section";
+        heading.replaceWith(section);
+        section.appendChild(heading);
+        // Stops at the next H3 *or* the page's own <footer> - without
+        // the second check, a page whose last section has nothing after
+        // it but the "queue3d vX.Y.Z" footer (base.html always renders
+        // one right after the page's own content) swept that footer
+        // inside the section's own box too, a real bug caught by
+        // actually looking at a rendered page rather than just reading
+        // the CSS.
+        let next = section.nextSibling;
+        while (next && !(next.nodeType === 1 && (next.tagName === "H3" || next.tagName === "FOOTER"))) {
+          const after = next.nextSibling;
+          section.appendChild(next);
+          next = after;
+        }
+      });
+    }
+    document.addEventListener("DOMContentLoaded", applyThemeSections);
+    // document, not document.body - this script runs in <head>, before
+    // <body> exists yet, so document.body would be null here.
+    document.addEventListener("htmx:afterSwap", applyThemeSections);
+  </script>
 </head>
 <body>
+  <!-- Fil's two mascot poses (see the .fil-peek/.fil-hang CSS above) -
+       always in the markup, hidden by CSS on every theme but Fil. Each
+       carries a title="" for a plain native hover tooltip - purely a
+       mouse-hover flourish (neither image is keyboard-focusable), so
+       aria-hidden stays true; nothing accessibility-relevant lives in
+       either tooltip's text. -->
+  <img src="/static/theme-fil-peek.svg" alt="" aria-hidden="true" class="fil-peek" title="Peek-a-boo">
+  <img src="/static/theme-fil-hang.svg" alt="" aria-hidden="true" class="fil-hang" title="Hi, I'm Fil">
   <header>
+    <img src="/static/bmms-logo.png" alt="Black Mountain Middle School Raiders logo" class="bmms-logo">
     <h1>queue3d</h1>
     {% block nav %}{% endblock %}
   </header>
-  {% block content %}{% endblock %}
-  <footer>queue3d v{{ APP_VERSION }}</footer>
+  <main>
+    {% block content %}{% endblock %}
+    <footer>queue3d v{{ APP_VERSION }}</footer>
+  </main>
 </body>
 </html>

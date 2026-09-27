@@ -134,14 +134,28 @@ Managing user accounts:
 - **Per-account theme and light/dark mode selection** - both users and
   admins get their own settings page to pick a UI theme and a light/dark
   mode independently, persisting across logins/devices (not a
-  browser-only preference). The current look is now a real, named
-  "Default" theme (in its "Light" mode) rather than just "whatever the
-  CSS says" - `base.html`'s styles are CSS custom properties a future
-  theme/mode combination overrides selectively, with zero visible change
-  to how the app looked before this. Only "Default" exists as an actual
-  theme choice so far, though both Light and Dark are real, fully
-  working modes for it already; see the To do list for adding more
-  themes. See `app/README.md`'s "Themes" section.
+  browser-only preference). The original look is now a real, named
+  "Basic" theme (renamed from "Default" once BMMS became this
+  deployment's actual default - see below) rather than just "whatever
+  the CSS says" - `base.html`'s styles are CSS custom properties a
+  theme/mode combination overrides selectively. See `app/README.md`'s
+  "Themes" section.
+- **"Console," "Savanna," "Fil," and "BMMS" themes** - four genuinely
+  different themes (not just color swaps), sharing one layout: page
+  links as tabs down a left sidebar instead of a top row, each page's
+  sections enclosed in a border with a contrasting title bar, and the
+  full browser width used instead of a fixed, centered column. Console
+  is a neutral gray/indigo look; Savanna adds a real desert-sunrise
+  photo behind the sidebar; Fil adds an original mascot (peeking around
+  the sidebar's edge, dangling from the top of the window) instead of a
+  photo; BMMS is built for this app's actual deployment site - Black
+  Mountain Middle School's own maroon-and-gold colors and Raiders logo,
+  also shown on the login/signup pages regardless of theme, and the
+  actual default for every account with no preference of its own set
+  (previously "Basic"/"default"). All four ship both Light and Dark
+  modes. See `app/README.md`'s "The 'Console' theme,"
+  "The 'Savanna' theme," "The 'Fil' theme," and "The 'BMMS' theme"
+  sections.
 - **Automatic completion detection** - a background poller notices a
   print finishing, failing, or being cancelled on its own (via the same
   printer status read as the live progress bar above) and records the
@@ -443,12 +457,21 @@ Managing user accounts:
   selection" section.
 
 **Appearance**
-- More themes beyond "Default" - color changes, wallpaper, as their own
-  selectable options (each needing both a light and dark palette, per
-  the user - see `app/README.md`'s "Themes" section). Everything must
-  ship as local static
-  files - no CDN fonts, no external image URLs (see "Deployment: zero
-  internet access" - this app runs with none, ever).
+- Done - four themes beyond Default: "Console" (sidebar nav,
+  bordered/titled sections, full browser width), "Savanna" (the same
+  layout with a desert-sunrise background photo), "Fil" (the same
+  layout again with an original mascot instead of a photo - a Mickey
+  Mouse theme was requested and turned down over trademark risk, see
+  `app/README.md`'s "The 'Fil' theme" section for why), and "BMMS"
+  (the same layout built for this app's actual deployment site - Black
+  Mountain Middle School's own maroon-and-gold colors and Raiders logo,
+  also shown on both login pages regardless of theme). All four ship
+  both a light and dark palette - see `app/README.md`'s "The 'Console'
+  theme," "The 'Savanna' theme," "The 'Fil' theme," and "The 'BMMS'
+  theme" sections. Further themes beyond these remain open; everything
+  must still ship as local static files, no CDN fonts or external image
+  URLs (see "Deployment: zero internet access" - this app runs with
+  none, ever).
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
 

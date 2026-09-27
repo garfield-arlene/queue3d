@@ -18,7 +18,7 @@ Adding a theme: pick an id (lowercase, matches a CSS attribute selector
 `[data-theme="<id>"] { ... }` block (its light palette) and a
 `[data-theme="<id>"][data-mode="dark"] { ... }` block (its dark
 palette) in base.html's <style> - per the user, every theme gets both,
-not just Default.
+not just Basic.
 
 Mode (light/dark) is a separate axis from theme, not folded into it -
 also per the user, after starting out one way (this file originally had
@@ -29,11 +29,92 @@ independently, say, should work the same as any other combination.
 two separate stored choices into the two separate `data-theme`/
 `data-mode` attributes CSS actually keys off of."""
 
-DEFAULT_THEME = "default"
+DEFAULT_THEME = "bmms"
 DEFAULT_MODE = "light"
 
+# The id every logged-out page (the two login pages, signup) always
+# renders as, regardless of DEFAULT_THEME above - a deliberately separate
+# constant, not the same thing. DEFAULT_THEME is what a *signed-in*
+# account with no saved preference falls back to (see current_theme() in
+# templates_env.py) - per the user, "select the BMMS theme as default for
+# all users and admins." A logged-out request has no account to have a
+# preference at all, and those pages were hand-built and verified
+# around this one specific plain layout (see admin_login.html/
+# user_login.html/user_signup.html's own .login-page) - a sidebar
+# theme's structural CSS (a wrapped-in sidebar, a second .bmms-logo from
+# the header on top of that page's own large letterhead one) would
+# visually collide with it. Before
+# DEFAULT_THEME became "bmms" this distinction was invisible (both
+# constants happened to be "default"), which is exactly why it's worth
+# spelling out explicitly now rather than letting the two quietly drift
+# in different directions again next time either one changes.
+LOGGED_OUT_THEME = "default"
+
 THEMES = {
-    "default": "Default",
+    "default": "Basic",
+    # Left-sidebar nav (the same {% block nav %} links every page already
+    # has, just laid out as a vertical column instead of a top row),
+    # bordered/titled sections, and a full browser-width layout instead
+    # of the default's fixed 720px column - per the user. See base.html's
+    # own [data-theme="console"] blocks for the actual styling, and its
+    # inline script for the one thing pure CSS genuinely can't do here:
+    # grouping each <h3> and the content after it (up to the next <h3>)
+    # into one bordered box, since CSS has no "select these siblings up
+    # to a stopping point" selector.
+    "console": "Console",
+    # Same sidebar/full-width/bordered-section layout as Console (the
+    # structural CSS rules in base.html are shared between the two,
+    # keyed off both ids at once) with a desert-sunrise look instead -
+    # per the user: warm oranges/golds, an acacia-silhouette background
+    # photo behind the sidebar. That photo (app/static/theme-savanna-
+    # sunset.jpg) is "The Savannah's Last Ember" by Wikimedia Commons
+    # user Temptious, dedicated to the public domain (CC0 - no
+    # attribution legally required, credited here anyway for
+    # traceability): https://commons.wikimedia.org/wiki/File:The_Savannah%E2%80%99s_Last_Ember.jpg
+    # - cropped (a soccer goalpost visible at the original photo's right
+    # edge) and downscaled from 4000x3000/3.6MB to 1600x1363/~300KB for
+    # a background image loaded on every page.
+    "savanna": "Savanna",
+    # Same shared sidebar/full-width/bordered-section layout again, this
+    # time with a wholly original mascot instead of a photo - per the
+    # user, after a Mickey Mouse theme was proposed and turned down: only
+    # the specific 1928 Steamboat Willie design is actually public
+    # domain, and even that is still a live Disney trademark regardless
+    # of copyright status, which using it as a recurring UI mascot would
+    # squarely risk. "Fil" (app/static/theme-fil-*.svg) is drawn from
+    # scratch for this project instead, with no license or trademark
+    # question at all - a stick figure made of bent filament wire (per
+    # the user, Forky-from-Toy-Story vibes: googly eyes, a scribbled
+    # marker mouth, bendy limbs), peeking around the sidebar's own edge
+    # facing the viewer (his whole near-side body visible, not just his
+    # head), and hanging from the top of the window by ONE FIST touching
+    # the top edge directly - not by his neck (an earlier version's real
+    # mistake, caught by the user as reading like a noose - wrong for a
+    # school app) and not by a thread down to that fist either (the very
+    # next fix attempt's own mistake, caught by the user as reading like
+    # an obscene gesture instead) - while swinging a miniature spool
+    # below him like a yoyo with the other. See theme-fil-hang.svg's own
+    # top comment before changing anything near the top edge again.
+    "fil": "Fil",
+    # Same shared sidebar/full-width/bordered-section layout again, this
+    # time built for one specific real deployment site rather than a
+    # generic option: Black Mountain Middle School's own Raiders colors
+    # (maroon and gold, per the user) and school logo
+    # (app/static/bmms-logo.png - the school's own public logo, the same
+    # image found via a plain web search, not anything sensitive).
+    # Unlike Console/Savanna/Fil, this theme also reaches onto the
+    # logged-out pages (admin_login.html, user_login.html, and
+    # user_signup.html - the last one only added once the user noticed
+    # it had been missed) - those render before any account (and
+    # therefore any account's saved theme) exists for the request, so
+    # current_theme() always resolves to LOGGED_OUT_THEME there
+    # regardless of this theme's own existence (see that constant's own
+    # comment above); those templates show the school logo
+    # unconditionally instead of through the theme mechanism, per the
+    # user wanting it there regardless. Also this app's actual
+    # DEFAULT_THEME (above) - per the user, ahead of deployment: "select
+    # the BMMS theme as default for all users and admins."
+    "bmms": "BMMS",
 }
 
 MODES = {

@@ -16,7 +16,7 @@ from sqlmodel import Session
 
 from db import engine
 from models import Admin, User
-from themes import DEFAULT_MODE, DEFAULT_THEME
+from themes import DEFAULT_MODE, DEFAULT_THEME, LOGGED_OUT_THEME
 from version import APP_VERSION
 
 templates = Jinja2Templates(directory="templates")
@@ -48,7 +48,25 @@ def _signed_in_account(request):
     A short-lived Session of its own, not the request's - by the time
     base.html renders, most routes' own Session is already doing (or has
     done) other things, and this is cheap enough (one indexed primary-key
-    lookup) that sharing one properly isn't worth the plumbing."""
+    lookup) that sharing one properly isn't worth the plumbing.
+
+    The three auth-form pages always resolve to None here, even for a
+    visitor who happens to already have a valid session - a real, caught
+    bug, not a hypothetical: none of these routes redirect an
+    already-signed-in visitor away (GET /admin/login always just renders
+    the form, session or not), so an admin/user who navigates back to
+    their own login page - a bookmark, browser back, a stale second tab -
+    would otherwise see current_theme()/current_mode() resolve to their
+    own saved theme, layering that theme's sidebar (see base.html's
+    shared structural CSS) on top of these pages' own hand-built plain
+    layout (see admin_login.html/user_login.html/user_signup.html's own
+    .login-page) - the exact visual collision LOGGED_OUT_THEME exists to
+    prevent in the first place, just reached through a stale session
+    instead of a missing one. These three pages are meant to look
+    identically plain to every visitor regardless of who they are or
+    were."""
+    if request.url.path in ("/admin/login", "/login", "/signup"):
+        return None
     admin_id = request.session.get("admin_id")
     user_id = request.session.get("user_id")
     is_admin_path = request.url.path.startswith("/admin")
@@ -69,12 +87,28 @@ def _signed_in_account(request):
 
 def current_theme(request) -> str:
     """The signed-in viewer's own theme choice (see themes.py,
-    models.User.theme/Admin.theme), or themes.DEFAULT_THEME for a
-    logged-out page or an account that's never set one. Registered as a
-    Jinja global rather than something every route has to thread through
-    its own context - see _signed_in_account() above for why."""
+    models.User.theme/Admin.theme), themes.DEFAULT_THEME for a signed-in
+    account that's never set one, or themes.LOGGED_OUT_THEME for a page
+    with no signed-in account at all. Registered as a Jinja global rather
+    than something every route has to thread through its own context -
+    see _signed_in_account() above for why.
+
+    The logged-out case is deliberately its own fixed constant, not
+    DEFAULT_THEME - see LOGGED_OUT_THEME's own comment in themes.py. Real
+    bug this fixed, not a hypothetical: before DEFAULT_THEME became
+    "bmms" (per the user, "select the BMMS theme as default for all
+    users and admins"), the two constants happened to hold the same
+    value, so collapsing this into one `else` branch was invisible - the
+    moment they diverged, a logged-out page (which has its own hand-built
+    plain layout - see admin_login.html/user_login.html/user_signup.html's
+    own .login-page) would have started rendering as whatever DEFAULT_THEME
+    is instead, wrapping the login form in a sidebar theme's structural
+    CSS and showing a second, theme-specific logo alongside the one those
+    templates already add themselves."""
     account = _signed_in_account(request)
-    return account.theme if account and account.theme else DEFAULT_THEME
+    if account is None:
+        return LOGGED_OUT_THEME
+    return account.theme or DEFAULT_THEME
 
 
 def current_mode(request) -> str:

@@ -1731,6 +1731,464 @@ in isolated testing: one shared cookie holding both a user session (mode
 `/dashboard` and `/admin/dashboard` each independently resolved to the
 right one.
 
+**"Default" renamed to "Basic"; BMMS becomes the actual default -
+ahead of deployment, per the user: "Change the name of the 'Default'
+theme to 'Basic'. Then select the 'BMMS' theme as default for all
+users and admins."** The rename itself is cosmetic (`THEMES["default"]`
+display name only - the id stays `"default"`, so no schema/data
+implications at all), but the second half genuinely isn't: it changes
+`themes.DEFAULT_THEME` from `"default"` to `"bmms"`, the same constant
+`current_theme()`/`current_mode()` (templates_env.py) fall back to for
+*any* signed-in account with no saved preference, and the same one
+`routers/user.py`/`routers/admin.py`'s settings pages pre-select in the
+dropdown for one too.
+
+**Real bug this surfaced before it ever shipped, not a hypothetical:**
+until now, `DEFAULT_THEME` and "the theme a logged-out page (the two
+login pages, signup) renders as" happened to be the exact same value,
+so `current_theme()` used one `else` branch for both "no signed-in
+account at all" and "a signed-in account with no saved preference."
+The moment `DEFAULT_THEME` became `"bmms"`, that stopped being harmless:
+a logged-out page would have started rendering `data-theme="bmms"`
+too, wrapping the login form in BMMS's own sidebar layout and showing
+a *second*, theme-specific logo in that sidebar's header on top of the
+large letterhead one those pages already add themselves (see "The
+'BMMS' theme" below) - genuinely broken, not just cosmetically
+different. Fixed by splitting the two into separate constants:
+`themes.LOGGED_OUT_THEME` (always `"default"`/Basic - matching the
+user's own earlier framing, "I'm guessing the login pages are not part
+of the theme," now actually enforced by the code rather than true only
+by coincidence) and `DEFAULT_THEME` (what a real, signed-in account
+with no preference gets). Caught and fixed before ever being verified
+against a running server, by reasoning through the change rather than
+after seeing it break.
+
+**Applying the new default to every *existing* account, not just
+future ones** - "select ... as default for all users and admins," not
+"for all new" ones - needed an actual data migration
+(`db._migrate_to_7_1_0`, schema `7.1.0`), the first one in this
+project with no schema change behind it at all (see that migration's
+own docstring, and `db.py`'s `MIGRATIONS` dict comment, for why it
+still goes through the exact same version-keyed mechanism as a real
+`ALTER TABLE`). Clears every `User`/`Admin.theme` back to `NULL` rather
+than writing the literal string `"bmms"` - `NULL` already means "no
+preference, follow whatever `DEFAULT_THEME` currently is," so an
+account touched by this migration keeps following `DEFAULT_THEME`
+automatically if it's ever changed again later, the same way it would
+have before this migration ran, rather than staying permanently pinned
+to `"bmms"` specifically because a one-time script happened to hardcode
+it. `theme_mode` (light/dark) is left completely untouched - only the
+theme was asked for. Verified with a real simulated upgrade (an
+isolated database seeded with pre-existing accounts on explicit
+themes, `schemaversion` rolled back to `7.0.0`, then `init_db()` run
+again): every account's theme cleared to `NULL` as expected, and a
+second `init_db()` run afterward left a since-changed theme alone,
+confirming the migration only ever runs once per database.
+
+### The "Console" theme - sidebar nav, bordered sections, full width
+
+**Why this exists:** per the user - the first real theme this app has
+ever had beyond "Default" (see "Themes" above for the machinery this
+was all built for, ahead of any second theme actually existing yet):
+page links as tabs down the left instead of a top row, each page's
+sections enclosed in a border with a contrasting title bar, and the
+whole layout using the full browser width instead of the existing
+720px-max, centered column.
+
+**Achievable in CSS alone against the exact same markup every page
+already renders, except for one specific thing.** The sidebar is just
+`<header>` (already flex, already holding `{% block nav %}`'s plain list
+of `<a>` tags plus the logout `<form>`) restyled from a horizontal bar
+into a `flex-direction: column` sidebar with `align-items: stretch` so
+each link/button fills the full width - no template touched anything
+for that. The one thing pure CSS genuinely cannot do: group a `<h3>`
+and the content that follows it - up to the next `<h3>`, or the end of
+the page - into one bordered box. CSS has no "these siblings, up to a
+stopping point" combinator, and every theme before this one only ever
+needed color-token swaps, so nothing existed to hook into. Solved with a
+small inline script instead of touching every template to add explicit
+section markup: it walks every `<h3>` under `<main>`, wraps it and its
+following siblings in a new `.console-section` div, and re-runs after
+every htmx swap (`htmx:afterSwap`) - some sections, like the jobs table,
+replace themselves wholesale via polling, and a swapped-in fragment
+needs re-wrapping the same way the initial page load did. Gated on
+`document.documentElement.getAttribute("data-theme") === "console"` at
+the top, so it's a complete no-op under Default or any future
+color-only theme.
+
+**`<main>` added around `{% block content %}` and the version footer**
+(schema/markup change in `base.html`, not just CSS) - the one structural
+template change this needed, since Console's sidebar-plus-content layout
+requires a second flex sibling next to `<header>` to size against, and
+before this, the footer and the content block were separate top-level
+siblings of `<header>` with nothing grouping them into one column. A
+plain block element with no styling of its own under Default, so this
+is a genuine no-op there - confirmed directly, not just reasoned about
+(every existing page rendered pixel-identical before and after).
+
+**A real bug caught only by actually looking at a rendered page, not by
+reading the CSS:** the section-wrapping script's original stopping
+condition was "the next `<h3>`" alone - on any page whose last section
+had nothing after it but the "queue3d vX.Y.Z" footer, that footer got
+swept inside the section's own bordered box too. Fixed by also stopping
+at a `<footer>` element, not just the next heading.
+
+**Two of my own edits broke the app outright while writing this, in the
+exact same way twice** - explaining the nav's plain `<a>` tags and the
+footer-stopping fix both used the literal text `{% block nav %}` /
+`{% block content %}` inside a *CSS comment*, describing the markup
+being styled. Jinja parses `{%...%}` sequences anywhere in the file,
+with zero awareness of "this is inside a `/* CSS comment */`, not a real
+template tag" - so both comments became phantom, unclosed `{% block %}`
+tags, and every single page on the entire site 500'd with
+`TemplateSyntaxError: Unexpected end of template` until each was found
+(via `grep -n '{%\|%}'` across the file) and reworded to describe the
+same thing in plain English instead.
+
+**Colors** - light: a cool off-white page/sidebar (`#eef0f4`)  against a
+plain white content area, a deep navy (`#2b3a67`) section-title bar with
+light text. Dark: a near-black page (`#14171c`) with a slightly lighter
+sidebar/content split, and a brighter indigo (`#3b5bdb`) title bar - a
+color that reads as "accent" against a dark background needs
+meaningfully more saturation/lightness than the one that works against
+white, not the same hex value carried over unchanged the way `--error`
+happens to be.
+
+Verified visually, not just by reading the CSS - a real isolated copy,
+seeded with actual jobs/admins, screenshotted with Playwright (a
+throwaway venv, cleaned up after, per this project's own testing
+convention) across three different pages and both modes: the admin
+queue (a top-level `<h3>Queue</h3>` section), the admin Admins page (a
+`<h3>Add an admin</h3>` section sitting below an *unboxed* table that
+has no heading of its own - confirming only actual `<h3>`-marked
+sections get the border treatment, not everything on the page), and the
+user dashboard (`_jobs_table.html`'s `<h3>Your submissions</h3>`, the
+one case where the heading sits nested inside its own wrapper div rather
+than a direct child of `<main>` - confirmed the wrapping logic still
+groups correctly at that depth, and that the *unheaded* upload form
+above it correctly stays unboxed). No console errors on any page. A
+same-session test-script bug (not an app bug) was caught and fixed the
+same rigorous way: an unscoped `button[type="submit"]` selector in the
+test itself matched the sidebar's own newly-full-width "Log out" button
+before the intended form's button, silently logging the test account out
+mid-script - fixed by scoping the selector to the actual form, not by
+changing anything in the app.
+
+**Two real follow-up reports, fixed right after:** "The admin settings
+isn't split into separate boxes with their own color title. Only 'My
+preferences' and 'Change your password' are... The light mode for the
+console theme seems to be only black + gray. Use a color for the
+section titles like on the dark mode." First - `admin_settings.html`,
+`user_settings.html`, and `admin_colors.html` each had one *unheaded*
+section (the site-wide settings form, the theme/mode form, the colors
+list) sitting above a properly-headed one - the section-wrapping script
+had nothing to box for those, since there was no `<h3>` to find at all.
+Fixed by giving each its own heading ("Site settings," "My
+preferences," "Current colors") rather than anything in the theme
+itself. Second - light mode's `--section-title-bg` was `#2b3a67`, a navy
+dark enough to read as barely-there black/gray against a light page;
+replaced with the same `#3b5bdb` indigo the dark palette already uses -
+a color this saturated needs the same value in both modes to actually
+look like a color against either background.
+
+### The "Savanna" theme - a real background photo, desert-sunrise colors
+
+**Why this exists:** per the user - the same Console layout (sidebar,
+full width, bordered sections), copied to a second theme with "a desert
+sunrise feel with the vibes from the opening scenes of the original
+Lion King movie," using a real background image.
+
+**The structural CSS is shared with Console, not duplicated** - every
+layout rule that used to read `[data-theme="console"] header { ... }`
+now reads `[data-theme="console"] header, [data-theme="savanna"] header
+{ ... }` (and likewise for `body`/`main`/the section-box rules), so the
+sidebar/full-width/bordered-section mechanics live in exactly one place
+regardless of how many themes end up wanting them. The section-wrapping
+script was generalized the same way: `.console-section` renamed to the
+theme-neutral `.theme-section`, and the inline script's gate changed
+from a single string comparison to a `SECTION_THEMES` array checked with
+`.includes()` - adding a third theme like this one later means adding
+its id to that array, not copying the script.
+
+**A real, freely-licensed photo, not a stock asset pulled without
+checking - per the user, explicitly: "don't pull any images illegally.
+Any images used should be free and open to use."** Sourced from
+Wikimedia Commons, whose API exposes real, verifiable license metadata
+per file rather than trusting a filename or a search result blindly -
+queried directly (`action=query&prop=imageinfo&iiprop=url|extmetadata`)
+before downloading anything. "The Savannah's Last Ember" by Commons user
+Temptious: `LicenseShortName: CC0`, `AttributionRequired: false` - a
+public domain dedication, the strongest and least restrictive license
+Commons offers, uploaded as part of a real, legitimate photography
+project (Wiki Loves Folklore 2026, Botswana) - not attribution-required,
+credited in `themes.py` anyway for traceability. Its own description -
+"the silhouettes of acacia trees stand like sentinels against a sky
+filled with soft, violet-tinged clouds" - is close to a word-for-word
+match for the requested look, confirmed by actually looking at the
+photo, not just its metadata: acacia-tree silhouettes against a vivid
+amber/orange/gold sky, the closest a real, freely-licensed photograph
+gets to the opening-scene visual without literally being one.
+
+**Processed before shipping, not used at its original size** - `Pillow`,
+cropped from 4000x3000 to 3520x3000 (a soccer goalpost visible at the
+original's right edge, confirmed by looking at the photo and cropped
+out), then downscaled to 1600x1363 and re-encoded at quality 82,
+348581 -> ~308KB. A `background-size: cover` sidebar image never needed
+the original's full resolution or file size, and this is loaded on every
+single page for anyone using this theme - worth shrinking deliberately
+for a Pi serving many users over a school LAN, not just left at whatever
+size the source happened to be.
+
+**The photo lives behind the sidebar specifically, not the whole page**
+- a deliberate choice, not the only option considered. This is a
+utility app (dense tables, forms, filter bars) where a photographic
+background behind actual body text would fight with readability across
+most of the app; the sidebar - short nav links, no dense text - is the
+one place a strong photographic moment doesn't cost anything to read.
+`linear-gradient(rgba(20,10,5,0.35), rgba(20,10,5,0.35))` (light mode) /
+`rgba(10,5,5,0.65)` (dark mode) stacked on top of the image in the same
+`background-image` property - not a real gradient, both color stops
+identical, just a flat tint layered over the photo so light nav text
+stays readable against its own brightest band (the sunset itself) in
+either mode. Nav text and hover state are pinned to a fixed light color
+regardless of mode here, unlike Console (where the flat sidebar color
+already contrasts correctly against `--text` in both modes) - a photo's
+own brightness varies across it, so one reliably-light color plus the
+scrim above is what actually stays legible everywhere on it, not
+something that should flip with the mode toggle the way flat-color
+themes do.
+
+**Colors away from the sidebar** - warm cream (`#fbf3e7`) content
+background and warm-brown text in light mode, a warm near-black
+(`#1c140f`, not blue-black like Console's dark mode) in dark mode, and a
+burnt-amber (`#c9622a`) section-title accent - the same value in both
+modes, for the identical reason Console's own light-mode color fix
+above needed it: a saturated accent color needs to stay saturated in
+both palettes to read as an actual color, not a duller "light-mode-safe"
+variant of itself.
+
+Verified the same way as Console: a real isolated copy, Playwright
+screenshots (throwaway venv, cleaned up after) across the admin queue
+and the three-section Settings page, both modes, zero console errors
+and zero failed requests (confirming the image itself actually loads,
+not just that the CSS references it) - the sidebar photo, scrim, and
+light nav text all render correctly, the section boxes and their amber
+titles match the desert palette in both light and dark, and Console
+itself (screenshotted again after the shared-selector refactor) still
+looks pixel-identical to before.
+
+### The "Fil" theme - an original mascot, not a licensed character
+
+**Why this exists:** per the user, a third theme with the same
+Console/Savanna layout was requested as a Mickey Mouse theme - "he
+recently went into public domain... having him peek from behind a
+corner, hang from the ceiling, etc." Turned down, not built as asked:
+only the specific 1928 *Steamboat Willie*/*Plane Crazy* character design
+actually entered the US public domain (the 95-year copyright term
+expiring Jan 1, 2024) - not "Mickey Mouse" broadly, and not the modern
+design a viewer would actually picture. More importantly, **trademark
+rights don't expire with copyright** - Disney still actively holds and
+enforces Mickey Mouse as a trademark regardless of the 1928 design's
+copyright status, and using even that specific design as a recurring UI
+mascot (not a one-off parody/commentary use) risks a false-endorsement
+claim that copyright expiration does nothing to prevent. Proposed an
+original mascot instead; the user agreed: "Yeah, let's do the original
+mascot instead. I'm curious to see what mascot you come up with is."
+
+**"Fil" is a stick figure made of bent filament wire** - hand-authored
+inline SVG (`app/static/theme-fil-peek.svg`, `theme-fil-hang.svg`), not
+a photo or an AI-generated image, so there's no license or attribution
+question at all, unlike Savanna's sourced photo above. Went through
+three real redesigns before landing here, each per direct user
+feedback: a first version was just a plain teal circle (color-of-
+filament, no spool shape at all); a second gave that circle an actual
+spool silhouette (flange rim, wound-filament bands, a center hole); the
+user then decided they didn't like the circular body at all and asked
+for "a stick figure made of filament that sort of looks like Forky from
+Toy Story" instead - Pixar's own googly-eyed, pipe-cleaner-limbed spork
+character. Teal (`#12b5a6`, also reused as this theme's
+`--section-title-bg` so the section titles read as "his" color in both
+modes) throughout: a small ball-of-wound-filament head, googly eyes (a
+white circle plus a dark pupil per eye, the Forky signature), a
+scribbled zigzag marker mouth rather than a smooth cartoon smile, and
+bendy limbs drawn as thick rounded strokes (not filled shapes) so they
+read as wire, not a solid body.
+
+**A real appropriateness problem, caught by the user and fixed
+immediately, not something to gloss over:** that stick-figure pass's
+`fil-hang` pose attached the hanging strand of filament directly to the
+top of his *head*, meant to read as him dangling from the ceiling by
+his own thread. The user's own words: "the one dangling looks like
+suicide. This is not something that should be at a school." Correct,
+and a real miss on this app's own part - a school-deployed app is
+exactly the context where that association is least acceptable, and it
+should have been caught before shipping, not after. Fixed by changing
+what the strand attaches to entirely: it now ran to a closed fist, on
+an arm drawn raised up beside his head, gripping it - the same pose as
+a kid hanging from playground monkey bars, not a noose. The same turn
+also fixed `fil-peek`, which the user found "a little weird with just a
+floating head" - it now shows the near (right) half of his *whole*
+body (head, torso, one arm, one leg), drawn as a full figure straddling
+the svg's own left edge so the far half is simply never drawn, the same
+clipping idea as before just carried down his whole body instead of
+stopping at the head.
+
+**That first `fil-hang` fix wasn't actually enough, and the user caught
+two more problems with it in the very next pass:** the thread running
+from the top edge down to the closed fist, at a glance, read as an
+obscene gesture rather than a grip - the user's words: "The closed fist
+with the string looks like he's 'flipping you off'." Separately, a
+decorative hair-curl doodle near the top of his head was reaching up
+toward the top edge too, which the user correctly pointed out brought
+the noose look right back even with the grip itself fixed: "Having it
+touch both the head and top still looks like suicide." Both fixed by
+removing anything that reaches toward the top edge except the one thing
+that should: his fist now touches the top edge directly, with no
+separate strand drawn above it at all, and the hair curl moved off to
+the side at head height instead. Documented in `theme-fil-hang.svg`'s
+own top comment as a concrete "don't reintroduce this" note, not just
+here, since it's exactly the kind of thing a future edit could
+accidentally bring back without realizing why it matters.
+
+Two poses, per the user's own examples of "fun": `fil-peek` leans out
+from behind the sidebar's own right edge facing the viewer head-on (per
+the user, after an earlier pass showed him in profile with only one eye
+visible); `fil-hang` hangs from the top of the browser window by one
+fist gripping the top edge directly, the other arm swinging a
+miniature spool below him like a yoyo (a faint dashed arc sells the
+swing) - per the user's own suggestion, once the spool itself stopped
+being his body and needed somewhere else to live. The existing slow
+(`6s`), small (`±4deg`) CSS `@keyframes` swing on `fil-hang` carried
+over unchanged through every redesign - gentle enough to stay a mascot,
+not a distraction sitting next to actual queue/job data.
+
+**Each pose has a plain `title=""` hover tooltip** - per the user:
+"Peek-a-boo" on `fil-peek`, "Hi, I'm Fil" on `fil-hang`. A native
+browser tooltip rather than a custom one, since that needs nothing
+beyond the attribute itself - no JS, no extra CSS, nothing to vendor.
+The one real requirement it has: both images had `pointer-events: none`
+from the start (deliberately, so a decorative mascot could never
+intercept a click meant for whatever's underneath it), and a hover
+tooltip needs the element to actually receive the hover for the browser
+to show one at all - so both are overridden back to `pointer-events:
+auto` specifically, a small, scoped, documented trade-off rather than
+lifting the restriction everywhere. Confirmed with Playwright that the
+override actually reaches both elements (`getComputedStyle(...)
+.pointerEvents` reads back `"auto"`, not the base rule's `"none"`) and
+that the browser's own hit-test resolves to the mascot at its own
+center (`document.elementFromPoint` at the image's own coordinates)
+rather than passing through to something else - a real screenshot of
+the tooltip itself wasn't obtainable for either pose (native OS
+tooltips routinely don't render in a headless screenshot at all, and
+`fil-hang`'s own continuous swing animation additionally made
+Playwright's synthetic hover refuse as "not stable" - neither is a
+real-browser problem, just a limitation of the check itself).
+
+**The structural CSS is shared with Console and Savanna, not
+duplicated again** - every shared layout rule picked up a third
+`[data-theme="fil"]` selector alongside the existing two (`body`,
+`header`, `main`, the `.theme-section` rules, etc.), and `fil` was added
+to the `SECTION_THEMES` JS array the same way Savanna was. Both mascot
+`<img>` tags are always present in `base.html`'s markup on every theme -
+hidden by plain CSS (`display: none`) except under `[data-theme="fil"]`
+- rather than added/removed by JS, so there's nothing for
+`applyThemeSections()` or any other script to manage for them.
+
+Verified the same way as Console and Savanna, and repeated after each
+redesign pass: a real isolated copy, Playwright screenshots (throwaway
+venv, cleaned up after) across the three-section Settings page and a
+close-up crop of the sidebar/header corner at real UI size, both modes,
+zero console errors and zero failed requests (confirming both SVGs
+actually load). Both poses render at the intended size and position in
+every screenshot, the swing animation doesn't affect layout, and the
+shared Console/Savanna structural rules still apply identically under
+this third theme id.
+
+### The "BMMS" theme - one specific school's own colors and logo
+
+**Why this exists:** per the user - the same shared sidebar/full-width/
+bordered-section layout once more, this time built for the one specific
+school this app is actually deployed to, not a generic option meant for
+anyone: Black Mountain Middle School's own maroon-and-gold colors and
+their own Raiders logo (`app/static/bmms-logo.png`), rather than an
+original design like Console/Savanna/Fil. Came up naturally out of the
+Mickey Mouse conversation two themes back - once the question turned to
+"is a school's own mascot protected the same way," the answer (no -
+colors aren't meaningfully protectable, and a school using its own
+official branding on its own internal tool needs nobody's permission
+but its own) made this theme a straightforward yes where Mickey was a
+straightforward no. The logo itself: the school's real, public logo
+(findable with a plain web search, the same way the user found it),
+not anything sensitive - flood-filled from its original flat white
+background to transparent (`-fuzz 8% -fill none -draw "color X,Y
+floodfill"` from all four corners, ImageMagick) so it sits cleanly on
+the maroon sidebar or either login page's background, rather than
+carrying an ugly white box around it. The flood-fill only clears
+regions actually connected to a corner, unlike a blanket "make all
+white transparent," which would have also hollowed out the badge's own
+white interior field (a legitimate part of the logo's design, not
+background) along with anything white inside the lettering.
+
+**Colors are the school's own, not invented for this app** - maroon
+(`#4a0d15` sidebar, `#7a1420` section-title accent) and gold
+(`#f0c975` section-title text, `#f0dfb0` nav text). The sidebar stays a
+fixed maroon in both light and dark mode rather than flipping shades
+the way Console's own sidebar does - the same reasoning as Savanna's
+fixed-dark photo sidebar: a specific brand color is a fixed identity,
+not something that should read as "washed out" in light mode. That
+fixed-dark sidebar needs the same fixed-light nav-text override Savanna
+already established (`--text` alone isn't reliably readable against a
+sidebar that doesn't itself change with mode).
+
+**The logo also appears somewhere neither Console, Savanna, nor Fil
+ever needed to reach: the logged-out pages.** `current_theme()`
+(templates_env.py) always resolves to `themes.LOGGED_OUT_THEME` for a
+logged-out request - there's no signed-in account yet to have a saved
+theme choice - so `[data-theme="bmms"]`'s own CSS can never apply to
+`admin_login.html`/`user_login.html`/`user_signup.html` no matter what
+theme exists (see "'Default' renamed to 'Basic'; BMMS becomes the
+actual default," above, for the real bug this distinction fixed once
+BMMS also became this app's actual `DEFAULT_THEME`). The user's own
+words correctly anticipated this, for the two login pages at least:
+"I'm guessing the login pages are not part of the theme. I still want
+this on the login pages." (The signup page was missed in that first
+pass, and added once the user separately noticed: "The signup page
+form is not centered with the logo.") So the logo is shown there
+unconditionally instead, added directly to all three templates rather
+than through the theme mechanism, via a plain (non-theme-gated)
+`.login-logo` CSS rule and a `.login-page` wrapper div - it shows up on
+all three regardless of what theme is later selected by whoever signs
+up or logs in, the same for every visitor before any of them have an
+account at all.
+
+**Sized and laid out in two follow-up passes, both per direct user
+feedback, not guessed at upfront:** the sidebar logo (`.bmms-logo`)
+first shipped at a fixed 84px and read as "small and hard to read" -
+changed to `width: 85%` (a percentage of the sidebar's own width, not
+another fixed guess, per the user asking for "80-90% of the sidebar
+width"). The login-page logo first shipped small and left-aligned like
+the rest of that page's plain default layout - the user then asked to
+center the whole login form and make its logo "large... centered above
+the form," and, in the very next message, to size that logo
+specifically "50% wider than the form itself, like a letterhead." Since
+the login form's own `max-width` (the generic `form` rule, used
+everywhere else in the app too) is 320px, the logo's width is a literal
+480px (320 * 1.5) rather than an eyeballed "large" value -
+`.login-page` centers the logo/heading/muted text via `text-align`,
+while the form itself (a block with its own fixed max-width, so
+`text-align` alone can't center it) gets `margin: 0 auto` to center as
+a block, with `text-align: left` reset inside it so the labels/inputs
+themselves don't also center.
+
+Verified the same way as every theme before it, repeated after every
+follow-up pass (both sizing passes, and again once signup was added):
+a real isolated copy, Playwright screenshots (throwaway venv, cleaned
+up after) of all three logged-out pages (fully logged out, confirming
+the logo appears with no theme applied at all, at its current
+size/position) and the three-section Settings page in both light and
+dark mode, zero console errors, zero failed requests (confirming the
+logo file itself actually loads).
+
 ### Login rate-limiting
 
 **Why this exists:** per the user - PINs are short by design (low
