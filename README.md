@@ -33,6 +33,34 @@ Managing user accounts:
 
 ![Admin user management page, listing users with disable/delete actions](docs/screenshots/admin-users.png)
 
+### Themes
+
+Every account - user or admin - picks its own theme and light/dark mode
+independently, persisting across logins and devices. The screenshots above
+use the plain "Basic" theme; four more ship alongside it, all sharing the
+same sidebar-tabs-and-bordered-sections layout with their own palette (and
+in Fil's case, an original mascot) on top:
+
+![Console theme - a neutral gray and indigo sidebar layout](docs/screenshots/console.png)
+
+![Savanna theme - a desert-sunrise photo behind the sidebar](docs/screenshots/savanna.png)
+
+![Fil theme - an original filament-wire mascot peeking around the sidebar](docs/screenshots/fil.png)
+
+**BMMS** is the odd one out - not a generic option, but built for this
+app's actual deployment site, using the school's own colors and logo. It's
+also the one theme that reaches the login page itself, regardless of which
+theme (if any) the person logging in has picked:
+
+![BMMS theme, light mode](docs/screenshots/bmms-light.png)
+
+![BMMS theme, dark mode](docs/screenshots/bmms-dark.png)
+
+![The login page, showing the school's logo as a large letterhead above the form](docs/screenshots/bmms-login.png)
+
+See `app/README.md`'s "The 'Console'/'Savanna'/'Fil'/'BMMS' theme"
+sections for the full design rationale behind each.
+
 ## Features
 
 - **Self-serve user accounts** - sign up with just a name and PIN, no
