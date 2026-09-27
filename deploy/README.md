@@ -246,6 +246,25 @@ genuine, valid, correctly-architected `.deb` archives. The real Pi
 itself is still the final confirmation, the same honest caveat the
 wheels/OrcaSlicer verification above already carries.
 
+**A second real incident, caught on the actual Pi:** the very first
+real run of this failed outright with `apt-get`'s own "Packages were
+downgraded and -y was used without --allow-downgrade" - the Pi's own OS
+image already had newer point-release versions of some bundled
+dependency (unsurprising; security patches for things like `libc6`/
+`libsystemd0` roll out constantly, independent of whenever this bundle
+happened to be built). **`--allow-downgrades` is deliberately not the
+fix** - force-downgrading core system libraries on a live Pi is a
+genuinely risky operation, not something to wave through with a flag.
+`remote_install.sh` instead compares each bundled `.deb`'s version
+against whatever's already installed (`dpkg-deb`/`dpkg-query`/`dpkg
+--compare-versions`) and skips exactly the ones that would be a real
+downgrade, installing only what's genuinely missing or newer - verified
+with three synthetic packages in a throwaway container (one older than
+what's "installed," one newer, one not installed at all) confirming
+each is handled correctly, plus the all-skipped edge case exits cleanly
+with nothing left to install rather than erroring on an empty argument
+list.
+
 ### 6. Deploy
 
 ```bash

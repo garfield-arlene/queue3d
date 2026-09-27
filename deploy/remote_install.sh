@@ -273,7 +273,37 @@ if [ ! -d "$STAGING_DIR/debs" ] || [ -z "$(ls -A "$STAGING_DIR/debs" 2>/dev/null
   exit 1
 fi
 echo "Installing dnsmasq from the staged .deb files (offline, no network needed)..."
-(cd "$STAGING_DIR/debs" && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y ./*.deb)
+# Real incident, not a hypothetical: apt-get install refuses a plain
+# `-y` the moment any given .deb's version is *older* than what's
+# already installed ("Packages were downgraded and -y was used without
+# --allow-downgrade") - a real Pi's own OS image can easily have newer
+# point-release library versions than whatever Debian mirror snapshot
+# this bundle happened to be built from (security updates for things
+# like libc6/libsystemd0 roll out constantly). --allow-downgrades is
+# deliberately NOT the fix here: force-downgrading core system
+# libraries on a live Pi is a genuinely risky operation (can reintroduce
+# fixed bugs/security issues, break other already-installed software
+# that expects the newer version) - never something to wave through
+# with a flag. Instead, skip exactly the .deb files that would actually
+# be a downgrade, installing only what's genuinely missing or newer;
+# anything already present at an equal-or-newer version is correctly
+# left alone.
+INSTALL_DEBS=()
+for deb in "$STAGING_DIR"/debs/*.deb; do
+  pkg="$(dpkg-deb -f "$deb" Package)"
+  new_ver="$(dpkg-deb -f "$deb" Version)"
+  cur_ver="$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true)"
+  if [ -n "$cur_ver" ] && dpkg --compare-versions "$new_ver" lt "$cur_ver"; then
+    echo "  Skipping $pkg: bundled $new_ver is older than the $cur_ver already installed."
+    continue
+  fi
+  INSTALL_DEBS+=("$deb")
+done
+if [ "${#INSTALL_DEBS[@]}" -gt 0 ]; then
+  DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y "${INSTALL_DEBS[@]}"
+else
+  echo "  Everything already present at an equal-or-newer version - nothing to install."
+fi
 
 # Local DNS override for q3d.home.mygarfield.us -> this Pi - per the
 # user: the router on the real deployment network has no usable DNS
