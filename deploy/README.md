@@ -265,7 +265,31 @@ access at all, by design - it can never run its own ACME client
 (certbot or similar) to request or renew a certificate itself. Issued
 instead on a machine that does have internet, for a real domain the
 user already controls (a subdomain of an existing personal domain,
-`q3d.home.mygarfield.us`), then copied here by hand:
+`q3d.home.mygarfield.us`), then copied here.
+
+**`./prep_deploy.sh <user@cert-host> <remote-live-dir>`** does this (and
+pulls the latest code first) in one step - run it on your Mac before
+`./deploy.sh` whenever you're about to deploy, or the cert is due for
+renewal. Neither argument is hardcoded anywhere in that script, even as
+a default - both the cert-issuing host and its actual certbot path are
+only ever passed in at the command line, per the user, so neither ends
+up committed to this (public) repo:
+
+```bash
+./prep_deploy.sh pi@homeserver.local /etc/letsencrypt/live/q3d.home.mygarfield.us
+```
+
+It fetches `fullchain.pem`/`privkey.pem` from `<remote-live-dir>` on
+`<user@cert-host>` into `deploy/cache/tls/`, confirms the two actually
+match each other (the same `openssl ... -modulus` check done by hand
+the first time this cert was wired in - catches a scp that grabbed a
+stale/mismatched pair mid-renewal on the source machine, rather than
+that only surfacing later as a broken HTTPS setup on the Pi), and prints
+the cert's valid dates.
+
+**Doing it by hand instead** (what `prep_deploy.sh` above actually
+automates) still works fine, if you'd rather not set up SSH access
+between your Mac and the cert-issuing machine directly:
 
 ```bash
 # On the machine that ran certbot (a home server, in this case) -
@@ -282,12 +306,13 @@ missing there, rather than silently falling back to anything weaker.
 
 **Renewal.** Let's Encrypt certificates are valid 90 days. There is no
 automatic renewal path here - by the time this cert is due to expire,
-get a fresh one the same way (wherever it was originally issued),
-overwrite the two files in `deploy/cache/tls/`, and run `./deploy.sh
-<host>` again; the certificate is reinstalled on *every* run (unlike the
-self-signed one this replaced, which was deliberately generated once and
-left alone), so this is the entire renewal process - no separate
-"just update the cert" script or flag needed.
+get a fresh one the same way (wherever it was originally issued), then
+either re-run `prep_deploy.sh` (above) or overwrite the two files in
+`deploy/cache/tls/` by hand, and run `./deploy.sh <host>`; the
+certificate is reinstalled on *every* run (unlike the self-signed one
+this replaced, which was deliberately generated once and left alone),
+so this is the entire renewal process - no separate "just update the
+cert" flag needed.
 
 **DNS - the other half of this, and just as necessary.** A trusted
 certificate only fixes whether a connection is *trusted* once a client
