@@ -100,10 +100,20 @@ echo "Fetching the TLS certificate from $CERT_HOST:$REMOTE_CERT_DIR ..."
 # briefly sits world-readable on $CERT_HOST.
 fetch_cert_file() {
   local remote_path="$1" local_path="$2"
-  if scp -q "$CERT_HOST:$remote_path" "$local_path" 2>/dev/null; then
+  local scp_err
+  if scp_err="$(scp -q "$CERT_HOST:$remote_path" "$local_path" 2>&1)"; then
     return 0
   fi
-  echo "  $remote_path isn't readable directly - using sudo on $CERT_HOST to stage a readable copy (you may be asked for its password):"
+  # scp's own error is shown, not swallowed - "Permission denied" from a
+  # file genuinely unreadable by this account looks nothing like
+  # "Permission denied (publickey)" from an auth/wrong-user problem, or
+  # "No such file or directory" from a wrong path, and only scp's own
+  # message actually distinguishes them. A generic message here already
+  # cost real time chasing a permissions fix that may not have even been
+  # the actual problem.
+  echo "  $remote_path - plain read failed:" >&2
+  echo "$scp_err" | sed 's/^/    /' >&2
+  echo "  Falling back to sudo on $CERT_HOST to stage a readable copy (you may be asked for its password):"
   local remote_tmp="/tmp/queue3d-prep-deploy-$$-$(basename "$remote_path")"
   ssh -t "$CERT_HOST" "sudo sh -c \"cp '$remote_path' '$remote_tmp' && chmod 644 '$remote_tmp'\""
   scp -q "$CERT_HOST:$remote_tmp" "$local_path"
