@@ -10,13 +10,13 @@
 #
 # Needs: SSH access to the machine that runs certbot for this deployment's
 # domain (a home server, not this Mac and not the Pi - see deploy/README.md
-# for which one, and why it can't be either of those). That account needs
-# read access to <remote-live-dir>/{fullchain,privkey}.pem there - certbot
-# leaves privkey.pem root-only-readable by default, so if your SSH login
-# isn't root, you'll need to either run this against an account that can
-# read it, or adjust however your own setup already grants that (this
-# script doesn't attempt to solve that for you, since it depends on how
-# certbot's set up on that specific machine).
+# for which one, and why it can't be either of those) - your own key added
+# to its authorized_keys, the same way it already is for the Pi. certbot
+# leaves privkey.pem root-only-readable by default, so unless your SSH
+# login there already has read access some other way, you'll be prompted
+# for that account's sudo password below (real interactive prompts, over
+# a pty this script allocates for exactly that - not silently skipped or
+# swallowed).
 #
 # Deliberately neither the cert-issuing host nor its actual certbot path
 # are hardcoded anywhere below, even as a default - both are only ever
@@ -24,13 +24,13 @@
 # committed to this (public) repo.
 #
 # Usage: ./prep_deploy.sh <user@cert-host> <remote-live-dir>
-# Example: ./prep_deploy.sh pi@homeserver.local /etc/letsencrypt/live/your-domain
+# Example: ./prep_deploy.sh certadmin@your-home-server /etc/letsencrypt/live/your-domain
 set -euo pipefail
 cd "$(dirname "$0")"
 
 if [ $# -ne 2 ]; then
   echo "Usage: $0 <user@cert-host> <remote-live-dir>" >&2
-  echo "Example: $0 pi@homeserver.local /etc/letsencrypt/live/your-domain" >&2
+  echo "Example: $0 certadmin@your-home-server /etc/letsencrypt/live/your-domain" >&2
   exit 1
 fi
 CERT_HOST="$1"
@@ -72,8 +72,26 @@ cd deploy
 mkdir -p cache/tls
 
 echo "Fetching the TLS certificate from $CERT_HOST:$REMOTE_LIVE_DIR ..."
-scp "$CERT_HOST:$REMOTE_LIVE_DIR/fullchain.pem" cache/tls/fullchain.pem
-scp "$CERT_HOST:$REMOTE_LIVE_DIR/privkey.pem" cache/tls/privkey.pem
+# Tries a plain scp first - works fine if that account can already read
+# these files directly. Falls back to `ssh -t ... sudo cat` (a real
+# interactive sudo password prompt, over a pty ssh allocates specifically
+# so that prompt can actually appear) since a plain scp has no way to
+# escalate privilege at all, and certbot's privkey.pem is root-only by
+# default on most setups. PEM files are plain ASCII text (base64 between
+# BEGIN/END markers), not binary - confirmed by hand that forcing a pty
+# doesn't mangle line endings or otherwise corrupt content like it could
+# for a raw binary stream, so this is safe, not just convenient.
+fetch_cert_file() {
+  local remote_path="$1" local_path="$2"
+  if scp -q "$CERT_HOST:$remote_path" "$local_path" 2>/dev/null; then
+    return 0
+  fi
+  echo "  $remote_path isn't readable directly - retrying via sudo on $CERT_HOST (you may be asked for its password):"
+  ssh -t "$CERT_HOST" "sudo cat '$remote_path'" > "$local_path"
+}
+
+fetch_cert_file "$REMOTE_LIVE_DIR/fullchain.pem" cache/tls/fullchain.pem
+fetch_cert_file "$REMOTE_LIVE_DIR/privkey.pem" cache/tls/privkey.pem
 chmod 600 cache/tls/privkey.pem
 
 # Confirms the two files actually belong together, the same check used
