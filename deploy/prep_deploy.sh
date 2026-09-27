@@ -18,23 +18,28 @@
 # a pty this script allocates for exactly that - not silently skipped or
 # swallowed).
 #
-# Deliberately neither the cert-issuing host nor its actual certbot path
-# are hardcoded anywhere below, even as a default - both are only ever
-# passed in at the command line, per the user, so neither ends up
+# The two remote files are each their own full path, not one shared
+# directory plus assumed standard filenames - not every setup keeps
+# fullchain.pem/privkey.pem together the way certbot's own default
+# /etc/letsencrypt/live/<domain>/ layout does. Deliberately nothing about
+# any of this - the cert-issuing host, or either file's actual path - is
+# hardcoded anywhere below, even as a default: all three are only ever
+# passed in at the command line, per the user, so none of it ends up
 # committed to this (public) repo.
 #
-# Usage: ./prep_deploy.sh <user@cert-host> <remote-live-dir>
-# Example: ./prep_deploy.sh certadmin@your-home-server /etc/letsencrypt/live/your-domain
+# Usage: ./prep_deploy.sh <user@cert-host> <remote-fullchain-path> <remote-privkey-path>
+# Example: ./prep_deploy.sh certadmin@your-home-server /etc/letsencrypt/live/your-domain/fullchain.pem /etc/letsencrypt/live/your-domain/privkey.pem
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [ $# -ne 2 ]; then
-  echo "Usage: $0 <user@cert-host> <remote-live-dir>" >&2
-  echo "Example: $0 certadmin@your-home-server /etc/letsencrypt/live/your-domain" >&2
+if [ $# -ne 3 ]; then
+  echo "Usage: $0 <user@cert-host> <remote-fullchain-path> <remote-privkey-path>" >&2
+  echo "Example: $0 certadmin@your-home-server /path/to/fullchain.pem /path/to/privkey.pem" >&2
   exit 1
 fi
 CERT_HOST="$1"
-REMOTE_LIVE_DIR="$2"
+REMOTE_FULLCHAIN="$2"
+REMOTE_PRIVKEY="$3"
 
 # This script lives in deploy/, but git itself only cares that we're
 # somewhere inside the repo - one level up either way. Checked explicitly
@@ -71,7 +76,7 @@ git pull --ff-only
 cd deploy
 mkdir -p cache/tls
 
-echo "Fetching the TLS certificate from $CERT_HOST:$REMOTE_LIVE_DIR ..."
+echo "Fetching the TLS certificate from $CERT_HOST ..."
 # Tries a plain scp first - works fine if that account can already read
 # these files directly. Falls back to `ssh -t ... sudo cat` (a real
 # interactive sudo password prompt, over a pty ssh allocates specifically
@@ -90,15 +95,15 @@ fetch_cert_file() {
   ssh -t "$CERT_HOST" "sudo cat '$remote_path'" > "$local_path"
 }
 
-fetch_cert_file "$REMOTE_LIVE_DIR/fullchain.pem" cache/tls/fullchain.pem
-fetch_cert_file "$REMOTE_LIVE_DIR/privkey.pem" cache/tls/privkey.pem
+fetch_cert_file "$REMOTE_FULLCHAIN" cache/tls/fullchain.pem
+fetch_cert_file "$REMOTE_PRIVKEY" cache/tls/privkey.pem
 chmod 600 cache/tls/privkey.pem
 
 # Confirms the two files actually belong together, the same check used
-# when these were first wired in by hand - a scp that silently grabbed a
-# stale/mismatched pair (e.g. mid-renewal on the source machine) would
-# otherwise only surface much later, as a broken HTTPS setup on the Pi
-# after ./deploy.sh has already run.
+# when these were first wired in by hand - a fetch that silently grabbed
+# a stale/mismatched pair (e.g. mid-renewal on the source machine, or the
+# wrong path typed above) would otherwise only surface much later, as a
+# broken HTTPS setup on the Pi after ./deploy.sh has already run.
 cert_modulus="$(openssl x509 -in cache/tls/fullchain.pem -noout -modulus | openssl md5)"
 key_modulus="$(openssl rsa -in cache/tls/privkey.pem -noout -modulus 2>/dev/null | openssl md5)"
 if [ "$cert_modulus" != "$key_modulus" ]; then
