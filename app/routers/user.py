@@ -70,13 +70,27 @@ def signup_form(request: Request):
 def signup(
     request: Request,
     name: str = Form(...),
+    confirm_name: str = Form(...),
     pin: str = Form(...),
+    agree_aup: bool = Form(False),
     session: Session = Depends(get_session),
 ):
+    """agree_aup defaults False (not Form(...)) since an unchecked HTML
+    checkbox sends no field at all - a required Form field there would
+    422 on every unchecked submission instead of the friendly message
+    below. confirm_name is a second, independent typing of the same
+    name, required to match `name` exactly - the Acceptable Use
+    Agreement's own "signature," not a typo-catcher for the Name field
+    itself (which has no such re-entry requirement on its own)."""
     name = name.strip()
+    confirm_name = confirm_name.strip()
     error = None
     if not name:
         error = "Enter your name."
+    elif not agree_aup:
+        error = "You must agree to the Acceptable Use Agreement to sign up."
+    elif confirm_name != name:
+        error = "The name you typed to confirm doesn't match the name you entered above."
     elif len(pin) < 4:
         error = "PIN must be at least 4 digits."
     elif user_by_name(session, name):
@@ -84,7 +98,9 @@ def signup(
 
     if error:
         return templates.TemplateResponse(
-            request, "user_signup.html", {"error": error, "name": name}
+            request,
+            "user_signup.html",
+            {"error": error, "name": name, "confirm_name": confirm_name, "agree_aup": agree_aup},
         )
 
     user = User(name=name, pin_hash=hash_secret(pin))

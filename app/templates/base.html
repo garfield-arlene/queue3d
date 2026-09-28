@@ -237,6 +237,15 @@
     .login-logo { display: block; width: 480px; max-width: 90%; height: auto; margin: 0 auto 1.5rem; }
     .login-page { text-align: center; }
     .login-page form { margin: 0 auto; text-align: left; }
+    /* The signup page's Acceptable Use Agreement (user_signup.html) -
+       left-aligned like the form (a bulleted policy list centered via
+       text-align would be unreadable), but sized to the same 480px the
+       logo above already uses rather than the form's own narrower
+       320px, since a list of full sentences needs more width than a
+       single-field-per-row credential form to read comfortably. */
+    .aup { text-align: left; max-width: 480px; margin: 0 auto 1.25rem; }
+    .aup ul { padding-left: 1.25rem; margin: 0.5rem 0; }
+    .aup li { margin-bottom: 0.4rem; }
     /* A one-time success/informational message (e.g. a freshly-reset PIN,
        shown exactly once) - built from the same neutral tokens as
        details.tech-detail's box below rather than a new semantic color,

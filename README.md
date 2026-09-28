@@ -579,10 +579,16 @@ sections for the full design rationale behind each.
   form.
 
 **Accounts**
-- On the registration page, present an "Acceptable Use Agreement" with a
-  checkbox that MUST be checked before the user can register - signup
-  currently only requires a name and PIN, with nothing about acceptable
-  use presented or agreed to at all.
+- Done - an Acceptable Use Agreement on the signup page (`user_signup.html`),
+  between the logo and the form: standard policies plus school-specific
+  ones in bold (no weapons real or replica, no inappropriate material,
+  and the one-line rule "if you couldn't bring it to school, you can't
+  print it here"), and the consequences (warning, temporary disable, or
+  deletion) for violating it. A required checkbox and a second,
+  independent retyping of the same name (checked server-side against
+  what was entered in the Name field) are both enforced in
+  `routers/user.py`'s `signup()`, not just client-side - neither an
+  unchecked box nor a mismatched confirmation can create an account.
 - Done - any signed-in admin can create another admin from `/admin/admins`
   (a fresh username+password, same as `create_admin.py`'s own design, not
   promoting/converting an existing user's account - those stay two
