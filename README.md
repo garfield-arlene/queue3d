@@ -498,20 +498,6 @@ sections for the full design rationale behind each.
   theme doesn't require waiting for the actual season or faking the
   system clock.
 
-**Help / instructions**
-- Done - one shared, no-login-required `/help` page (`app/routers/help.py`)
-  covering registration/login, submitting a job (supports, style
-  choices, color), job statuses, editing/restoring/reprinting, and
-  account settings, with anchored sections linked from every relevant
-  user-facing page (login, signup, dashboard, settings, the job-edit
-  page). See `app/README.md`'s "Self-service help pages" section.
-- Done - a separate, admin-only `/admin/help` page covering
-  reviewing/approving/rejecting/releasing, users/admins/colors, and
-  site settings/history/backups, linked from every admin page - kept as
-  its own route rather than folded into the shared page above (see
-  `app/README.md`'s "Self-service help pages" section for why: the two
-  must never share one route's session-detected role).
-
 **Printer**
 - ~~Correct the fallback time estimate using real completion history~~
   **Done** - see Features below ("A history-corrected time estimate")
