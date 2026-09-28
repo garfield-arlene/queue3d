@@ -346,18 +346,6 @@ sections for the full design rationale behind each.
 ## To do
 
 **Upload**
-- **Separately, still open:** the *original* 422 report (a different
-  real multi-model zip, reported before a later, reproducible
-  multi-model zip upload was shown working - see Features above)
-  never got a confirmed root cause - that specific file was never
-  available to reproduce against directly, and every synthetic zip
-  built to investigate it tested clean. Whether it was the same
-  too-low-cap issue (plausible - a `ValueError` there produces a clean
-  flash-message redirect, not literally the "422 Unprocessable Content"
-  originally reported, so it may not be) or a genuinely separate
-  request-validation failure is unresolved. Needs either that original
-  file or a browser Network-tab capture of a future failed request to
-  pin down further.
 - `.3mf` upload support - not yet built, and a meaningfully bigger lift
   than `.obj`/`.zip` turned out to be: unlike OBJ (a flat, transform-free
   mesh format converted to STL in a few dozen lines - see `app/mesh.py`),
