@@ -456,10 +456,6 @@ sections for the full design rationale behind each.
   two targets) - so running low is surfaced before a backup silently
   fails or the queue itself can't accept new uploads, not discovered
   after the fact.
-- A system performance view for admins - CPU and RAM usage, presumably
-  alongside the disk-space check above on the same page, given a Pi is a
-  real resource-constrained target and slicing (OrcaSlicer + mbotmake)
-  is genuinely CPU/memory-heavy.
 
 **Print options**
 - Done - a single color per job (not 1st/2nd/3rd preference, a more
