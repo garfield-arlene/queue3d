@@ -13,6 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Re
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlmodel import Session, select
 
+import sysmetrics
 from auth import (
     admin_by_username,
     check_lockout,
@@ -247,6 +248,69 @@ def printer_info(
     return templates.TemplateResponse(
         request, "admin_printer_info.html", {"admin": admin, "info": info, "error": error}
     )
+
+
+def _system_context(admin: Admin) -> dict:
+    hist = sysmetrics.history()
+    snap = sysmetrics.snapshot()
+    recv_series = [s.net_recv_kBps for s in hist]
+    sent_series = [s.net_sent_kBps for s in hist]
+    disk_root_pct = snap["disk_root"].used / snap["disk_root"].total * 100
+    disk_data_pct = (
+        snap["disk_data"].used / snap["disk_data"].total * 100 if snap["disk_data"] else None
+    )
+    return {
+        "admin": admin,
+        "snapshot": snap,
+        "uptime": format_duration(snap["uptime_s"]),
+        "disk_root_pct": disk_root_pct,
+        "disk_data_pct": disk_data_pct,
+        # The most recent sample on its own, for the "top" section's
+        # live bars - separate from the *_series lists below, which are
+        # the full history each chart needs. None for the brief instant
+        # before the sampler's first tick has landed.
+        "latest": hist[-1] if hist else None,
+        # Transposed from "one Sample per tick, cpu_percpu across cores"
+        # into "one series per core, across every tick" - what the
+        # per-core history chart actually needs to draw one polyline per
+        # core. A brand new history (nothing sampled yet on a
+        # just-started server) safely produces an empty list of series,
+        # not an error - the template renders an empty chart area rather
+        # than a stale/fake one.
+        "cpu_series": list(zip(*(s.cpu_percpu for s in hist))) if hist else [],
+        "mem_series": [s.mem_percent for s in hist],
+        "swap_series": [s.swap_percent for s in hist],
+        "net_recv_series": recv_series,
+        "net_sent_series": sent_series,
+        # A sensible floor (64 KB/s) rather than scaling to whatever
+        # tiny amount of traffic happened to occur - otherwise a mostly-
+        # idle network would make ordinary background chatter look like
+        # it's constantly maxing out the chart.
+        "net_max": max([64.0] + recv_series + sent_series),
+    }
+
+
+@router.get("/system")
+def system_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """The full page - see _system_metrics.html for the actual gauges/
+    charts, shared with the self-polling fragment below so the two can
+    never drift apart in what they render."""
+    return templates.TemplateResponse(request, "admin_system.html", _system_context(admin))
+
+
+@router.get("/system/refresh")
+def system_refresh(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """Polled by `_system_metrics.html`'s own `hx-trigger` at the same
+    cadence the background sampler actually produces new data
+    (sysmetrics.SAMPLE_INTERVAL_S) - a faster poll would just re-render
+    the identical numbers for nothing."""
+    return templates.TemplateResponse(request, "_system_metrics.html", _system_context(admin))
 
 
 def _get_job_or_404(session: Session, job_id: int) -> Job:

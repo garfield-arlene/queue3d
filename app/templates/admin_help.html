@@ -9,6 +9,7 @@
   <a href="/admin/jobs/old">Old jobs</a>
   <a href="/admin/log">Activity log</a>
   <a href="/admin/settings">Settings</a>
+  <a href="/admin/system">System</a>
   <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
 {% endblock %}
 {% block content %}
@@ -22,6 +23,7 @@
     <li><a href="#admin-queue">Running the queue</a></li>
     <li><a href="#admin-people">Users, admins, and colors</a></li>
     <li><a href="#admin-site">Site settings, history, and backups</a></li>
+    <li><a href="#admin-system">The System page</a></li>
   </ul>
 
   <h3 id="admin-queue">Running the queue</h3>
@@ -70,5 +72,17 @@
     hit a slicing error, for troubleshooting without needing internet
     access. Backup status (when the last one succeeded, and from
     which drive) is shown right on the dashboard.
+  </p>
+
+  <h3 id="admin-system">The System page</h3>
+  <p>
+    <a href="/admin/system">System</a> shows this Pi's own live CPU,
+    memory, and network activity, refreshing every couple seconds - a
+    per-core CPU breakdown and memory/swap/disk usage at the top, and
+    history graphs of the last few minutes below. Useful for checking
+    whether the Pi itself (not the printer or the network) is the
+    bottleneck during a big multi-model upload or a lot of concurrent
+    slicing, or just for keeping an eye on disk space and CPU
+    temperature over time.
   </p>
 {% endblock %}

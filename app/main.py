@@ -9,6 +9,7 @@ from db import engine, init_db
 from jobs import start_auto_finish_poller
 from models import Settings
 from printer import close_connection
+from sysmetrics import start_metrics_sampler
 from routers import admin, help, jobs, user
 from templates_env import set_display_timezone
 
@@ -70,6 +71,12 @@ def on_startup():
     # Mark done/Mark failed buttons are unchanged - this is a safety net
     # on top of them, not a replacement.
     start_auto_finish_poller()
+    # Samples CPU/memory/network every couple seconds for the admin-only
+    # /admin/system dashboard's history graphs - started here rather than
+    # lazily on that page's first visit, so the graphs already have real
+    # recent history the moment an admin opens it instead of starting
+    # from blank.
+    start_metrics_sampler()
 
 
 @app.on_event("shutdown")

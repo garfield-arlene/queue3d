@@ -40,6 +40,26 @@
       --border: #8883;
       --border-strong: #8886;
       --detail-bg: #8881;
+      /* A fixed categorical palette for the System dashboard's charts
+         (admin_system.html) - one color per CPU core line, reused for
+         memory/swap and network's two lines each. Deliberately the same
+         8 hues in every theme rather than theme-tinted: these identify
+         *which series is which* on one chart (core 0 vs core 1, received
+         vs sent), a job no theme's own accent-color system is built for,
+         and a viewer comparing this dashboard against itself over time
+         benefits more from "core 2 is always orange" than from it
+         shifting with whatever theme happens to be active. Picked for
+         readability against both a white and near-black background
+         without retuning per mode - saturated enough to stay visible on
+         either, none of them fighting `--error`'s own red. */
+      --chart-1: #3b82f6;
+      --chart-2: #f97316;
+      --chart-3: #22c55e;
+      --chart-4: #ef4444;
+      --chart-5: #a855f7;
+      --chart-6: #14b8a6;
+      --chart-7: #ec4899;
+      --chart-8: #78716c;
     }
     :root[data-mode="dark"] {
       color-scheme: dark;
@@ -283,6 +303,72 @@
       background: var(--detail-bg);
       padding: 0.5rem;
       border-radius: 4px;
+    }
+
+    /* System dashboard (admin_system.html, _system_metrics.html) - an
+       htop-style "top" section (per-core bars, memory/swap, load/uptime/
+       task counts) above a set of Fedora-system-monitor-style history
+       charts (plain SVG, no charting library - see
+       sysmetrics.svg_polyline_points). */
+    .sys-top { display: flex; flex-wrap: wrap; gap: 1.5rem 2.5rem; margin-bottom: 1.25rem; }
+    .sys-cores {
+      flex: 2 1 320px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 0.35rem 1.25rem;
+      align-content: start;
+    }
+    .sys-stats { flex: 1 1 200px; font-size: 0.9rem; }
+    .sys-stats dl { margin: 0; display: grid; grid-template-columns: auto auto; gap: 0.2rem 0.75rem; }
+    .sys-stats dt { opacity: 0.7; }
+    .sys-stats dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+    .sys-mem { display: grid; gap: 0.35rem; max-width: 420px; margin-bottom: 1.25rem; }
+    /* One labeled bar - a CPU core, memory, swap, or a disk. Color
+       thresholds (via .warn/.crit, applied server-side from the same
+       number already shown as text) borrow the same semantic colors as
+       every other status text in this app rather than inventing new
+       ones - amber/red both already mean "needs attention" elsewhere. */
+    .sysbar { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+    .sysbar-label { flex: 0 0 auto; min-width: 2.5rem; opacity: 0.7; }
+    .sysbar-track {
+      flex: 1 1 auto;
+      height: 0.85rem;
+      background: var(--detail-bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    /* display: block - a <span> is inline by default, which makes a
+       browser silently ignore width/height on it entirely (only this
+       element's own text content would size it) - the actual bug an
+       earlier look at this page caught, not a hypothetical, since every
+       bar rendered as an empty track with no fill at all regardless of
+       the real percentage. */
+    .sysbar-fill { display: block; height: 100%; background: #22c55e; transition: width 1.8s linear; }
+    .sysbar-fill.warn { background: #d97706; }
+    .sysbar-fill.crit { background: var(--error); }
+    .sysbar-pct { flex: 0 0 3.2rem; text-align: right; opacity: 0.85; }
+    .syscharts { display: grid; gap: 1.25rem; }
+    .syschart h4 { margin: 0 0 0.25rem; font-size: 0.85rem; font-weight: 600; opacity: 0.85; }
+    .syschart-scale { font-weight: 400; opacity: 0.7; }
+    .syschart-svg {
+      width: 100%;
+      height: 110px;
+      display: block;
+      background: var(--detail-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    .syschart-svg polyline { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+    .syschart-legend { font-size: 0.75rem; opacity: 0.75; margin-top: 0.3rem; display: flex; gap: 1rem; flex-wrap: wrap; }
+    .syschart-legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+    .syschart-legend span::before {
+      content: "";
+      display: inline-block;
+      width: 0.6rem;
+      height: 0.6rem;
+      border-radius: 50%;
+      background: currentColor;
     }
 
     /* Console theme layout - see the token block above for its colors.

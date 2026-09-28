@@ -16,11 +16,18 @@ from sqlmodel import Session
 
 from db import engine
 from models import Admin, User
+from sysmetrics import svg_polyline_points
 from themes import DEFAULT_MODE, DEFAULT_THEME, LOGGED_OUT_THEME
 from version import APP_VERSION
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["APP_VERSION"] = APP_VERSION
+# admin_system.html's history charts call this directly per series (one
+# per CPU core, plus memory/swap/network) - a Jinja global rather than
+# precomputed per-route, since it's pure presentation math (values ->
+# SVG points) with nothing route-specific about it. See its own
+# docstring in sysmetrics.py.
+templates.env.globals["svg_polyline_points"] = svg_polyline_points
 
 
 def _signed_in_account(request):

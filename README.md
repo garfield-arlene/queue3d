@@ -331,6 +331,17 @@ sections for the full design rationale behind each.
   every model that ever hit a slicing error) for offline bugfixing at
   this app's zero-internet-access deployment, with no need for remote
   access to the device itself.
+- **Self-service help pages** - a shared `/help` page (no login required)
+  covering registration/login, submitting a job, job statuses,
+  editing/restoring/reprinting, and account settings, linked from every
+  relevant page; a separate `/admin/help` covers running the queue,
+  managing users/admins/colors, and site settings/history/backups,
+  linked from every admin page.
+- **System performance dashboard** - an admin-only, auto-refreshing
+  view of the Pi's own live CPU, memory, and network activity: an
+  `htop`-style per-core breakdown and memory/swap/disk bars, plus
+  history graphs of the last few minutes, in the style of a desktop
+  system monitor.
 - **Built for offline deployment** - runs entirely on a local network with
   no internet access required; no CDN dependencies.
 - **App version number** shown as a footer on every page, read from

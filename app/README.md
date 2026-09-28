@@ -3705,6 +3705,73 @@ route's own real, DB-backed role check - never on inspecting more than
 one optional session-derived dependency and picking whichever is
 truthy, which is the one thing this needs to never do again.
 
+### System performance dashboard
+
+`/admin/system` - live CPU, memory, and network activity on the Pi
+itself, refreshing every couple seconds: an `htop`-style "top" section
+(per-core CPU bars, memory/swap/disk bars, load average, uptime, task
+counts, SoC temperature) above a set of history graphs in the style of
+a desktop system monitor's own Resources view (per-core CPU lines,
+memory & swap, network received/sent) - the last 5 minutes at a
+glance, not just the instant a page happened to load.
+
+**Straight from `/proc` and sysfs, not a `psutil` dependency
+(`sysmetrics.py`).** Everything this needs - per-core CPU times,
+memory, load average, network byte counters, process counts, uptime -
+is already exposed there in a few lines of parsing each;
+`shutil.disk_usage` (standard library) covers disk space. A real
+dependency for something this small would need its own cross-compiled
+wheels staged through `deploy/fetch_bundle_assets.sh` (see "Deployment:
+zero internet access" above) for no real gain over reading the same
+kernel interfaces `psutil` itself reads internally - the same
+minimal-real-dependency precedent as calling `bcrypt` directly instead
+of through `passlib`, or this project's own from-scratch OBJ/STL
+parsing instead of a mesh library.
+
+**A background daemon thread, not computed per-request
+(`sysmetrics.start_metrics_sampler()`, started once from `main.py`'s
+startup handler - the same shape as `jobs.start_auto_finish_poller()`).**
+Samples every `SAMPLE_INTERVAL_S` (2s) into a bounded in-memory deque
+(`HISTORY_LENGTH` = 150, five minutes of history) independent of
+whether anyone's actually looking at the dashboard - the history graphs
+already have real recent data the moment an admin opens the page,
+rather than starting from blank and building up only from page-load
+onward. CPU% and network rates are only meaningful as a delta between
+two reads, so the very first sample after a restart reports zeros
+rather than a nonsensical since-boot average; `load average`/`uptime`/
+`disk usage`/`process counts`/`temperature` don't need a delta the way
+those two do, so `sysmetrics.snapshot()` computes them fresh on every
+request instead of only on the sampler's own cadence.
+
+**Charts are plain server-rendered SVG, no charting library
+(`sysmetrics.svg_polyline_points`, a Jinja global).** One `<polyline>`
+per series (one per CPU core, plus memory/swap/network's two
+directions), points computed directly from each series' own values -
+oldest sample first so the line reads left-to-right as a timeline,
+newest at the right edge, matching the convention every real system
+monitor uses. `_system_metrics.html` re-renders the whole fragment via
+htmx every `SAMPLE_INTERVAL_S`, matching the sampler's own cadence
+exactly - a faster poll would just re-render identical numbers for
+nothing. Unlike `_printer_status.html`/`_print_progress.html`'s
+self-terminating polling, this never stops on its own - there's no
+"finished" state for a live system dashboard, just however long the
+page stays open.
+
+**A fixed, theme-independent categorical palette
+(`--chart-1`..`--chart-8` in `base.html`)**, reused across all three
+charts (core 0/received get `--chart-1`, core 1/swap/sent get
+`--chart-2`, and so on) rather than each theme's own accent color:
+these identify *which series is which* on one chart, not a brand
+color, and a viewer comparing this dashboard against itself over time
+benefits more from "core 2 is always orange" than from that shifting
+with whatever theme happens to be active.
+
+Disk usage shows the OS drive (`/`) and, only when it's a genuinely
+different device (`st_dev` compared directly, not assumed from the
+path alone), the app's own `DATA_DIR` - showing the same numbers twice
+under both labels in a dev setup (single disk, no `QUEUE3D_DATA_DIR`
+set) would be clutter, not information.
+
 ## 3D preview
 
 Two different views, both in `static/preview.js` (Three.js, vendored
