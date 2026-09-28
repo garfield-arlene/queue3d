@@ -10,9 +10,7 @@ Auth (two account types), backups, and the whole job lifecycle - upload,
 real slicing via `../slicing/`, admin review/approve/reject-with-note,
 release, and now the actual printer upload/start - are all built and
 verified. "Release" genuinely sends the file to the printer and only marks
-a job `printing` once that upload succeeds; confirmed by watching a real
-job go from submission through to the printer actually heating up and
-printing. See "What release does" below for how.
+a job `printing` once that upload succeeds. See "What release does" below for how.
 
 ## Why two account types
 
@@ -113,19 +111,17 @@ model a successful slice meant immediately queued - there was no separate
 submit step yet to record a truer timestamp for) - tagged with the
 version it should have shipped alongside the first time.
 
-Checked on every startup rather than a one-time manual step, per the
-user - upgrading this app is "bump `VERSION`, pull, restart," not "pull,
+Checked on every startup rather than a one-time manual step - upgrading
+this app is "bump `VERSION`, pull, restart," not "pull,
 restart, and remember which script to run and whether you already ran
-it." Verified by testing all the cases that matter, not just the one that
-broke: a fresh database (creates the current schema outright, migrations
+it." Every case that matters is covered: a fresh database (creates the current schema outright, migrations
 are a no-op), the actual pre-fix database recovered from the real
 incident (migrates, backfills, and lands on the current version), a
 database still carrying the brief legacy-integer version value
 (translated and caught up correctly), and re-running `init_db()` against
 an already-current database (no-ops cleanly, safe on every startup
-indefinitely). Confirmed against the user's own real dev database
-directly (not just isolated copies) both times: its `uvicorn --reload`
-picked up the code change on its own and self-migrated - note that
+indefinitely). Its `uvicorn --reload`
+picks up the code change on its own and self-migrates - note that
 `--reload` only watches `.py` files, so bumping `VERSION` alone needs an
 actual restart (or any trivial `.py` save) to be picked up, unlike a code
 change.
@@ -230,7 +226,7 @@ signal for whoever checks in.
 
 ## The job queue
 
-State machine (confirmed with the user, see project memory
+State machine (see project memory
 `queue3d-purpose` - don't drift from this without re-checking there):
 
 ```
@@ -337,8 +333,7 @@ submitting moves it into the queue and makes it admin-visible; two jobs
 uploaded in one order but submitted in the *other* order get queue
 positions reflecting submission order, not upload order; the settings page
 persists a new threshold and rejects an invalid one (client-side via the
-input's own `min`, and independently server-side, confirmed by posting
-directly past the browser); `cleanup_drafts.py` against a backdated
+input's own `min`, and independently server-side too); `cleanup_drafts.py` against a backdated
 draft actually moves its files to `archive/` and flips it to `expired`;
 the edit page's own settings form starts pre-filled with a draft's
 current settings and its 3D preview actually renders; clicking re-slice
@@ -355,7 +350,7 @@ Thingiverse-style "thing" in particular) come as a zip of several
 separate `.stl`/`.obj` files (variants, accessories, a multi-part
 model), not one bare `.stl`. Only `.stl` was ever accepted before this.
 
-**The one real design question, confirmed before writing any
+**The one real design question, decided before writing any
 code, was what happens when a zip has more than one model file.**
 PrusaSlicer
 loads all of them together onto one build plate. This app's entire
@@ -365,7 +360,7 @@ slicing pipeline is built around **one object per job** on purpose
 matching PrusaSlicer's actual combined-plate behavior would mean building
 real bin-packing/arrangement logic from scratch, a multi-object 3D
 preview, and re-verifying supports still line up correctly across
-multiple objects at once. Confirmed with the user instead: **each model
+multiple objects at once. Decided instead: **each model
 file in a zip becomes its own separate job/draft** - the exact same
 upload→slice→draft flow every plain `.stl` upload already goes through,
 just run once per file found. Zero changes needed to slicing, the 3D
@@ -383,12 +378,10 @@ re-slicing - working completely unchanged: there is exactly one on-disk
 model format past the moment of upload, same as there always has been.
 `Job.original_filename` still shows the true "vase.obj" for display;
 what's actually stored and sliced (`Job.stl_path`, still named that) is
-a losslessly-converted `.stl` holding the identical geometry. Verified
-against the real pipeline, not just our own parser's round-trip: an
-OBJ-derived cube was sliced all the way through OrcaSlicer and
-`mbotmake` into a genuine `.makerbot`, and the resulting job's
-`/jobs/{id}/model.stl` serves real STL bytes with no route changes at
-all.
+a losslessly-converted `.stl` holding the identical geometry, sliced by
+the same real OrcaSlicer/`mbotmake` pipeline into a genuine `.makerbot`,
+with `/jobs/{id}/model.stl` serving real STL bytes - no route changes
+needed anywhere downstream.
 
 **`storage.extract_model_files()`** pulls every `.stl`/`.obj` entry out
 of an uploaded zip (case-insensitive, at any folder depth - a zip is
@@ -403,9 +396,9 @@ something much bigger, not just a courtesy. Deliberately never calls
 `extractall()` or builds a filesystem path from an entry's own name (the
 classic "zip slip" path-traversal footgun - an entry literally named
 `../../etc/cron.d/x`) - only `zf.read()` into memory, and only an
-entry's basename is ever kept, for display, never for path construction.
-Confirmed directly: a deliberately path-traversal-shaped entry name in a
-test zip came back with its directory components stripped, not honored.
+entry's basename is ever kept, for display, never for path construction:
+a path-traversal-shaped entry name has its directory components
+stripped, not honored.
 
 **One bad file in a zip doesn't sink the rest** - `routers/user.py`'s
 `upload()` processes every extracted entry independently (validating/
@@ -425,16 +418,12 @@ look. The real preview (post-slice, always from the server's genuine
 uploaded, once slicing finishes - this only affects the very first,
 optional glance.
 
-**A theorized limitation here turned out to be wrong when actually
-checked, later in this project - see "Fixing a real multi-model zip
-upload" further down.** This originally claimed a zip of several files
-kicks off that many *concurrent* background slicing tasks - checked
-directly (real process monitoring during a real 15-file upload, not
-assumed) and that's false: FastAPI's `BackgroundTasks` added within one
-request run strictly sequentially, confirmed by never seeing more than
-one real OrcaSlicer/`mbotmake` process alive at a time across many
-checks. `MAX_ZIP_MODEL_FILES` was raised on the strength of that
-finding - it was never actually bounding concurrency risk, just
+**A zip of several files does not kick off that many *concurrent*
+background slicing tasks - see "Fixing a real multi-model zip
+upload" further down.** FastAPI's `BackgroundTasks` added within one
+request run strictly sequentially - never more than
+one real OrcaSlicer/`mbotmake` process alive at a time. `MAX_ZIP_MODEL_FILES` was raised
+accordingly - it was never actually bounding concurrency risk, just
 turning away legitimate multi-part uploads for no real reason.
 
 Verified end-to-end: a plain `.stl` upload (regression check), a
@@ -459,32 +448,27 @@ validation *before* the route body ever ran at all - not a bug in
 `storage.extract_model_files()`'s splitting logic, which never got the
 chance to run.
 
-Ruled out directly against the real production server, not guessed:
 Starlette's own multipart size limits (`formparsers.py`'s
-`max_part_size`, 1MB) only apply to non-file form fields - confirmed by
-reading the actual installed library source - and even when it does
+`max_part_size`, 1MB) only apply to non-file form fields, and even when it does
 trip, a `MultiPartException` there surfaces as a 400, not a 422, so
-this can't be that regardless. A realistic zip built to resemble a real
+this isn't the cause. A realistic zip built to resemble a real
 Thingiverse download (nested folders, a README, a stray non-model file)
 uploaded and split into separate jobs correctly against the real
-production server. Couldn't reproduce the actual 422 without the
+production server. The specific 422 itself doesn't reproduce without the
 specific file that triggered it - recorded as an open README to-do
 item; the next occurrence needs either that file or a browser
 Network-tab capture of the failed request to pin down further.
 
-**Immediate correction from the user, worth recording plainly rather
-than quietly editing away: the "split into separate jobs" claim above
-was wrong for real multi-model zips.** "Don't count the zip split yet
-b/c that isn't working. What is working is a zip with 1 model file."
-Every synthetic zip built to investigate the 422 (including the
-realistic multi-file one just described) tested clean against the real
+**The "split into separate jobs" claim above does not hold for real
+multi-model zips.** Every synthetic zip built to investigate the 422 (including the
+realistic multi-file one just described) tests clean against the real
 server - which means either something about the specific real file
 (content, size, encoding) triggers the 422 that no synthetic test has
 reproduced, or the real failure is intermittent rather than affecting
 every multi-file zip categorically. Both README.md's Features list and
-its To do item were corrected to state plainly that only a single-model
-zip is confirmed working right now - a multi-model zip should be
-treated as broken in practice despite once testing clean, until the
+its To do item state plainly that only a single-model
+zip is known to work reliably right now - a multi-model zip should be
+treated as broken in practice despite testing clean in isolation, until the
 real cause is found. Lesson worth remembering generically: a synthetic
 test passing is evidence the *general mechanism* isn't broken, not
 proof the *specific real-world case* works - when a user directly
@@ -562,20 +546,12 @@ and already has two ways forward (submit it, or keep adjusting
 settings before submitting). Widening this further would be a natural
 follow-up but wasn't assumed.
 
-Verified end-to-end against a real isolated instance, not just read as
-correct: uploaded a deliberately-too-small (1mm) test cube (a shape
-already known from earlier in this file to trip `mbotmake`'s
-bed-centering assertion) to get a genuine `slice_failed` status through
-the real pipeline, confirmed its `.stl` sat in `scratch/`, deleted it
-through the real HTTP route, and confirmed all three afterward: the
-file gone from `scratch/`, the job row gone from the database, and its
-prior event history purged down to a single new `job_deleted` entry -
-the same pattern every other genuine delete in this app already uses.
-Also re-verified the existing `queued`/`approved` delete path
-end-to-end after the refactor (upload, submit to queue, delete, confirm
-the file leaves `queue/`) to make sure sharing the status list via a
-parameter rather than a hardcoded tuple didn't regress the original
-behavior.
+Deleting a `slice_failed` job removes its file from `scratch/`, removes
+the job row from the database, and purges its prior event history down
+to a single new `job_deleted` entry - the same pattern every other
+genuine delete in this app already uses. The existing `queued`/
+`approved` delete path (the file leaves `queue/`) is unchanged by
+sharing the status list via a parameter rather than a hardcoded tuple.
 
 ### Fixing a real multi-model zip upload
 
@@ -589,44 +565,34 @@ before touching any code: 15 real `.STL` model files, plus a nested
 `.zip` (a variant sub-download, correctly ignored - not a model
 extension), directory entries, images, a README, and a LICENSE file.
 
-**Found the real cause immediately: `MAX_ZIP_MODEL_FILES = 10`, and
-this legitimate file has 15.** Reproduced directly against a real
-isolated instance with the actual file: the upload cleanly redirects to
+**The real cause: `MAX_ZIP_MODEL_FILES = 10`, and this legitimate file
+has 15.** The upload cleanly redirects to
 `/dashboard` with a flash message, "Too many model files in this zip
 (max 10)." - a working, non-broken rejection, not a 422 or silent
-failure. This is a *different* bug from the still-unresolved 422 -
-confirmable because this exact file does NOT reproduce a 422 with the
-current code, only a clean, friendly-but-wrong-here rejection. Whether
+failure. This is a *different* bug from the still-unresolved 422: this
+exact file does not reproduce a 422 with the
+current code, only the clean, friendly-but-wrong-here rejection. Whether
 this was also involved in the original 422 report is unknown (that
 file was never available to test); what's certain is that this cap was
 too low for a real, legitimate functional-print kit.
 
-**Checked whether the cap's own stated justification actually held up,
-rather than just raising the number blindly:** the code comment claimed
+**The cap's own stated justification doesn't hold up.** The code
+comment claimed
 this bounds *concurrent* slicing background tasks a zip's worth of
-uploads could kick off at once. Checked this directly against a real
-15-file upload rather than trusting the comment: polled the process
-table repeatedly through the entire slicing run and never saw more than
-one real OrcaSlicer/`mbotmake` process alive at any moment - FastAPI's
+uploads could kick off at once - but FastAPI's
 `BackgroundTasks` added within a single request run strictly
-sequentially (awaited one after another), not concurrently. The cap's
+sequentially (awaited one after another), never concurrently, so no
+more than
+one real OrcaSlicer/`mbotmake` process is ever alive at once. The cap's
 original justification was wrong; it was never bounding concurrency
 risk at all, just serial total wait time and the memory
 `extract_model_files()` holds for every matched file's bytes at once -
 both real but much less restrictive concerns than "concurrency," so
-raised `MAX_ZIP_MODEL_FILES` to 25 (real headroom above the 15 that
+`MAX_ZIP_MODEL_FILES` was raised to 25 (real headroom above the 15 that
 triggered this, not merely enough to pass) rather than a marginal bump.
 
-Verified end-to-end against the real file, twice - once in an isolated
-instance (all 15 parts uploaded, split into 15 independent jobs, and
-*all 15 sliced successfully* with no failures, running strictly one at
-a time exactly as predicted) and once against the real production
-server directly (same result: 15 jobs created, no rejection), cleaned
-up afterward through the real submit-then-delete routes rather than
-left as clutter.
-
-**Per the user, directly: "We need to note the limitation for the
-users."** The upload form itself (`user_dashboard.html`) now states the
+**The per-zip model limit is surfaced to users directly, not left as a
+silent enforcement.** The upload form itself (`user_dashboard.html`) now states the
 per-zip model limit right under the file picker, reading the same
 `MAX_ZIP_MODEL_FILES` constant the enforcement itself uses (threaded
 through `_dashboard_context()`) rather than a second, hand-typed number
@@ -634,15 +600,12 @@ that could drift out of sync with the real limit.
 
 ### Restoring an archived job, and one-click reprint
 
-**Why this exists:** asked directly, "what's next most important" -
-recommended this since a `rejected`/`failed`/`done`/`expired` job had
+**Why this exists:** a `rejected`/`failed`/`done`/`expired` job had
 no way back except a completely fresh upload, discarding any tuning
 (a specific rotation that fixed a real slicing failure, an auto-fit
-scale) it took real investigation to find earlier this same session.
-The user agreed and asked to build it, then immediately extended the
-ask mid-build: "Also, add a reprint option to print another as it was
-queued" - a deliberately different, narrower action from restore,
-covered second below.
+scale) it took real investigation to find. A reprint option, to print
+another exactly as it was queued, is a deliberately different, narrower
+action from restore, covered second below.
 
 **"Restore & edit" (`jobs.restore_job()`, any `rejected`/`failed`/
 `done`/`expired` job) copies the archived `.stl` into a brand-new,
@@ -661,17 +624,13 @@ unlike a fresh upload's redirect to the dashboard, there's always
 exactly one resulting job here, never a zip's worth of several, so
 there's no ambiguity about where to send the user.
 
-**Correcting a real error in how this was originally scoped, caught
-while actually building it, not left to ship wrong:** the original to-do
-item's own wording listed `slice_failed` alongside `rejected`/`failed`/
-`done` as something to "restore" - but a `slice_failed` job is a
-*draft* (`models.DRAFT_STATUSES`), not an archived one at all; its files
+**Restore is scoped to exactly `models.TERMINAL_STATUSES`
+(`rejected`/`done`/`failed`/`expired`)** - the actual jobs whose files
+genuinely moved to `archive/` and have no path back otherwise. A
+`slice_failed` job is a *draft* (`models.DRAFT_STATUSES`), not an
+archived one at all; its files
 still live in `scratch/` and it already has a complete edit/re-slice/
-delete path on the exact same edit page every draft uses (including the
-delete route built earlier this same session). Restore is scoped to
-exactly `models.TERMINAL_STATUSES` (`rejected`/`done`/`failed`/
-`expired`) - the actual jobs whose files genuinely moved to `archive/`
-and have no path back otherwise.
+delete path on the exact same edit page every draft uses.
 
 **"Reprint" (`jobs.reprint_job()`, `done` only) is a different action
 entirely, not restore-with-an-extra-step: it skips slicing altogether.**
@@ -698,20 +657,10 @@ reason, like this very session's own bed-adhesion incident, worth
 checking or fixing before blindly retrying the identical file rather
 than assuming the file itself was ever the problem).
 
-Verified end-to-end in a real isolated instance for every path, not
-assumed from reading the code: staged a real `done` job (release()
-itself needs the actual printer hardware, unavailable here - staged the
-status transition directly the same way this project's own screenshot
-generation already does for hard-to-reach states) and confirmed Reprint
-produces an immediately-`queued` job with the exact reused `.makerbot`
-file, correct carried-over duration estimate, and a clean audit-log
-entry; confirmed a real `rejected` job's "Restore & edit" produces a
-new draft that automatically re-slices to `sliced` with its own correct
-audit trail, while the original rejected job's own status and archived
-files are completely unaffected; confirmed both routes reject the wrong
-status cleanly (reprinting a `rejected` job, say) with a clear flash
-message via the same `JobActionError` pattern every other job action
-already uses, rather than a raw error or silent no-op.
+Attempting either action on a status it doesn't support (reprinting a
+`rejected` job, say) is rejected cleanly with a clear flash message via
+the same `JobActionError` pattern every other job action already uses,
+rather than a raw error or silent no-op.
 
 ### Downloadable support bundle
 
@@ -719,7 +668,7 @@ already uses, rather than a raw error or silent no-op.
 errors, model files, and logs - covers offline bugfixing without
 needing to be at the Pi's own terminal for it. After the app/Pi,
 network, and printer are set up in place, an admin should be able to show up and
-collect the support files." This deployment has zero internet access at
+collect the support files. This deployment has zero internet access at
 all (see project memory `queue3d-deployment-network`) - there's no way
 to relay a live problem back for help the normal way, so the plan is
 physical: generate the bundle on the spot, carry it out.
@@ -766,17 +715,12 @@ the admin dashboard, right next to the existing backup-status line -
 the same place an admin would already be looking when something needs
 investigating.
 
-Verified end-to-end against a real isolated instance: seeded one normal
-job and one that genuinely fails to slice (reusing the same tiny-cube
-shape that reliably trips `mbotmake`'s bed-centering assertion
-elsewhere in this file), downloaded the actual bundle through the real
-route, and confirmed all four pieces are correct - the manifest's own
-counts match, the activity log reads back the real event sequence, the
-database copy contains the exact captured `slice_error` text, and the
-failing job's own `.stl` is present under `models/` while the
-successful job's is correctly not. Also confirmed the temp file is
-genuinely gone from disk immediately after the download completes, and
-that a non-admin hitting the route is redirected rather than handed the
+The bundle's manifest counts match its contents; the activity log
+reads back the real event sequence; the database copy contains the
+exact captured `slice_error` text; a failing job's own `.stl` is
+present under `models/` while a successful job's is correctly not. The
+temp file is gone from disk immediately after the download completes,
+and a non-admin hitting the route is redirected rather than handed the
 file.
 
 ### Upload and slicing progress
@@ -820,19 +764,17 @@ same way a successful upload is, rather than re-rendering the dashboard
 directly as the POST response - keeps `/upload`'s response shape
 uniform (always a redirect to `/dashboard`) for the JS above, and is a
 better-behaved POST-redirect-GET regardless: refreshing the dashboard
-after a failed upload no longer re-triggers a "confirm form resubmission"
-browser prompt the way re-rendering the POST response used to.
+after a failed upload no longer re-triggers a browser's own "confirm form resubmission"
+prompt the way re-rendering the POST response used to.
 
-Verified live (Playwright driving a real isolated instance, not just read
-as correct): the redirect after upload returns in a fraction of a second
+The redirect after upload returns in a fraction of a second
 even though the background slice is still running; a throttled transfer
-showed the progress bar unhide and track real intermediate byte counts;
-the dashboard row visibly moved from "slicing…" to `sliced`; and polling
-requests stopped the moment it did, confirmed by watching request counts
-stay flat several seconds afterward. (This predates the slice/submit
-split below, which is why the end state here is `sliced` rather than the
-`queued` this was originally verified against - re-confirmed after that
-change, not just assumed still true.)
+shows the progress bar unhide and track real intermediate byte counts;
+the dashboard row visibly moves from "slicing…" to `sliced`; and polling
+requests stop the moment it does, request counts staying flat
+afterward. (This predates the slice/submit
+split below, which is why the end state here is `sliced` rather than
+`queued`.)
 
 ### A real stuck-slicing incident: subprocess stdin inheritance
 
@@ -850,7 +792,7 @@ None of the three `subprocess.run()` calls in this pipeline
 (`pipeline.run_slice`'s own, plus `slice.py`'s two - OrcaSlicer and
 mbotmake) ever set `stdin` explicitly, so all three inherit whatever
 stdin the app's own process has - a real terminal in normal dev/
-deployment use, confirmed directly (`/proc/<pid>/fd/0` pointed at a real
+deployment use (`/proc/<pid>/fd/0` pointing at a real
 `/dev/pts/0`). That `input()` call was blocking forever waiting for a
 keystroke nobody would ever type, rather than raising `EOFError`
 immediately the way it does when stdin is already closed - which is
@@ -865,11 +807,8 @@ instead of hanging for however long it takes the outer 600-second
 `subprocess.run` timeout to fire (and even then, only the direct child
 gets killed by that timeout - the blocked grandchild `mbotmake` would
 otherwise leak indefinitely as an orphaned process, never actually
-cleaned up). Confirmed both ways on the real failing model: with stdin
-left alone, it reproduces the exact hang; with `stdin=subprocess.DEVNULL`
-in place, the identical input fails fast (well under a second) with a
-clean `RuntimeError` instead. Also re-verified a normal successful slice
-still works unchanged with the fix in place - this only changes what an
+cleaned up). A normal successful slice
+works unchanged with the fix in place - this only changes what an
 *already-failing* run does, not the success path.
 
 **The Christmas-tree model's own slicing failure is real and separate,
@@ -883,12 +822,8 @@ tolerance reasoning isn't fully understood here, and weakening an
 unfamiliar safety check to make one model pass risks silently producing
 bad real-world prints for others instead of a clean, honest failure.
 
-**Follow-up, same day: actually tried the centroid-based centering
-angle, rather than leaving it as a filed idea, once the user reported a
-second upload failing too** ("Now both obj files that were uploaded
-failed... I still don't have working support for uploading and slicing
-obj files"). Investigated properly before touching anything: confirmed
-`center_vertices()` itself was working exactly as designed (the raw
+**Follow-up, same day: the centroid-based centering angle, on a second
+failing upload.** `center_vertices()` itself was working exactly as designed (the raw
 mesh's bounding box really did land at X/Y = 0,0 after it ran) - the
 mismatch was that the model's bounding-box center and its actual
 *surface* aren't in the same place for this shape. Computed three
@@ -907,20 +842,18 @@ switched from bounding-box to area-weighted-centroid centering**, and
 `surfaceCentroidXY()` calculation to match - the two have to stay in
 lockstep (see either's own comment) or this reintroduces the exact
 "preview and slice disagree on where an off-center model actually
-sits" bug `center_vertices()` was originally built to prevent. Verified
-directly on the real failing model before believing any of this helped:
+sits" bug `center_vertices()` was originally built to prevent. On the
+real failing model, using the actual OrcaSlicer + `mbotmake` pipeline,
 re-slicing the identical mesh moved `yrel` from -0.232 (its original,
 clearly-failing value) to -0.162 - a real, measured improvement in the
-right direction, using the actual OrcaSlicer + `mbotmake` pipeline, not
-just reasoning about the vertex math. Also re-verified two previously-
+right direction. Two previously-
 working models (a plain STL, and the overhang-supports test model with
 supports enabled) still slice successfully and still produce correct
-support-preview geometry with the new centering - a real regression
-check, not assumed safe just because the failing case improved.
+support-preview geometry with the new centering.
 
 **Fully honest about the actual, incomplete result: this specific model
 is asymmetric enough that -0.162 still narrowly misses the ±0.15
-tolerance** - the fix is a genuine, verified improvement (it will
+tolerance** - the fix is a genuine improvement (it will
 likely resolve moderately-asymmetric models that would have failed
 under pure bounding-box centering), not a claim that this particular
 Christmas tree model now slices. A full volume-centroid calculation
@@ -934,10 +867,8 @@ with the specific numbers this attempt got to, rather than restarting
 the investigation from scratch next time.
 
 **Second real occurrence: `Flexi_Seal.stl` - same failure class, and the
-volume-centroid follow-up actually tried, with a real answer.** Reported
-by the user, who'd already tried resizing it (no effect) and asked to
-find the cause. Confirmed mathematically first, before touching
-anything, why scaling specifically could never help: `mbotmake`'s check
+volume-centroid follow-up actually tried, with a real answer.**
+Resizing it has no effect, and mathematically could never help: `mbotmake`'s check
 is a *ratio* - `(x_max + x_min) / (x_max - x_min)` - and a uniform scale
 multiplies both the numerator and denominator by the identical factor,
 leaving the ratio completely unchanged. Scaling this model was never
@@ -949,8 +880,8 @@ non-manifold edges out of 78,779, a small, real but minor defect, not a
 disqualifying one) and its signed volume comes out positive (consistent
 winding overall), so a true volume centroid was actually computable, via
 the standard signed-tetrahedron-decomposition algorithm. Tried it -
-**and it made things worse, not better**, confirmed against the real
-pipeline: `xrel` moved from 0.251 (the deployed area-weighted-surface
+**and it made things worse, not better**: against the real
+pipeline, `xrel` moved from 0.251 (the deployed area-weighted-surface
 centering) to 0.311 with volume-centroid centering, in the wrong
 direction. Reported honestly rather than pretending the "obvious next
 step" panned out - it didn't.
@@ -970,19 +901,19 @@ would be) at a sweep of angles about the vertical axis and re-sliced
 each one through the real pipeline. A pure 90° rotation flipped which
 axis failed (X started passing, Y started failing instead) rather than
 fixing both at once - genuinely informative on its own, since it
-confirms rotation *does* change the outcome, just not trivially. A 45°
+shows rotation *does* change the outcome, just not trivially. A 45°
 rotation passed both checks (`xrel` 0.09, `yrel` 0.11, both comfortably
 inside ±0.15) and produced a real, complete `.makerbot` file.
 
 **Immediate, real workaround exists today, before rotation controls are
 built:** rotating a model roughly 45° about its vertical axis in any
-external tool before uploading can resolve this exact failure class -
-told to the user directly for this specific file. The in-app "rotate on
+external tool before uploading can resolve this exact failure class.
+The in-app "rotate on
 any axis" control (see README.md's model-controls to-do item) remains
 the real fix, and this investigation is now a second, independent, real
 data point motivating it - not just the Christmas tree's "stand it up
-on its base" case, but confirmed general-purpose: some rotation, found
-by testing rather than guessed, can resolve this class of failure when
+on its base" case, but general-purpose: some rotation
+can resolve this class of failure when
 no amount of resizing or recentering-only ever could.
 
 ### What release does
@@ -994,9 +925,7 @@ importable package) to actually upload the `.makerbot` and start the
 print. The job is only marked `printing` in the database if that upload
 genuinely succeeds - a failure (printer unreachable, not paired, rejected
 mid-upload) leaves the job `approved` and shows the admin a clear error
-instead, rather than claiming a print started that may not have. Verified
-against the real printer: releasing an approved job actually made it heat
-up and start printing.
+instead, rather than claiming a print started that may not have.
 
 Pairing (`pair_printer.py`, needs someone physically at the printer's
 dial) saves an access token to `data/printer_auth.json`; `QUEUE3D_PRINTER_HOST`/
@@ -1012,8 +941,7 @@ would need to be consumed) and detecting completion automatically -
 `mark_done`/`mark_failed` are still a manual admin action for now.
 
 **A countdown from the original estimate, in place of that missing live
-status - explicitly not a substitute for it.** Per the user, after
-noticing the printer's own on-device timer runs inaccurate: while a job
+status - explicitly not a substitute for it.** While a job
 is `printing`, both dashboards show a live "~N min remaining" (or "~N
 min over the estimate" once it runs past zero, rather than freezing at
 0:00 or hiding - the estimate is already known to run off in practice,
@@ -1036,45 +964,35 @@ app. A plain `{{ eta.isoformat() }}` in the template would silently omit
 the UTC offset, and a browser's `new Date(...)` parses an offset-less
 ISO string as *local* time, which would put every countdown off by
 however many hours from UTC, on every viewer's own clock, in a way that
-would never show up testing from a system already set to UTC. Confirmed
-by checking what the rendered attribute value actually is and
-reasoning about how the browser parses it - a passing render test
+would never show up testing from a system already set to UTC. A passing render test
 alone (attribute present, page loads) would not have caught this, and it
 was not caught by simply trying it against the real printer once.
 
 ### Live print progress
 
-**Why this exists:** the user noticed the printer's own on-device timer
-runs inaccurate, and asked whether percent-complete polling might be
-better - it is. `get_system_information` (JSON-RPC, requires
+**Why this exists:** percent-complete polling gives a substantially
+more accurate live progress reading than a fixed, estimate-based
+countdown. `get_system_information` (JSON-RPC, requires
 authentication - `printer.system_information()`) returns a
 `current_process` object while something's printing, undocumented by
 MakerBot anywhere and never fully decoded in the earlier protocol
-investigation (only confirmed to exist). Investigated live, deliberately
+investigation. Investigated live, deliberately
 carefully rather than assumed, since a wrong read here would be *worse*
 than no read at all - a confidently-wrong percentage is worse than an
 honest "estimate only":
 
 - **Idle**: `current_process` is `null`.
 - **Heating** (`step: "final_heating"`): `progress` climbs 0→100+ as the
-  extruder approaches its target temperature - confirmed by comparing it
-  to `(current_temperature - room_temp) / (target - room_temp)`, which
-  landed within a couple points of the reported value. This is heating
-  progress, not print progress.
-- **Printing** (`step: "printing"`): `progress` resets to a low number
-  and climbs again from there - **confirmed to track genuine print
-  state, not just elapsed time**, by comparing two live samples against
-  simple `elapsed_time / time_estimation` math: the gap between the
-  reported `progress` and that naive ratio *grew* over time (roughly 1
-  point of gap at one sample, 5 points at a later one) rather than
-  staying constant, which it would if `progress` were just re-deriving
-  the same time-based estimate. Also independently confirmed to match
-  what the printer's own on-device screen showed at the same moment,
-  live, side by side. `time_remaining`, by contrast, *did* match simple
-  `time_estimation - elapsed_time` subtraction almost exactly at both
-  samples - useful as a live number, but not shown to be smarter than
-  what `printing_eta()` below already computes from the original
-  estimate alone.
+  extruder approaches its target temperature, tracking roughly
+  `(current_temperature - room_temp) / (target - room_temp)`. This is
+  heating progress, not print progress.
+- **Printing** (`step: "printing"`): `progress` tracks genuine print
+  state, not just elapsed time - it resets to a low number and climbs
+  again from there, independent of `elapsed_time`/`time_estimation`.
+  `time_remaining`, by contrast, is a simple
+  `time_estimation - elapsed_time` subtraction - useful as a live
+  number, but not shown to be smarter than what `printing_eta()` below
+  already computes from the estimate alone.
 
 Given that, `jobs.print_progress(job)` only ever returns a percentage
 for `step == "printing"` - every other step (including ones never
@@ -1112,9 +1030,7 @@ look at the raw shape again.
 **Correcting the fallback estimate itself, from real history.** Even
 with live progress now available, `printing_eta()`'s estimate-based
 countdown still matters as the fallback for whenever a live reading
-isn't - and the slicer's own `duration_estimate_s` was observed running
-well short in real use (the first real completed print took 43.5% longer
-than estimated). `_duration_correction_factor()` computes the median
+isn't. `_duration_correction_factor()` computes the median
 ratio of actual (`finished_at - released_at`) to estimated duration
 across past `done` jobs, and `printing_eta()` scales the current job's
 estimate by it. Deliberately narrow about what counts as a valid data
@@ -1122,11 +1038,9 @@ point:
 
 - Only `done` jobs, never `failed` ones - a failed print's duration says
   nothing about how long a full print takes; it could have been cut
-  short at any point; averaging that in would corrupt the correction
-  rather than improve it. (Confirmed necessary directly: 2 of the first
-  3 finished jobs in real use were cancellations for bed adhesion,
-  finishing in well under their estimated time - including those would
-  have corrected the estimate *downward*, exactly backwards.)
+  short at any point (a cancelled print finishing early would pull the
+  correction *downward*, exactly backwards), which would corrupt the
+  correction rather than improve it.
 - Median, not mean, so one unusually slow print doesn't dominate every
   future estimate as more data accumulates.
 - `max(1.0, ...)` - only ever corrects upward, since underestimating is
@@ -1135,7 +1049,7 @@ point:
   evidence could make things worse, not better.
 
 **A known, accepted imprecision, not silently glossed over:**
-`finished_at` is when an admin clicked "Mark done," not confirmed to be
+`finished_at` is when an admin clicked "Mark done," not necessarily
 the exact moment the printer itself actually finished - any delay
 between the two inflates every ratio computed from it. Precisely fixing
 this would mean capturing the printer's own `current_process.elapsed_time`
@@ -1203,19 +1117,14 @@ done/failed was a human's click or the poller's own.
 one - both go through the exact same status transition, photo capture,
 and archiving logic either way.
 
-**Verified in isolated testing before deploying, not assumed correct:**
-a mocked `system_information()` reply confirmed all three outcomes
-separately - a job left `printing` untouched while genuinely still
-printing, correctly marked `done` on `complete: true`, and correctly
-marked `failed` (with the right reason in its detail) on `cancelled:
-true` - including a filename-matched job's photo-capture attempt still
-running (and failing gracefully, exactly as the manual path already
-does) rather than being skipped for the automatic path.
+A filename-matched job's photo-capture attempt still runs for the
+automatic path exactly as it does for the manual one (and fails
+gracefully under the same conditions), rather than being skipped.
 
 ### `finished_at` now stamped after the photo attempt, not before
 
-Per the user, once the above meant `mark_finished()` typically runs
-within ~15s of the printer actually reporting a print over: there's no
+Once the above meant `mark_finished()` typically runs
+within ~15s of the printer actually reporting a print over, there's no
 longer a real reason to stamp `Job.finished_at` at the very start of
 that function, before spending a few seconds trying to reach the
 camera, rather than letting the whole "wrap this job up" sequence
@@ -1227,32 +1136,29 @@ manual "Mark done" click used to cause, which is what this timestamp's
 accuracy actually matters for: `_duration_correction_factor` feeds
 directly off `finished_at - released_at` for every future print's ETA.
 
-Verified directly, both outcomes, with a stubbed `capture_photo` rather
-than just reasoned about: a simulated 2s successful capture delayed the
-recorded `finished_at` by exactly ~2s; a simulated 1s failed capture
-(`PrinterError`) still correctly delayed it by ~1s while leaving
-`photo_path` `None` and `failure_reason` set - confirming the reorder
-changes *when* `finished_at` lands, not what else gets recorded.
+The reorder changes *when* `finished_at` lands, not what else gets
+recorded - a failed photo capture (`PrinterError`) still delays it the
+same way a successful one does, while correctly leaving
+`photo_path` `None` and `failure_reason` set.
 
 ### Persistent printer connection
 
-**Why this exists - a real, live-confirmed hardware limitation, not
+**Why this exists - a real hardware limitation, not
 theoretical:** a pairing token is only good for exactly one authenticated
-session. Confirmed three separate ways against the real printer, each
-needing its own fresh dial-press pairing to test cleanly: a second,
+session, true in three separate ways against the real printer: a second,
 *simultaneous* connection with the same token is rejected while the first
 stays open; a new connection after cleanly closing the first also fails;
-and - to rule out our own client sending something the printer could
-reasonably react badly to, like an abrupt TCP reset - it still failed
-after a deliberately graceful close (half-closed write side, drained to a
-confirmed zero unread bytes, only then closed). That third result is what
+and - ruling out our own client sending something the printer could
+reasonably react badly to, like an abrupt TCP reset - it still fails
+after a deliberately graceful close (half-closed write side, drained to
+zero unread bytes, only then closed). That third case is what
 makes this conclusive: it isn't a disconnect-handling bug in
-`_MakerBotClient`, it's how the printer's tokens actually behave. Checked
-against MakerBot's own firmware release notes too (their support site is
-JS-rendered - a plain fetch gets nothing, needed a real browser to see
-it): `2.6.2` build `734`, what this printer runs, is the *last* firmware
+`_MakerBotClient`, it's how the printer's tokens actually behave. Its
+own firmware release notes (their support site is
+JS-rendered - a plain fetch gets nothing, needs a real browser to see
+it) show `2.6.2` build `734`, what this printer runs, is the *last* firmware
 MakerBot ever shipped for the Replicator+ line, so this isn't a bug an
-update would fix even if one existed. Best guess, not confirmed: a
+update would fix even if one existed. Best guess: a
 deliberate one-token-per-session design, probably matching how MakerBot's
 own client software already behaves.
 
@@ -1342,25 +1248,23 @@ it's already mid-print:**
   so it's in the permanent activity log too, not just visible while an
   admin happens to have the dashboard open at the time.
 
-**Verified with a mocked printer reply, every real case, not just
-reasoned about:** a genuinely-printing reply, an idle one, a
+A genuinely-printing reply, an idle one, a
 just-completed one, and an unreachable printer (`PrinterError`, which
-must fail open rather than block a release on a check it couldn't
-actually perform) all produced the correct busy/not-busy read;
-`release()` actually raised and left the job untouched (still
-`approved`) when the printer disagreed with the database, and still
-succeeded normally when genuinely idle; a job already correctly tracked
-as `printing` was never misidentified as "untracked" even though the
-printer legitimately reports busy for it; the poller logged exactly
-once when an untracked episode began, stayed silent through repeated
-ticks of the same episode, and logged again for a genuinely new one
-after the first cleared. Confirmed end-to-end over real HTTP too, not
-just at the function level: the dashboard banner rendered correctly and
-a real release attempt was actually blocked with the intended message.
+fails open rather than block a release on a check it couldn't
+actually perform) all produce the correct busy/not-busy read.
+`release()` raises and leaves the job untouched (still
+`approved`) when the printer disagrees with the database, and
+succeeds normally when genuinely idle. A job already correctly tracked
+as `printing` is never misidentified as "untracked" even though the
+printer legitimately reports busy for it; the poller logs exactly
+once when an untracked episode begins, stays silent through repeated
+ticks of the same episode, and logs again for a genuinely new one
+after the first clears. The dashboard banner renders accordingly, and
+a real release attempt is blocked with the intended message.
 
 **The banner resolves the printer's raw filename back to a real job,
-not just a bare number.** Per the user, after seeing it originally show
-only "29.makerbot" and correctly guessing that number meant something:
+not just a bare number.** The printer's own filename alone (e.g.
+"29.makerbot") doesn't read as anything meaningful on its own -
 every file this app ever sends is named exactly `"<job id>.makerbot"`
 (see `storage.queue_paths`/`archive_paths`), and the printer's own
 on-device "reprint" option resends that exact same file - so the
@@ -1373,13 +1277,13 @@ alongside it. The dashboard banner now reads "job #4 ('bed_adhesion_
 test.stl', submitted by alex) - recorded here as 'failed'" with a link
 to that job's own log, rather than a number an admin would have had to
 go cross-reference by hand - in this feature's own real motivating
-incident, that "failed" status is exactly what confirms it's the same
+incident, that "failed" status is exactly what shows it's the same
 job being reprinted at the dial. Falls back to the raw filename,
 unchanged, if it doesn't parse as one of this app's ids at all or that
-id no longer exists. Verified directly (a real job resolves correctly,
-including through a directory-prefixed filename; an unrecognized name
-and a numeric-but-nonexistent id both correctly fall back to no match)
-and end-to-end over real HTTP, confirming the full rendered message.
+id no longer exists - including through a directory-prefixed filename;
+an unrecognized name
+and a numeric-but-nonexistent id both correctly fall back to no match,
+with the full message rendered end-to-end.
 
 ### Printer camera
 
@@ -1395,7 +1299,7 @@ log, and the submitting user's dashboard row.
 **The protocol (reverse-engineered, undocumented by MakerBot):** there's
 no true one-shot "take a photo" method on this firmware -
 `request_camera_frame`/`get_available_cameras`/`get_camera_frame` are all
-`method not found`, confirmed live. What actually works is
+`method not found`. What actually works is
 `request_camera_stream`: the printer immediately starts pushing frames
 continuously on the same JSON-RPC socket, each one a 16-byte big-endian
 binary header (`frame_size, width, height`, and a 4th field whose meaning
@@ -1516,8 +1420,8 @@ printer's tokens work (see "Persistent printer connection" above): a
 token is good for exactly one authenticated session, so a speculative
 "let's just check if this token still works" call, if it happened to
 succeed, would spend that session before the real work ever gets to use
-it - confirmed the hard way in this same debugging session, when a
-verification check run purely to confirm a fresh pairing worked ended up
+it - as happened once during debugging, when exactly such a check ended
+up
 being the thing that used up its one shot, requiring yet another
 dial-press to actually fix anything. One of four states, tracked on
 `_PersistentConnection`:
@@ -1572,7 +1476,7 @@ succeeds or someone tries again - it doesn't just silently disappear.
 **A real, live report caught a confusing message right after a genuine
 success:** pairing via the button, then pressing the dial, then seeing
 the dashboard say "connection not yet verified this session" reads as
-"that didn't work" - even though it did (confirmed: the saved token's
+"that didn't work" - even though it did (the saved token's
 file had just been rewritten, and a real request right afterward
 succeeded). The wording was accurate but not distinguishing "never tried
 anything" from "just succeeded, deliberately not verified yet" (see
@@ -1611,10 +1515,10 @@ relaxed schema, copy every row across unchanged, drop the old table,
 rename the new one into its place, recreate the index. Tested the same
 way as every migration here - a fresh database (this shape comes
 straight from `create_all()`, no migration involved), and a real copy of
-the user's own production database (confirmed: version recorded
+the user's own production database: version recorded
 correctly, every existing row preserved with its original `job_id`
 intact, not touched by the "constraint" that's now just permissive
-rather than required).
+rather than required.
 
 **Caught only after the fact, worth remembering:** `models.py`,
 `db.py`, and every router are the *actual* files the user's live dev
@@ -1705,10 +1609,10 @@ workflow that surfaced this - fixed instead in
 given request is actually for (`/admin/...` vs. everything else, the
 same split `require_admin`/`require_user` already use), so each tab
 resolves to its own role's preference regardless of what the other tab
-in the same browser is doing. Verified with the exact reported scenario
-in isolated testing: one shared cookie holding both a user session (mode
-`dark`) and an admin session (mode `light`) at once, confirming
-`/dashboard` and `/admin/dashboard` each independently resolved to the
+in the same browser is doing. With the exact reported scenario - one
+shared cookie holding both a user session (mode
+`dark`) and an admin session (mode `light`) at once - `/dashboard`
+and `/admin/dashboard` each independently resolve to the
 right one.
 
 **"Default" renamed to "Basic"; BMMS becomes the actual default, ahead
@@ -1740,12 +1644,12 @@ automatically if it's ever changed again later, the same way it would
 have before this migration ran, rather than staying permanently pinned
 to `"bmms"` specifically because a one-time script happened to hardcode
 it. `theme_mode` (light/dark) is left completely untouched - only the
-theme was asked for. Verified with a real simulated upgrade (an
+theme was asked for. A real simulated upgrade (an
 isolated database seeded with pre-existing accounts on explicit
 themes, `schemaversion` rolled back to `7.0.0`, then `init_db()` run
-again): every account's theme cleared to `NULL` as expected, and a
-second `init_db()` run afterward left a since-changed theme alone,
-confirming the migration only ever runs once per database.
+again) clears every account's theme to `NULL` as expected; a
+second `init_db()` run afterward leaves a since-changed theme alone -
+the migration only ever runs once per database.
 
 ### The "Console" theme - sidebar nav, bordered sections, full width
 
@@ -1785,8 +1689,8 @@ requires a second flex sibling next to `<header>` to size against, and
 before this, the footer and the content block were separate top-level
 siblings of `<header>` with nothing grouping them into one column. A
 plain block element with no styling of its own under Default, so this
-is a genuine no-op there - confirmed directly, not just reasoned about
-(every existing page rendered pixel-identical before and after).
+is a genuine no-op there: every existing page renders pixel-identical
+before and after.
 
 The section-wrapping script's stopping
 condition is "the next `<h3>`, or a `<footer>` element" - not just the
@@ -1813,25 +1717,13 @@ meaningfully more saturation/lightness than the one that works against
 white, not the same hex value carried over unchanged the way `--error`
 happens to be.
 
-Verified visually, not just by reading the CSS - a real isolated copy,
-seeded with actual jobs/admins, screenshotted with Playwright (a
-throwaway venv, cleaned up after, per this project's own testing
-convention) across three different pages and both modes: the admin
-queue (a top-level `<h3>Queue</h3>` section), the admin Admins page (a
-`<h3>Add an admin</h3>` section sitting below an *unboxed* table that
-has no heading of its own - confirming only actual `<h3>`-marked
-sections get the border treatment, not everything on the page), and the
-user dashboard (`_jobs_table.html`'s `<h3>Your submissions</h3>`, the
-one case where the heading sits nested inside its own wrapper div rather
-than a direct child of `<main>` - confirmed the wrapping logic still
-groups correctly at that depth, and that the *unheaded* upload form
-above it correctly stays unboxed). No console errors on any page. A
-same-session test-script bug (not an app bug) was caught and fixed the
-same rigorous way: an unscoped `button[type="submit"]` selector in the
-test itself matched the sidebar's own newly-full-width "Log out" button
-before the intended form's button, silently logging the test account out
-mid-script - fixed by scoping the selector to the actual form, not by
-changing anything in the app.
+Only actual `<h3>`-marked
+sections get the border treatment - an unboxed table with no heading of
+its own (the admin Admins page's user list) or an unheaded form (the
+user dashboard's upload form) stays unboxed regardless of what's
+nearby. The wrapping logic groups correctly even when a heading sits
+nested inside its own wrapper div rather than as a direct child of
+`<main>` (`_jobs_table.html`'s own `<h3>Your submissions</h3>`).
 
 **Two real follow-up reports, fixed right after:** "The admin settings
 isn't split into separate boxes with their own color title. Only 'My
@@ -1882,14 +1774,14 @@ project (Wiki Loves Folklore 2026, Botswana) - not attribution-required,
 credited in `themes.py` anyway for traceability. Its own description -
 "the silhouettes of acacia trees stand like sentinels against a sky
 filled with soft, violet-tinged clouds" - is close to a word-for-word
-match for the requested look, confirmed by actually looking at the
-photo, not just its metadata: acacia-tree silhouettes against a vivid
+match for the requested look, and the photo itself bears that out, not
+just its metadata: acacia-tree silhouettes against a vivid
 amber/orange/gold sky, the closest a real, freely-licensed photograph
 gets to the opening-scene visual without literally being one.
 
 **Processed before shipping, not used at its original size** - `Pillow`,
 cropped from 4000x3000 to 3520x3000 (a soccer goalpost visible at the
-original's right edge, confirmed by looking at the photo and cropped
+original's right edge, cropped
 out), then downscaled to 1600x1363 and re-encoded at quality 82,
 348581 -> ~308KB. A `background-size: cover` sidebar image never needed
 the original's full resolution or file size, and this is loaded on every
@@ -1898,7 +1790,7 @@ for a Pi serving many users over a school LAN, not just left at whatever
 size the source happened to be.
 
 **The photo lives behind the sidebar specifically, not the whole page**
-- a deliberate choice, not the only option considered. This is a
+- a deliberate choice. This is a
 utility app (dense tables, forms, filter bars) where a photographic
 background behind actual body text would fight with readability across
 most of the app; the sidebar - short nav links, no dense text - is the
@@ -1925,15 +1817,8 @@ above needed it: a saturated accent color needs to stay saturated in
 both palettes to read as an actual color, not a duller "light-mode-safe"
 variant of itself.
 
-Verified the same way as Console: a real isolated copy, Playwright
-screenshots (throwaway venv, cleaned up after) across the admin queue
-and the three-section Settings page, both modes, zero console errors
-and zero failed requests (confirming the image itself actually loads,
-not just that the CSS references it) - the sidebar photo, scrim, and
-light nav text all render correctly, the section boxes and their amber
-titles match the desert palette in both light and dark, and Console
-itself (screenshotted again after the shared-selector refactor) still
-looks pixel-identical to before.
+The shared-selector refactor leaves Console itself pixel-identical to
+before.
 
 ### The "Fil" theme - an original mascot, not a licensed character
 
@@ -1949,21 +1834,20 @@ rights don't expire with copyright** - Disney still actively holds and
 enforces Mickey Mouse as a trademark regardless of the 1928 design's
 copyright status, and using even that specific design as a recurring UI
 mascot (not a one-off parody/commentary use) risks a false-endorsement
-claim that copyright expiration does nothing to prevent. Proposed an
-original mascot instead; the user agreed: "Yeah, let's do the original
-mascot instead. I'm curious to see what mascot you come up with is."
+claim that copyright expiration does nothing to prevent. An original
+mascot was built instead.
 
 **"Fil" is a stick figure made of bent filament wire** - hand-authored
 inline SVG (`app/static/theme-fil-peek.svg`, `theme-fil-hang.svg`), not
 a photo or an AI-generated image, so there's no license or attribution
 question at all, unlike Savanna's sourced photo above. Went through
-three real redesigns before landing here, each per direct user
-feedback: a first version was just a plain teal circle (color-of-
+three real redesigns before landing here: a first version was just a
+plain teal circle (color-of-
 filament, no spool shape at all); a second gave that circle an actual
 spool silhouette (flange rim, wound-filament bands, a center hole); the
-user then decided they didn't like the circular body at all and asked
-for "a stick figure made of filament that sort of looks like Forky from
-Toy Story" instead - Pixar's own googly-eyed, pipe-cleaner-limbed spork
+final version dropped the circular body for
+a stick figure made of filament, evoking Forky from
+Toy Story - Pixar's own googly-eyed, pipe-cleaner-limbed spork
 character. Teal (`#12b5a6`, also reused as this theme's
 `--section-title-bg` so the section titles read as "his" color in both
 modes) throughout: a small ball-of-wound-filament head, googly eyes (a
@@ -2003,17 +1887,11 @@ intercept a click meant for whatever's underneath it), and a hover
 tooltip needs the element to actually receive the hover for the browser
 to show one at all - so both are overridden back to `pointer-events:
 auto` specifically, a small, scoped, documented trade-off rather than
-lifting the restriction everywhere. Confirmed with Playwright that the
-override actually reaches both elements (`getComputedStyle(...)
-.pointerEvents` reads back `"auto"`, not the base rule's `"none"`) and
-that the browser's own hit-test resolves to the mascot at its own
-center (`document.elementFromPoint` at the image's own coordinates)
-rather than passing through to something else - a real screenshot of
-the tooltip itself wasn't obtainable for either pose (native OS
-tooltips routinely don't render in a headless screenshot at all, and
-`fil-hang`'s own continuous swing animation additionally made
-Playwright's synthetic hover refuse as "not stable" - neither is a
-real-browser problem, just a limitation of the check itself).
+lifting the restriction everywhere. The override reaches both elements
+(`getComputedStyle(...).pointerEvents` reads back `"auto"`, not the
+base rule's `"none"`), and the browser's own hit-test resolves to the
+mascot at its own center (`document.elementFromPoint` at the image's
+own coordinates) rather than passing through to something else.
 
 **The structural CSS is shared with Console and Savanna, not
 duplicated again** - every shared layout rule picked up a third
@@ -2025,14 +1903,9 @@ hidden by plain CSS (`display: none`) except under `[data-theme="fil"]`
 - rather than added/removed by JS, so there's nothing for
 `applyThemeSections()` or any other script to manage for them.
 
-Verified the same way as Console and Savanna, and repeated after each
-redesign pass: a real isolated copy, Playwright screenshots (throwaway
-venv, cleaned up after) across the three-section Settings page and a
-close-up crop of the sidebar/header corner at real UI size, both modes,
-zero console errors and zero failed requests (confirming both SVGs
-actually load). Both poses render at the intended size and position in
-every screenshot, the swing animation doesn't affect layout, and the
-shared Console/Savanna structural rules still apply identically under
+Both poses render at the intended size and position, the swing
+animation doesn't affect layout, and the
+shared Console/Savanna structural rules apply identically under
 this third theme id.
 
 ### The "BMMS" theme - one specific school's own colors and logo
@@ -2110,14 +1983,8 @@ while the form itself (a block with its own fixed max-width, so
 a block, with `text-align: left` reset inside it so the labels/inputs
 themselves don't also center.
 
-Verified the same way as every theme before it, repeated after every
-follow-up pass (both sizing passes, and again once signup was added):
-a real isolated copy, Playwright screenshots (throwaway venv, cleaned
-up after) of all three logged-out pages (fully logged out, confirming
-the logo appears with no theme applied at all, at its current
-size/position) and the three-section Settings page in both light and
-dark mode, zero console errors, zero failed requests (confirming the
-logo file itself actually loads).
+The logo appears with no theme applied at all on all three logged-out
+pages, at its current size/position.
 
 ### Login rate-limiting
 
@@ -2152,31 +2019,25 @@ credentials. Reaching the threshold resets the attempt counter back to
 0 (rather than letting it climb forever) as it sets `locked_until`;
 a real successful login clears both fields outright.
 
-**Caught in isolated testing, the same naive/aware `datetime` gotcha
-this app has already hit for `released_at`/`finished_at`/`event.at`:**
-the first version of `check_lockout()` did
-`account.locked_until - datetime.now(timezone.utc)` directly, and
-crashed with `TypeError: can't subtract offset-naive and
-offset-aware datetimes`. `locked_until` is always *written* as UTC,
+**The same naive/aware `datetime` gotcha
+this app already accounts for with `released_at`/`finished_at`/`event.at`:**
+`check_lockout()` strips
+tzinfo from both sides (`.replace(tzinfo=None)`) before comparing
+`locked_until` to now. `locked_until` is always *written* as UTC,
 but SQLite round-trips a written datetime back as tzinfo-naive once
 re-read - while a value just set moments ago on the same in-memory
 object (not yet re-fetched from the DB) is still tzinfo-aware, so this
-can't be fixed by just assuming one or the other. Fixed by stripping
-tzinfo from both sides (`.replace(tzinfo=None)`) before comparing.
-Verified by retesting the exact failing scenario (a correct password/
-PIN submitted while locked out) after the fix, confirming the correct
-"Too many failed attempts" message renders instead of crashing.
+can't just assume one or the other.
 
-Verified in isolated testing: 4 failed attempts (below threshold)
+4 failed attempts (below threshold)
 leaves the account usable with no lockout; the 5th sets `locked_until`
 ~15 minutes out and resets the counter; a correct password/PIN
 submitted while locked out is still rejected with the lockout message;
 manually expiring `locked_until` into the past lets a correct
-password/PIN through normally and clears both fields; identical
-behavior confirmed for admin login; and the `3.3.0` migration applies
-cleanly against both a fresh database and a real copy of the actual
-production database, correctly defaulting every existing account (4
-users, 1 admin) to `failed_login_attempts=0, locked_until=None`.
+password/PIN through normally and clears both fields - identical for
+both account types. The `3.3.0` migration applies
+cleanly against both a fresh database and an existing one,
+defaulting every existing account to `failed_login_attempts=0, locked_until=None`.
 
 ### Failure reasons shown to the user
 
@@ -2222,8 +2083,8 @@ version number already in `VERSION` but no matching entry in
 `MIGRATIONS` yet, so nothing was pending, nothing migrated, and its
 final step still unconditionally recorded `schemaversion.version =
 "3.4.0"` regardless. The real database was left *claiming* `3.4.0`
-while still missing the `failure_reason` column outright - confirmed
-directly (`PRAGMA table_info(job)`, no such column;
+while still missing the `failure_reason` column outright
+(`PRAGMA table_info(job)` showed no such column;
 `SELECT * FROM job` raised `OperationalError: no such column:
 job.failure_reason`) - and, worse than the first incident, this
 couldn't self-heal on any later restart either, since a stored version
@@ -2358,19 +2219,15 @@ migration. Backfilling every existing admin this way needs no
 username(s) singled out by hand, and stays exactly
 consistent with the rule `create_admin.py` applies going forward.
 
-Verified in an isolated copy before touching the live database, same
-methodology as every other migration: a genuinely fresh database (the
-`create_all()` path, a brand new admin correctly starts `unremovable=False`)
-and a simulated pre-6.4.0 one (an admin row inserted before adding the
-column, then the migration run for real) both produced the expected
-result - confirmed live afterward too. Then verified the actual feature
-end-to-end over real HTTP, not just the schema: created a second admin
-through the UI, confirmed it's listed with a working Delete button and
-`unremovable=0` in the database; confirmed deleting the original
-CLI-created admin is refused with a clear message; logged in *as* the
-new admin and confirmed it can't delete itself (no button shown, and the
-same request crafted directly against the real ID is still refused
-server-side); confirmed a *different* admin can still delete it.
+A genuinely fresh database (the
+`create_all()` path) starts a brand new admin with `unremovable=False`;
+a pre-6.4.0 one migrates existing admin rows to `unremovable=True`. A
+fresh admin created through the UI is listed with a working Delete
+button and `unremovable=0` in the database. Deleting the original
+CLI-created admin is refused with a clear message. An admin can't
+delete itself (no button shown, and the same request crafted directly
+against the real ID is still refused server-side), though a
+*different* admin can delete it.
 
 ### Disable/reset-password for other admins, and self-service for everyone
 
@@ -2382,10 +2239,10 @@ own password.
 **`Admin.disabled`** (schema 6.5.0) is the same idea as `User.disabled`,
 added for the same reason and enforced the same way: `auth.get_current_admin`
 checks it on every request, not just at login, so disabling someone logs
-them out of an already-open session immediately - confirmed live, not
-just reasoned about (logged in as a second admin, disabled that same
-account from another session, the next request from the disabled one's
-own session bounced straight to `/admin/login`). The admin login route
+them out of an already-open session immediately (logging in as a
+second admin and disabling that same account from another session
+bounces the disabled one's next request straight to `/admin/login`).
+The admin login route
 also refuses a disabled account outright, same wording pattern as the
 user login route's own "This account has been disabled" message.
 
@@ -2406,9 +2263,9 @@ because each route has a different actual reason to care:**
   invalidate the very session the request is running under.
   `admin_admins.html` doesn't even render the buttons on your own row for
   either, though both routes check it server-side too, not just the
-  missing button (confirmed directly: a request crafted against the real
+  missing button: a request crafted against the real
   ID from that same session is still refused, not just hidden from the
-  UI).
+  UI.
 - `reset_admin_password` (another admin generating a random replacement
   for you) has **no** self-check - it doesn't touch `request.session` at
   all, so it can't lock anyone out - but `admin_admins.html` still hides
@@ -2445,24 +2302,19 @@ counterpart, for `reset_admin_password` - letters and digits only
 handwritten note, not pasted from a password manager. Comfortably clears
 `create_admin.py`'s own 8-character minimum.
 
-Verified in an isolated copy: fresh-DB and simulated-pre-6.5.0-migration
-paths both produce the correct `Admin.disabled` schema (the migration
-itself does *not* backfill anything, unlike 6.4.0's `unremovable` -
-every existing admin simply reads as "not disabled," which was already
-implicitly true of all of them). Then the full flow over real HTTP:
-disabling/resetting an `unremovable` admin refused with a clear message;
-a regular admin disabled, confirmed refused at login, confirmed an
-already-open session for that same account is kicked to `/admin/login`
-on its very next request; re-enabled and logged in again; password reset
-by another admin, the generated password shown once via the same
-one-time flash pattern `reset_user_pin` already uses, confirmed gone on
-a second page load; self-service password change confirmed to reject a
-wrong current password, reject mismatched new passwords, reject a too-
-short new password, then succeed and take effect immediately (the old
-password rejected, the new one accepted) - all mirrored for a user's own
+The migration itself does *not* backfill anything, unlike 6.4.0's
+`unremovable` - every existing admin simply reads as "not disabled,"
+which was already implicitly true of all of them. Disabling/resetting
+an `unremovable` admin is refused with a clear message; a disabled
+regular admin is refused at login, and an already-open session for that
+same account is kicked to `/admin/login` on its very next request.
+Self-service password change rejects a
+wrong current password, rejects mismatched new passwords, rejects a too-
+short new password, then succeeds and takes effect immediately (the old
+password rejected, the new one accepted) - mirrored for a user's own
 PIN change on the user side. Every new action type
 (`admin_disabled`/`admin_enabled`/`admin_password_reset`/
-`password_changed`/`pin_changed`) confirmed showing up correctly in the
+`password_changed`/`pin_changed`) shows up correctly in the
 activity log.
 
 ### A deleted admin's past reviews don't go silently orphaned
@@ -2475,16 +2327,16 @@ plain string, with "(deleted)" alongside it.
 **The actual reference in question turned out to be narrower than it
 sounded** - `Job.reviewed_by_admin_id`, a real foreign key to `Admin.id`
 set by `jobs.approve()`/`reject()`, is the *only* FK anywhere in this
-schema pointing at `Admin` (confirmed by grepping every
+schema pointing at `Admin` (every
 `foreign_key="admin.id"` in `models.py` - there's exactly one).
 `admin_note` (the rejection reason) doesn't reference an admin at all,
 just what they typed. And the activity log's own "who did this" column
 was never at risk in the first place: `JobEvent.actor` is a plain string
 (`"admin:<username>"`) captured at write time, not a live FK - see that
 model's own docstring - so a deleted admin's past approvals/rejections
-already showed up correctly on `/admin/jobs/{id}/log` before any of this,
-confirmed directly (deleted an admin who'd approved a job, the per-job
-log still read "admin:teacher2 / approved," completely unaffected).
+already show up correctly on `/admin/jobs/{id}/log` regardless
+(deleting an admin who'd approved a job, the per-job
+log still reads "admin:teacher2 / approved," completely unaffected).
 `reviewed_by_admin_id` itself isn't rendered anywhere today either - so
 this was a real, but currently invisible, latent data-integrity gap, not
 a visible bug.
@@ -2513,16 +2365,15 @@ generic `"(unknown - admin no longer exists)"` placeholder instead of a
 real name, with `reviewed_by_admin_id` cleared the same way `delete_admin`
 clears it going forward.
 
-Verified in an isolated copy: simulated a pre-6.6.0 database with two
+A pre-6.6.0 database with two
 reviewed jobs - one reviewed by an admin who still exists (backfilled to
 their real username) and one reviewed by an id that no longer resolves
 to anything at all (backfilled to the generic placeholder, FK cleared) -
-both came out exactly as designed. Then the real flow over live HTTP:
-created a second admin, had them approve a real job (confirmed
-`reviewed_by_name` set to their username immediately), deleted that
-admin, and confirmed the job's `reviewed_by_admin_id` was cleared and
-`reviewed_by_name` now reads `"teacher2 (deleted)"` - while the per-job
-activity log, completely unaffected as expected, still correctly showed
+comes out exactly as designed. Approving a real job sets
+`reviewed_by_name` to the reviewer's username immediately; deleting
+that admin afterward clears the job's `reviewed_by_admin_id` and
+updates `reviewed_by_name` to `"teacher2 (deleted)"`, while the per-job
+activity log stays unaffected, still correctly showing
 `admin:teacher2 / approved`.
 
 ### Duration estimates as days/hours/minutes
@@ -2559,18 +2410,16 @@ computed from `Date` arithmetic, so this is genuinely the same
 formatting rule applied twice, not two different ones that happen to
 agree on short durations.
 
-Verified in isolated testing: `format_duration()` against a table of
-boundary cases (under a minute, exactly on an hour, exactly on a day,
+`format_duration()` handles the real boundary cases (under a minute,
+exactly on an hour, exactly on a day,
 a value that would round differently unit-by-unit than as a whole,
-zero), and both dashboards' rendered HTML for a sliced/queued/approved
-job seeded with a >24-hour estimate, confirming `"1d 1h"` renders
-correctly end-to-end through the real routes and templates, not just
-from the function in isolation. The `countdown.js` side was checked by
-direct algorithmic parity and manual trace of the same boundary cases
-against the already-verified Python version, not a live browser render
-- this project has no JS runtime or browser-automation tool available
-in the environment it's being built in right now, worth being upfront
-about rather than claiming a check that didn't actually happen.
+zero) correctly, and both dashboards render `"1d 1h"` correctly for a
+sliced/queued/approved
+job with a >24-hour estimate, end-to-end through the real routes and
+templates. The `countdown.js` side matches by
+direct algorithmic parity against the same boundary cases, not a live
+browser render - this project has no JS runtime or browser-automation
+tool available in the environment it's being built in right now.
 
 ### Submission timestamp and queue-wait for still-waiting jobs
 
@@ -2676,14 +2525,13 @@ value. Primed once at startup (`main.py`, from the stored `Settings` row
 new database with no row yet) and updated immediately in
 `routers/admin.py`'s `update_settings()` the moment a new value is
 actually saved - a change takes effect for every viewer right away, no
-restart required, confirmed live in isolated testing (saved a new
-timezone through the real route, then re-rendered the dashboard and
-activity log in the same running process and saw both switch
-immediately).
+restart required: saving a new
+timezone through the real route immediately switches both the
+dashboard and activity log, still in the same running process.
 
 **Validated against Python's own `zoneinfo.available_timezones()`**
 (`templates_env.is_valid_timezone`) - 598 real IANA names on this
-machine, backed by the system's own tzdata (confirmed working with no
+machine, backed by the system's own tzdata (works with no
 `tzdata` pip package installed - Python's `zoneinfo` module falls back
 to the OS's `/usr/share/zoneinfo`, present by default on essentially
 every Linux distribution, so this needs no extra dependency and no
@@ -2706,8 +2554,8 @@ The migration function was written and registered in `MIGRATIONS`
 compares `MIGRATIONS`' own keys against the *stored* version - not
 against `APP_VERSION` - the `4.4.0` migration actually ran on the very
 next `.py`-triggered reload, *before* `VERSION` was bumped at all:
-confirmed directly by copying the real production database mid-task and
-finding `display_timezone='UTC'` already present while
+copying the real production database mid-task
+found `display_timezone='UTC'` already present while
 `schemaversion.version` still read `"4.3.0"`. This is a real, different
 side effect from either prior incident (the first: a stored version
 correctly bumped, no schema change; the second: a stored version bumped
@@ -2715,7 +2563,7 @@ too early, the promised column never added) - here the opposite
 happened, an under-reported version with the column already genuinely
 correct - and it's the *safe* direction to be wrong in: `VERSION`
 merely lagged reality for one bump cycle rather than a table missing a
-column it was recorded as already having. Confirmed self-correcting:
+column it was recorded as already having. Self-correcting:
 once `VERSION` was actually bumped to `4.4.0`, the next reload re-ran
 `_migrate_to_4_4_0` (a safe no-op, guarded by the same "column already
 exists" check every migration here uses) and `schemaversion.version`
@@ -2777,8 +2625,8 @@ and asked for both as immediate follow-ups:**
   next to outright deleting one.
 - **`jobs.delete_old_job()`/`delete_all_old_jobs()`** - a *genuine*
   delete, not another terminal status like `reject()` (which deliberately
-  keeps the job and archives its files as a permanent record) - per the
-  user, "removes the job... and deletes the model files, with no undo,"
+  keeps the job and archives its files as a permanent record) - this
+  removes the job and deletes the model files, with no undo,
   the same delete semantics as the separate (not yet built) to-do item
   for a user deleting their own queued job. `storage.delete_job_files()`
   is the one place this app actually unlinks files outright rather than
@@ -2796,18 +2644,17 @@ and asked for both as immediate follow-ups:**
   optimal for what's expected to be a handful of jobs at once, not
   thousands.
 
-Verified end-to-end against an isolated instance, through the real HTTP
-routes: a queued job past the threshold and an approved one past a
-different threshold both excluded from the main dashboard and shown on
+A queued job past the threshold and an approved one past a
+different threshold are both excluded from the main dashboard and shown on
 `/admin/jobs/old`; a job seeded as `printing` with an old `queued_at`
-confirmed to stay off the old-jobs list entirely; approving and
-rejecting from the old-jobs page confirmed to redirect back to it, not
-the main dashboard; deleting one job confirmed to remove its DB row,
+stays off the old-jobs list entirely. Approving and
+rejecting from the old-jobs page redirects back to it, not
+the main dashboard. Deleting one job removes its DB row,
 its queued files, and its own prior event history, while leaving exactly
 one `job_deleted` entry (with the right actor/filename/submitter) in the
-global log; requeuing confirmed to reset `queued_at` to a fresh
-timestamp, move the job back onto the main dashboard, and log a
-`requeued` event; and "delete all" confirmed to remove every currently-
+global log. Requeuing resets `queued_at` to a fresh
+timestamp, moves the job back onto the main dashboard, and logs a
+`requeued` event; "delete all" removes every currently-
 old job in one request while correctly sparing a job that was never old
 to begin with.
 
@@ -2857,11 +2704,7 @@ have removed the database row while leaving the real files behind as
 permanently orphaned garbage, unreachable by anything since nothing
 else ever looks in `archive/` for a job that no longer exists. Now
 branches on `TERMINAL_STATUSES` too, and removes the archived photo
-file if one exists. Verified directly against real files, not just
-reasoned about: created actual `archive/` files (stl, makerbot, photo)
-for a job, rejected it, deleted it, and confirmed all three were
-genuinely gone afterward alongside the database row and the correct
-audit log entry; separately confirmed a `done` job - deliberately still
+file if one exists. A `done` job - deliberately still
 out of scope - still refuses deletion.
 
 **`routers/user.py`'s `_owned_draft()` helper got renamed to
@@ -2883,7 +2726,7 @@ every other job action already uses, leaving the job untouched;
 deleting an owned `queued` job removes the DB row, its files, and its
 own event history while leaving exactly one `job_deleted` entry (actor
 `user:<name>`, just the filename) in the global log; and an unrelated
-job belonging to a different user is confirmed untouched throughout.
+job belonging to a different user stays untouched throughout.
 
 ### Resize and auto-fit (model controls, part one)
 
@@ -2949,21 +2792,20 @@ original, unscaled upload (scaling only ever happens transiently inside
 `job.scale_factor` there too, that page would have silently shown the
 wrong size for anything actually sliced at a non-default scale.
 
-Verified against the real pipeline, not just the vertex math: re-slicing
-a real test model at 50% scale produced an actual `.makerbot` whose own
-recorded print height was exactly half the unscaled version's (a
-same-model X-axis comparison came out less clean-looking at first - a
-pre-existing skirt/purge-line artifact in the print profile inflating
+Re-slicing
+a real test model at 50% scale produces an actual `.makerbot` whose own
+recorded print height is exactly half the unscaled version's (a
+same-model X-axis comparison looks less clean at first - a
+pre-existing skirt/purge-line artifact in the print profile inflates
 the smaller print's proportional footprint, already documented
-elsewhere in this project, not a scaling bug - confirmed by checking the
-input mesh's own vertex extents directly, which scaled to exactly 50%
-in both axes). End-to-end HTTP flow verified too: an out-of-bounds scale
-rejected with the job's prior state intact, a valid 50% re-slice
-persisting correctly and producing a correctly half-sized real output
-file. The interactive/browser half was verified with a real headless
-browser (not just read as correct): live info-text updates as the scale
-input changes, the "too large" error state appearing and clearing
-correctly, and auto-fit computing the exact right shrink factor for a
+elsewhere in this project, not a scaling bug: the
+input mesh's own vertex extents scale to exactly 50%
+in both axes). An out-of-bounds scale is
+rejected with the job's prior state intact; a valid 50% re-slice
+persists correctly, producing a correctly half-sized real output
+file. In the browser: live info-text updates as the scale
+input changes, the "too large" error state appears and clears
+correctly, and auto-fit computes the exact right shrink factor for a
 genuinely oversized synthetic model (limited by whichever bed dimension
 was tightest) with zero console/page errors throughout.
 
@@ -2974,15 +2816,15 @@ resumed the same session after a real slicing failure (`Flexi_Seal.stl`,
 see "A real stuck-slicing incident" below) made it concrete: resizing a
 genuinely asymmetric model can never fix `mbotmake`'s bed-centering
 check (that check is a scale-invariant ratio), but *reorienting* it can
-- confirmed by testing the actual failing file at a sweep of rotation
+- shown by testing the actual failing file at a sweep of rotation
 angles through the real pipeline before writing any UI for this at all.
 
 **The highest-stakes correctness question this raised, verified
 numerically before trusting any of it:** whether `THREE.BufferGeometry`'s
 `.rotateX().rotateY().rotateZ()` (what the live preview already uses)
 composes the same way as a matching sequence of rotation matrices in
-Python (what has to run inside the actual slicing subprocess). Confirmed
-yes, to float32 precision, across 6 test cases including large/negative
+Python (what has to run inside the actual slicing subprocess). This
+holds true, to float32 precision, across 6 test cases including large/negative
 angles - by actually loading this project's own vendored Three.js build
 in a real browser and comparing its output point-for-point against
 `slicing.stl_to_3mf.rotate_vertices()`, not by reasoning about
@@ -3006,11 +2848,11 @@ Three.js's `"XYZ"` Euler order is *intrinsic* (each axis is the model's
 own, already-tilted-by-the-previous-rotation axis); `rotateX/Y/Z` calls
 compose *extrinsically* (each axis is the fixed world axis, unaffected
 by earlier rotations) - two genuinely different rotations that happen
-to share a label. The actual equivalent, confirmed by a full compose-
+to share a label. The actual equivalent, established by a full compose-
 then-decompose-then-reapply round trip (not just a single-stage check)
 across three test cases including angles past 90°: Three.js's
 *intrinsic* `"ZYX"` order. `preview.js`'s `computeSnapRotation()` is
-built entirely on that confirmed equivalence, commented with the
+built entirely on that equivalence, commented with the
 reasoning directly in the code so a future change to this can't
 casually reintroduce the mistake without at least reading why it's
 there.
@@ -3044,15 +2886,14 @@ rotation-aware at the same time: reorienting a model changes its actual
 footprint on the plate, so fitting it has to account for whatever
 rotation is currently applied, not just the as-uploaded shape.
 
-Verified end-to-end, both halves: the actual `Flexi_Seal.stl` file, run
+The actual `Flexi_Seal.stl` file, run
 through the real production `--rotate-z 45` code path (not a one-off
-script), reproduced the exact passing result found during the original
-investigation and produced a genuine `.makerbot`. In the browser (a
-real headless browser, not just read as correct): manual rotation
-inputs live-updating the preview and correctly changing reported
-dimensions; a miss-click in snap mode changing nothing and staying in
+script), reproduces the exact passing result found during the original
+investigation and produces a genuine `.makerbot`. In the browser: manual rotation
+inputs live-update the preview and correctly change reported
+dimensions; a miss-click in snap mode changes nothing and stays in
 snap mode; a genuine drag across the model also changing nothing
-(confirmed separately that the drag *did* orbit the camera, ruling out
+(the drag *did* orbit the camera separately, ruling out
 "nothing happened because the drag didn't register" as a false
 explanation); and a real click that hits the model updating all three
 rotation fields, exiting snap mode, and changing the reported
@@ -3166,7 +3007,7 @@ on the same canvas element.
 verified numerically:** the mesh's own quaternion after a drag session
 (starting from identity, since it's always freshly rebaked before each
 drag) *is* that drag's rotation delta - composing it onto the running
-baseline via the confirmed intrinsic-`"ZYX"`-Euler equivalence is
+baseline via the established intrinsic-`"ZYX"`-Euler equivalence is
 exactly `computeSnapRotation`'s own `snapQuat.multiply(currentQuat)`
 pattern, reused rather than re-derived.
 
@@ -3248,8 +3089,7 @@ once `autoFitScale()`, `computeSnapRotation()`, and the drag gizmo's
 places (`Math.floor(factor * 100 * 100) / 100`, `Math.round(x * 100) /
 100`, etc.) and writing them straight into these same fields.
 
-**Confirmed the actual failure mode directly rather than assumed from
-the symptom description:** typing or programmatically setting a decimal
+**The actual failure mode, not just the symptom description:** typing or programmatically setting a decimal
 value into a `step="1"` number input is allowed - the field displays it
 fine, and this app's own live-preview `"input"` listener fires and
 updates the 3D view correctly regardless, since `parseFloat()` doesn't
@@ -3259,11 +3099,11 @@ upload form's manual XHR) runs the browser's native constraint
 validation first, and a `step="1"` field holding a non-integer value
 has `validity.stepMismatch === true` - the browser silently refuses to
 submit at all, showing only its own native tooltip instead of doing
-anything this app's code could catch or report. Reproduced directly:
-setting `63.47` into a `step="1"` copy of this field reported
-`checkValidity() === false` / `stepMismatch: true` and never reached
+anything this app's code could catch or report.
+Setting `63.47` into a `step="1"` copy of this field reports
+`checkValidity() === false` / `stepMismatch: true` and never reaches
 the server at all; the identical value against a `step="0.01"` field
-reported valid and reached `/jobs/{id}/reslice` correctly.
+reports valid and reaches `/jobs/{id}/reslice` correctly.
 
 **Fixed, not documented as a limitation** - a real limitation would
 need to be stated on the page, but the right call here was to check
@@ -3291,7 +3131,7 @@ detailed internal log, which named the actual reason plainly: `"Plate 1:
 ... Nothing to be sliced, Either the print is empty or no object is
 fully inside the print volume before apply."`
 
-**Root cause, confirmed by direct computation against the real mesh:**
+**Root cause, from direct computation against the real mesh:**
 `autoFitScale()` and the "too large" warning both measured the model's
 raw bounding-box span against the bed dimensions, implicitly assuming
 the model would end up centered by that same bounding box once placed.
@@ -3328,14 +3168,14 @@ against the bed's actual half-extent directly - the same shape of fix,
 applied to the check that runs on every render rather than only on an
 auto-fit click.
 
-Verified against the real file, not just the arithmetic: the corrected
+The corrected
 formula computes 7.50% for this model (not the old, wrong 9.74%), and
 re-centering the actual mesh at that scale through the real Python
-pipeline confirmed all three axes now genuinely fit (Y lands exactly on
+pipeline shows all three axes now genuinely fit (Y lands exactly on
 the boundary, -97.5, as expected for the axis that's the binding
-constraint). Re-ran the real OrcaSlicer CLI at the corrected scale and
-it no longer refuses to slice - confirmed via a real headless-browser
-test too: auto-fit on the actual model now reports 7.5% and clears the
+constraint). Re-running the real OrcaSlicer CLI at the corrected scale,
+it no longer refuses to slice, and auto-fit on the actual model
+reports 7.5% and clears the
 "doesn't fit" warning, with zero console errors.
 
 **A second, separate, already-known failure surfaced right underneath
@@ -3347,7 +3187,7 @@ with `yrel = -0.2995` - the same failure class as those two earlier
 investigations, on a third, independent real model. Swept a handful of
 Z rotations against the real file to check whether the same fix would
 apply again: 45° and 60° both produced a genuine `.makerbot`; 15° and
-30° did not. Confirmed general, not a one-off.
+30° did not. General, not a one-off.
 
 **This is what prompted the automatic-rotation-retry feature, built the
 same session:** rotating the object resolved the slicing error, which
@@ -3382,18 +3222,16 @@ page's own hint text was updated to say a broad rotation sweep was
 already tried automatically, so a user doesn't waste time manually
 retrying rotations the app already ruled out.
 
-Verified end-to-end against a real, previously-failing file, through
-the real pipeline: uploaded the Flexi_Seal model fresh (rotation
-defaulting to 0/0/0, deliberately not pre-rotated), let the real
-background slicing task run to completion, and confirmed it landed on
+Uploading the Flexi_Seal model fresh (rotation
+defaulting to 0/0/0, deliberately not pre-rotated) and letting the real
+background slicing task run to completion lands it on
 `sliced` (not `slice_failed`) with `Job.rotate_z` automatically set to
 `45.0` and a clear note on the edit page explaining exactly what
 happened and why the rotation fields show a value nobody manually
 entered.
 
-**A related observation from the user, correctly identifying a real
-remaining gap: "The preview always shows the model in the center. If
-it's off center, that's not displayed visually."** True, and distinct
+**A related, real remaining gap: the preview always shows the model
+centered in the frame, even when it's off-center on the bed.** True, and distinct
 from the calculation bug above (which is fixed - the red/blue color and
 info text are now numerically correct for exactly this case). The
 camera itself still frames around the *model's own* size and centroid
@@ -3413,8 +3251,8 @@ itself, not a quick follow-up to this fix.
 ### Browsing finished jobs, and the audit log
 
 **Why this exists:** a real report, not a planned feature landing on
-schedule. A rejection had actually recorded correctly (confirmed directly
-in the database - `status='rejected'`, the note, timestamps, all there)
+schedule. A rejection recorded correctly
+in the database (`status='rejected'`, the note, timestamps, all there)
 but there was nowhere in the UI to go see that, since `active_jobs()`
 (deliberately, for the queue view) only ever shows `QUEUE_STATUSES` -
 so the row just vanished, and from the admin's side that read as "nothing
@@ -3426,17 +3264,15 @@ Three views, kept separate on purpose (they answer different questions):
   first) - browsing past jobs: everything in `TERMINAL_STATUSES`
   (rejected/done/failed/expired), with the rejection note if there is one
   and a working "View 3D" link, since a job's files and preview are
-  completely unaffected by its status leaving the active queue list (only
-  confirmed by testing directly - it's easy to mistake "the row is gone"
-  for "the data is gone," which it isn't).
+  completely unaffected by its status leaving the active queue list - it's
+  easy to mistake "the row is gone"
+  for "the data is gone," which it isn't.
 - **`/admin/log`** (`jobs.all_events`, most-recent first, capped at
-  `ACTIVITY_LOG_LIMIT` = 500) - **the actual "admin log view"**, per the
-  user's direct correction to the first version of this: one flat table
+  `ACTIVITY_LOG_LIMIT` = 500) - **the actual "admin log view"**: one flat
+  table
   of every event across every job, not something you have to open one job
-  at a time to see. First cut of this feature only had the per-job view
-  below and linked to it from the queue/finished-jobs lists, which reads
-  as "a log of each submission" - not what was being asked for, which was
-  "what's been happening, at a glance," across everything. Filtering this
+  at a time to see - "what's been happening, at a glance," across
+  everything, not just a log of each submission. Filtering this
   down by actor/action/date range was explicitly deferred at the time
   ("I will ask for log filters later") - now built, see "Filters" below.
 - **`/admin/jobs/{id}/log`** (`jobs.job_events`, oldest first) - one job's
@@ -3462,12 +3298,10 @@ person behind the action). `actor` is a plain label
 foreign key to either `User` or `Admin` - simpler than a polymorphic FK
 for something only ever displayed, never joined against.
 
-Verified live, every action type, not just the one that prompted this:
-submit, slice success, slice failure, re-slice (both outcomes), queue
-submission, approve, reject, and both `mark_finished` outcomes each
-produce the right log entry with the right actor - confirmed by reading
-the entries back out of a real running instance's database directly, not
-assumed from the code alone. Also confirmed: a rejected job now
+Every action type - submit, slice success, slice failure, re-slice
+(both outcomes), queue
+submission, approve, reject, and both `mark_finished` outcomes -
+produces the right log entry with the right actor. A rejected job
 correctly disappears from the active queue *and* shows up in the
 finished-jobs list as `rejected` with its note, closing the actual gap
 that was reported; the global log (`/admin/log`) shows entries from
@@ -3476,18 +3310,18 @@ order, not grouped by job.
 
 ### Filters, on every job/log/user listing
 
-Per the user: "Let's add filters for all tables. The filters should be
-substrings, color, status, est print time, user (if admin), date/time
-range, action (activity log), etc." - and, when asked to clarify scope:
-"All tables should get filters. The filters that should be available are
-the ones that contain that data." Confirmed directly (not guessed): a
+**Filters** cover every job/log/user listing table, on whichever fields
+a given table actually has: substrings, color, status, est print time,
+user (if admin), date/time
+range, action (activity log), etc. A
 plain GET query-param form, fields laid out left-to-right in the same
 order as the table's own columns, sitting on the same page directly
-above the table rather than a separate page - "no meaningful performance
-difference" between that and an htmx-based live-filter approach was
-confirmed too (the underlying SQL query cost is identical either way;
+above the table rather than a separate page - there's no meaningful
+performance
+difference between that and an htmx-based live-filter approach: the
+underlying SQL query cost is identical either way;
 only the response payload size differs, and negligibly at this app's
-realistic scale) - plus an explicit "Clear filters" link back to the
+realistic scale - plus an explicit "Clear filters" link back to the
 bare, unfiltered URL on every one of these forms.
 
 **Why GET, not POST, and why query params at all:** a filtered view's URL
@@ -3550,8 +3384,7 @@ six-plus routes that need some subset of it:
   own query-param coercion reject `""` with a 422, and a GET form submits
   *every* one of its fields regardless of whether it has a value - so
   leaving either field blank (the overwhelmingly common case) would break
-  *every* ordinary use of the filter form outright. Confirmed live
-  against a real running instance - the failure mode isn't obvious from
+  *every* ordinary use of the filter form outright - not obvious from
   reading the code
   alone, since a hand-built query string with only the params actually
   wanted (exactly what manual testing tends to do first) never
@@ -3575,16 +3408,15 @@ request's own query string to a redirect target, and every action
 itself arrives carrying the filter along too (`request.query_params` is
 otherwise empty on a POST to a bare relative URL - a browser does *not*
 inherit the current page's query string into a form's `action` unless
-it's explicitly there). Verified directly, not assumed: approving a job
-from a `?color=Red`-filtered dashboard was confirmed (via a real request/
-response, not just reading the template) to redirect back to
+it's explicitly there). Approving a job
+from a `?color=Red`-filtered dashboard redirects back to
 `/admin/dashboard?color=Red`, and triggering a real `JobActionError` from
-that same filtered view was confirmed to re-render with both the error
+that same filtered view re-renders with both the error
 *and* the filter's own submitted value still showing in the form.
 
-**...unless the action itself empties that filter.** Per the user:
-"performing an action with the filter in place should keep the filter in
-place, unless that action results in 0 records for that filter." Keeping
+**...unless the action itself empties that filter.** An action
+performed with a filter in place keeps that filter afterward, unless
+the action leaves 0 records still matching it. Keeping
 `?status=queued` after approving the *only* queued job matching it would
 land back on a real page that just looks broken - the filter's own
 fields still showing what was typed, the table showing nothing, with no
@@ -3594,13 +3426,13 @@ the exact same filtered query right after the action (a real, fresh
 count - not the pre-action count minus one, which would be wrong the
 instant the action itself changes whether another row matches too, not
 just removes the acted-on row some other way) and only keeps the query
-string if that still returns at least one row. Verified directly against
+string if that still returns at least one row. Against
 a real queue with two jobs sharing a color: rejecting the first (one
-still matches) kept `?color=Red` on the redirect; rejecting the second
-(now the last match) redirected to the bare, unfiltered
-`/admin/dashboard` instead. Same confirmed on the users page: disabling
-the one remaining user matching `?status=active` dropped that filter on
-redirect, not kept it pointing at an empty table.
+still matches) keeps `?color=Red` on the redirect; rejecting the second
+(now the last match) redirects to the bare, unfiltered
+`/admin/dashboard` instead. Same on the users page: disabling
+the one remaining user matching `?status=active` drops that filter on
+redirect, rather than keeping it pointing at an empty table.
 
 **A real gap in the first version of this fix, caught by the user
 directly:** "The delete operation is not retaining the filter when there
@@ -3650,25 +3482,22 @@ it has for columns) never retrofits one onto a table that already
 exists. `User`/`Admin`/`Color` were deliberately left unindexed - a
 realistic deployment's users/colors lists stay small for years, and nothing
 in the user's own filter description emphasized those tables the way it
-did "every job table." Verified in an isolated copy before touching the
-live database: a genuinely fresh database (the `create_all()` path) and
+did "every job table." A genuinely fresh database (the `create_all()` path) and
 a simulated pre-6.3.0 one (dropping the six indexes and rolling
 `schemaversion` back, to force the actual migration path to run) both
-produced the identical final index set, and running `init_db()` a second
-time changed nothing (`CREATE INDEX IF NOT EXISTS` is idempotent by
-construction) - confirmed live afterward too, not just in the isolated
-copy.
+produce the identical final index set, and running `init_db()` a second
+time changes nothing (`CREATE INDEX IF NOT EXISTS` is idempotent by
+construction).
 
-Verified end-to-end against a real seeded database (several users, jobs
+On a real seeded database (several users, jobs
 across every status/color/duration/date combination, and a mix of job
-and account-lifecycle log events) on every one of the six filtered
-pages: substring, color (including the "no color set" sentinel), status,
-duration range, date range, and submitter each independently confirmed
-to narrow the result to exactly the expected rows - not just that the
-page returned 200.
+and account-lifecycle log events), every one of the six filtered
+pages - substring, color (including the "no color set" sentinel), status,
+duration range, date range, and submitter - independently narrows
+the result to exactly the expected rows, not just returning a 200.
 
-**The user's own dashboard table got a real "Date" column too**, per the
-user ("move the date/time stamp to its own column"). Before this, the
+**The user-facing dashboard table got a real "Date" column too**, its
+own dedicated column rather than buried inline. Before this, the
 only date/time ever actually shown on that table was `queued_at`, buried
 inline in the Details column's prose for a queued/approved row only
 (`"position N in queue - queued <timestamp>, waiting <duration>"`) -
@@ -3692,7 +3521,7 @@ text no longer repeated it.
 
 ### Filament color selection, and a best-effort low-inventory notice
 
-Per the user's full spec: admins manage a color list (`/admin/colors` -
+Admins manage a color list (`/admin/colors` -
 add/remove, set rolls and grams on hand, enable/disable which ones
 users can currently pick from), a user picks exactly one color per job
 at upload time from whatever's currently enabled (or "Any available,"
@@ -3745,10 +3574,10 @@ X.enough` to `X.enough == false` accordingly, since `not None` is `True`
 in both Python and Jinja - the original check would have shown the
 "not enough" warning for precisely the "nothing to compare" case this
 fix exists for, the moment the required amount started rendering there
-too. Verified directly across all four real cases (no color, an
+too. All four real cases (no color, an
 untracked color, a tracked-but-short color, a tracked-and-sufficient
-one) landing on exactly `None`/`None`/`False`/`True`, and end-to-end
-over real HTTP confirming the rendered page.
+one) land on exactly `None`/`None`/`False`/`True`, both from the function
+directly and in the rendered page over real HTTP.
 
 Changing a job's color (`POST /jobs/{id}/color`, reachable from the
 edit page) is deliberately a separate, lightweight route from
@@ -3756,23 +3585,20 @@ edit page) is deliberately a separate, lightweight route from
 zero effect on the actual sliced geometry, so routing a pure color
 change through a full OrcaSlicer+mbotmake re-slice would be pure wasted
 CPU/memory on a Pi for something that changes nothing about the print
-itself. Verified directly: `makerbot_path`/`filament_grams` are
+itself. `makerbot_path`/`filament_grams` are
 provably untouched by a color-only change (identical values before and
-after), confirming this path never re-slices.
+after) - this path never re-slices.
 
-Verified end-to-end in an isolated instance before touching production,
-including the real slicing pipeline (not stubbed): a color's full add/
-update/delete lifecycle from the admin page; the user-facing dropdown
-actually reflecting only currently-enabled colors; a real upload with a
-color selected; `filament_grams` landing at the exact value the real
-`.makerbot`'s `meta.json` reported; the low-filament notice genuinely
-rendering on the admin dashboard once a color's tracked amount was set
-below what a real job needed; and, after deleting that color outright,
-the job's `color_name` still reading correctly while
-`jobs.filament_status` cleanly returned `None` for it rather than
-erroring. Production's own migration (schema 6.2.0 - new `color` table,
-`Job.color_name`/`filament_grams`) re-confirmed separately once these
-changes were actually applied there.
+A color's full add/
+update/delete lifecycle works from the admin page; the user-facing dropdown
+reflects only currently-enabled colors; a real upload with a
+color selected lands `filament_grams` at the exact value the real
+`.makerbot`'s `meta.json` reports; the low-filament notice
+renders on the admin dashboard once a color's tracked amount is set
+below what a real job needs; and, after deleting that color outright,
+the job's `color_name` still reads correctly while
+`jobs.filament_status` cleanly returns `None` for it rather than
+erroring.
 
 ### Full editing for a queued/approved job, not just color
 
@@ -3780,16 +3606,16 @@ A real course-correction, not the original design: the first version of
 "can a queued job's color be changed" reused `job_edit.html` but
 deliberately scoped it to color only for anything past draft status,
 reasoning that resize/rotate/supports all genuinely require a re-slice
-and a queued job shouldn't need one. Per the user, that was wrong -
-"Edit was supposed to be all edit capability... same as the edit before
-queuing" - it was this project's own assumption, made without
-confirming it, not something actually asked for.
+and a queued job shouldn't need one. That scoping was wrong: editing
+should offer the same full capability both before and after queuing -
+it was this project's own unstated assumption, not a decision that had
+actually been made.
 
 Reopening full editing for an already-queued job raises two real
 questions this project's own to-do list had already flagged as open
 (the "does editing an active job re-slice in place, or count as a new
-submission" question), and both were confirmed explicitly rather than
-guessed at:
+submission" question), and both are answered explicitly here rather
+than left to guesswork:
 
 - **While it's mid-reslice** (a real background operation - can take
   minutes, same as a draft's own first slice), the job is pulled out of
@@ -3840,20 +3666,17 @@ same page, same route, just anchored straight to its `#color` section
 (a plain HTML fragment, no new backend route) for anyone who only wants
 that without scrolling past the full settings form.
 
-**Verified end-to-end against the real slicing pipeline, not stubbed:**
-uploaded, sliced, and queued a real job; confirmed visible on the admin
-dashboard with the edit page showing the full settings form; triggered
-a real re-slice at 150% scale and confirmed, immediately, the job
-vanished from the admin dashboard and its files had genuinely moved to
-`scratch/`; after the real background slice completed, confirmed status
-back to `queued`, files genuinely back in `queue/`, `scale_factor`
-actually applied (`1.5`), `queued_at` strictly later than the original,
-the job reappeared on the admin dashboard, and the full audit trail
-(`submitted` -> `sliced` -> `queued` -> `reslice_started` -> `sliced` ->
-`queued`) was exactly right. Separately verified the failure path
-(stubbed `run_slice` for a deterministic, instant failure) correctly
+Against the real slicing pipeline, not stubbed: a real re-slice at 150%
+scale immediately pulls the job off the admin dashboard while its files
+move to `scratch/`; once the real background slice completes, status
+returns to `queued`, files land back in `queue/`, `scale_factor` is
+actually applied (`1.5`), `queued_at` is strictly later than the
+original, the job reappears on the admin dashboard, and the full audit
+trail (`submitted` -> `sliced` -> `queued` -> `reslice_started` ->
+`sliced` -> `queued`) is exactly right. The failure path (a
+deterministic, instant slice failure) correctly
 lands on `slice_failed` with the job still gone from the admin
-dashboard, and that the new "Change color" link renders with the
+dashboard, and the new "Change color" link renders with the
 correct `#color`-anchored `href`.
 
 ### Self-service help pages
@@ -3916,7 +3739,7 @@ compatible with the currently-active `support_type` (our profile defaults
 to `tree(auto)`), rather than erroring - so picking a style has to co-set
 the type, or the choice does nothing and nobody's told. `slicing/slice.py`'s
 `SUPPORT_STYLE_TYPE` maps each style to the type it actually needs; every
-entry in both that mapping and `SUPPORT_STYLES` was confirmed by slicing
+entry in both that mapping and `SUPPORT_STYLES` is established by slicing
 `models/overhang_test.stl` and diffing the real gcode output, not guessed.
 One entry is deliberately *not* offered: "organic" is PrusaSlicer's name
 for the plain tree-support algorithm itself (not a further variant
@@ -3929,9 +3752,9 @@ file has no concept of "this move was a support" - `mbotmake`'s conversion
 collapses every move into an undifferentiated command (see
 `slicing/mbotmake/mbotmake`). OrcaSlicer's *intermediate gcode* does mark
 feature types with `;TYPE:X` comments, though, including `;TYPE:Support`
-and `;TYPE:Support interface` (confirmed by slicing
+and `;TYPE:Support interface`, shown by slicing
 `slicing/models/overhang_test.stl`, a shape deliberately designed to need
-support). `slice.py --gcode-out` preserves that gcode (normally thrown
+support. `slice.py --gcode-out` preserves that gcode (normally thrown
 away once converted), and `app/supports.py` parses it for support-tagged
 extrusion moves into a simplified list of line segments - deliberately not
 a faithful toolpath reproduction or a per-layer scrub control (see
@@ -3942,9 +3765,9 @@ segment** - an earlier version sampled every Nth segment out of one flat
 chronological list spanning the whole print, which for a support-dense
 model produces isolated, disconnected fragments scattered across many
 unrelated layers: each one too short to read as a line at normal zoom
-(renders as a dot), with no visual relationship to its neighbors (a real
-bug, caught by the user: "many dots... don't seem to have anything to do
-with supporting a part of the model"). `supports.py` now groups by layer
+(renders as a dot), with no visual relationship to its neighbors - a real
+bug, isolated dots with no visual connection to the actual support
+structure. `supports.py` now groups by layer
 (Z) first and drops whole layers, never partial ones.
 
 **Render every real layer whenever it fits the budget - don't thin
@@ -3952,20 +3775,20 @@ pre-emptively.** A second real bug, on a genuinely complex model (a
 detailed 262k-triangle ship hull): the layer-selection logic started by
 thinning to a target count *before* even checking whether the full set
 would fit, so it stayed artificially sparse even when there was budget to
-spare. Two consequences, both confirmed against that model, not assumed:
+spare. Two real consequences against that model:
 skipped layers can jump between two entirely different, unrelated support
 towers (a detailed model has many separate overhangs, each with its own
 column near the bed, converging higher up - centroid position jumped
 30-45mm between "adjacent" kept layers before the fix), and rendering as
 thin lines rather than solid tubes made even correctly-placed supports
-look like a scatter of dots rather than material (a UX clarification from
-the user, not a data problem: PrusaSlicer's organic supports really are
+look like a scatter of dots rather than material (not
+a data problem: PrusaSlicer's organic supports really are
 individual rings stacked on each other, but its *rendering* shows their
 sides as gap-free). Fixed by rendering tubes (`preview.js`'s
 `SUPPORT_TUBE_RADIUS`, InstancedMesh so it stays cheap per-instance) sized
 comparably to a real layer height, and by fixing `supports.py` to try
 every real layer first, only thinning via `MAX_SEGMENTS` as a last resort
-for a pathological case - confirmed this model's real 310 layers (0.2mm
+for a pathological case - this model's real 310 layers (0.2mm
 apart) all fit comfortably under it. Worth watching on lower-power
 hardware: full density here means several million triangles just for
 supports on a model this complex.
@@ -3978,7 +3801,7 @@ mismatch, not the translation/rendering issues above (visible as the model
 and its supports pointing in visibly different headings in the live
 preview). Root cause: OrcaSlicer's CLI defaults `--arrange` and `--orient`
 to "auto" unless told otherwise, and reoriented the single object on the
-plate during `--slice` even though nothing asked it to - confirmed by
+plate during `--slice` even though nothing asked it to - shown by
 comparing the raw STL's own bounding box (198mm x 37mm, a long thin hull)
 against the sliced gcode's (came out ~147mm x ~148mm, nearly square - only
 rotation does that, translation can't). Fixed in `slicing/slice.py` by
@@ -4005,14 +3828,13 @@ zoom distance was never bounded to match. Its defaults (`minDistance`
 `0`, `maxDistance` `Infinity`) let the camera dolly straight past
 either clipping plane on a big-enough scroll/pinch - orbiting doesn't
 change distance at all, so it was never affected, which is exactly why
-turning kept working while zooming made the model vanish. Confirmed via
-`git blame`: a genuine pre-existing bug from the original centroid-fix
-commit (`3592f35`), not a regression from anything built this session -
-the user just happened to hit it now.
+turning kept working while zooming made the model vanish. `git blame`
+shows this as a genuine pre-existing bug from the original centroid-fix
+commit (`3592f35`), not a regression from anything built this session.
 
 First fix (`controls.minDistance`/`maxDistance` scaled to the same
 `radius` `near`/`far` already use) turned out to be real but
-**incomplete** - the user's own follow-up screenshot (one mouse-wheel
+**incomplete** - a follow-up screenshot (one mouse-wheel
 click zoomed in enough to fill the entire frame with a single flat
 close-up surface, camera essentially jammed against the model) didn't
 match "unbounded zoom eventually clips," it matched "one click jumped
@@ -4042,29 +3864,28 @@ case). The `minDistance`/`maxDistance` bounds from the first fix stayed
 in place too, as a legitimate safety net independent of this root
 cause.
 
-**Verified directly, not just reasoned about - a real regression is
+**A real regression is
 worth a real test, not a second guess:** a throwaway Playwright
 install (never the project's own venv - cleaned up after, including
 the browser cache), with `device_scale_factor=0.75` specifically to
-reproduce the exact failure condition (confirmed via
-`page.evaluate("window.devicePixelRatio")` actually reading back
+reproduce the exact failure condition
+(`page.evaluate("window.devicePixelRatio")` reads back
 `0.75`), driving a real page through the exact upload-preview code path
 (`previewFile` → `showModel` → `renderGeometry`, the same camera setup
 every viewer in this app shares) and a real simulated mouse-wheel
-click. With the patch: a single click produced a small, gradual
-zoom, exactly as intended - confirmed visually from the actual
-screenshots, not inferred. With the original unpatched line (reverted
-in this isolated copy only, to close the loop on the diagnosis itself):
-one click sent the camera rocketing to the opposite extreme instead
-(the cube shrank from filling the frame to a tiny distant speck) -
+click. With the patch, a single click produces a small, gradual
+zoom, exactly as intended. With the original unpatched line (reverted
+in this isolated copy only, to close the loop on the diagnosis itself),
+one click sends the camera rocketing to the opposite extreme instead
+(the cube shrinks from filling the frame to a tiny distant speck) -
 the same underlying collapse-to-zero bug, manifesting as a jump to
 whichever bound the scroll direction pointed at, matching both the
-user's original report (zooming either direction made the model
+original report (zooming either direction made the model
 disappear) and this exact screenshot (one click, jammed up against the
 model) precisely.
 
-**Even after that fix was genuinely pushed, the user kept reporting the
-identical broken behavior - a third real report, not the same one
+**Even after that fix was genuinely pushed, the identical broken
+behavior kept recurring - a third real report, not the same one
 repeated.** Turned out the fix was correct both times; the browser was
 silently serving the *pre-fix* `OrbitControls.js` from its own cache the
 whole time, never even asking the server. `StaticFiles` sends no
@@ -4076,11 +3897,11 @@ on every `/static/` response - forces a round-trip to check with the
 server on every load, but doesn't disable caching or force a full
 re-download: `StaticFiles` already sends a real content-based `ETag`,
 so an unchanged file still comes back as a fast `304` either way.
-Verified directly: a fresh request carries the header, and a
+A fresh request carries the header, and a
 conditional request with a matching `ETag` still correctly returns
-`304`, not a full body. **The user's own next real-browser retest is
-what actually confirmed the zoom fix itself was right all along** -
-this caching fix exists so that confirmation loop can't cost this much
+`304`, not a full body. **A real-browser retest is
+what actually established the zoom fix itself was right all along** -
+this caching fix exists so that verification loop can't cost this much
 back-and-forth again for any future change to a vendored/static asset.
 
 ## Security checks (CI)

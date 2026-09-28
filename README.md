@@ -112,7 +112,7 @@ sections for the full design rationale behind each.
   and started directly; no walking a file over on a flash drive. One
   persistent, authenticated connection is held open for the app's whole
   run rather than reconnecting per release - the printer's own pairing
-  tokens are only ever good for one authenticated session, confirmed live
+  tokens are only ever good for one authenticated session, true
   against the real hardware, so reconnecting fresh every time would have
   meant only the first release after any pairing ever actually worked.
 - **One job on the printer at a time**, enforced - releasing a second job
@@ -132,7 +132,7 @@ sections for the full design rationale behind each.
   belongs to which submitter's claim. A failed capture (camera or printer
   unreachable at the moment) never blocks recording the job's own
   outcome - it's logged as a failed-capture detail instead, not an error
-  that stops the done/failed action. **Confirmed working for real**, not
+  that stops the done/failed action. **Working for real**, not
   just in isolated testing - job #15's automatically-detected completion
   produced and saved a real, viewed photo of the finished print on the
   build plate, after several rounds of real-world failures (always the
@@ -143,12 +143,12 @@ sections for the full design rationale behind each.
   a real percent-complete and progress bar for the job that's currently
   printing, polled directly from the printer's own `get_system_information`
   reply (`current_process.progress`) rather than guessed from the
-  original time estimate - confirmed live to track actual print progress
-  (not just elapsed time) and to match what the printer's own screen
+  original time estimate - it tracks actual print progress
+  (not just elapsed time) and matches what the printer's own screen
   shows. Falls back to the estimate-based countdown (see the persistent
   connection above) whenever a live reading isn't available. See
-  `app/README.md`'s "Live print progress" section for how this was
-  confirmed, and `/admin/printer/info` for the raw reply this is read
+  `app/README.md`'s "Live print progress" section for more, and
+  `/admin/printer/info` for the raw reply this is read
   from.
 - **A history-corrected time estimate** - the fallback countdown shown
   whenever a live progress reading isn't available no longer trusts the
@@ -276,14 +276,14 @@ sections for the full design rationale behind each.
   parts plus a README/photo that's just ignored). Each model in a zip
   becomes its own separate job/draft, up to `MAX_ZIP_MODEL_FILES` (25) -
   stated right on the upload form, not just in this README - rather
-  than a combined-plate print, confirmed as the right design with the
-  user since this app's whole pipeline is built around one object per
+  than a combined-plate print - the right design since this app's whole
+  pipeline is built around one object per
   job. An `.obj` upload is converted to a real `.stl` immediately
   (losslessly - same geometry, different container) so nothing
   downstream (slicing, the 3D preview, re-slicing) needs to know it was
   ever anything but one; the original filename still displays as
   uploaded. A real multi-part functional-print kit (15 separate model
-  files) confirmed working end-to-end, including every part slicing
+  files) works end-to-end, including every part slicing
   successfully - see `app/README.md`'s "Fixing a real multi-model zip
   upload" for the earlier, narrower cap this exposed and the (wrong)
   concurrency assumption it was based on.
@@ -309,8 +309,8 @@ sections for the full design rationale behind each.
   degree fields, live preview as you type), plus a "Snap to surface"
   button: click it, then click any face on the model, and it reorients
   to stand on that face - useful both for fit (a diagonal rotation can
-  let an oversized model fit the plate) and for print success. Directly
-  confirmed to fix a real slicing failure that resizing alone never
+  let an oversized model fit the plate) and for print success. Fixes
+  a real slicing failure that resizing alone never
   could: a model whose asymmetric shape failed the printer's own
   bed-centering safety check slices successfully once rotated to a
   sensible printing orientation. Auto-fit accounts for whatever rotation
@@ -348,7 +348,7 @@ sections for the full design rationale behind each.
 **Upload**
 - **Separately, still open:** the *original* 422 report (a different
   real multi-model zip, reported before a later, reproducible
-  multi-model zip upload was confirmed working - see Features above)
+  multi-model zip upload was shown working - see Features above)
   never got a confirmed root cause - that specific file was never
   available to reproduce against directly, and every synthetic zip
   built to investigate it tested clean. Whether it was the same
@@ -358,18 +358,6 @@ sections for the full design rationale behind each.
   request-validation failure is unresolved. Needs either that original
   file or a browser Network-tab capture of a future failed request to
   pin down further.
-- A real, independent bug found and fixed while investigating the above,
-  regardless of the 422's root cause: the dashboard's own upload JS
-  (`user_dashboard.html`) unconditionally redirected to `/dashboard` on
-  any completed request, on the (mostly but not always true) assumption
-  that the server always ends up there - true for every error this
-  app's own code controls (`fail()` always redirects with a flash
-  message set), but not for a request that fails validation before the
-  route runs at all, which never redirects anywhere. That's exactly why
-  a failure like this looked like "nothing happened" instead of showing
-  an error. **Done** - the JS now checks the response status and shows
-  its own error message for anything outside 2xx-after-redirect, or a
-  network failure.
 - `.3mf` upload support - not yet built, and a meaningfully bigger lift
   than `.obj`/`.zip` turned out to be: unlike OBJ (a flat, transform-free
   mesh format converted to STL in a few dozen lines - see `app/mesh.py`),
@@ -382,7 +370,7 @@ sections for the full design rationale behind each.
   doing, but as its own follow-up rather than folded into the
   OBJ/zip work.
 - Model repair (like PrusaSlicer/OrcaSlicer's "Fix through Netfabb") -
-  confirmed OrcaSlicer's CLI has no repair flag to lean on (that's a
+  OrcaSlicer's CLI has no repair flag to lean on (that's a
   GUI-only feature there), so this would mean a dedicated repair pass
   before slicing - `trimesh` (Python, fill holes/fix normals/fix winding)
   or `admesh` (a small purpose-built STL repair CLI) are the two realistic
@@ -390,7 +378,7 @@ sections for the full design rationale behind each.
 - ~~Centering an uploaded model by its actual geometric centroid, not
   just its bounding-box center - a real asymmetric model was seen to
   fail `mbotmake`'s own bed-centering sanity check this way.~~ **Done,
-  but confirmed only a partial fix** - `slicing/stl_to_3mf.center_vertices`
+  but only a partial fix** - `slicing/stl_to_3mf.center_vertices`
   now uses an area-weighted surface centroid (matched in
   `static/preview.js`, which has to stay in lockstep - see either's own
   comment), a real, measured improvement (moved the actual failing
@@ -475,8 +463,8 @@ sections for the full design rationale behind each.
   is genuinely CPU/memory-heavy.
 
 **Print options**
-- Done - a single color per job (not 1st/2nd/3rd preference, per the
-  user's own later, more specific spec superseding this item's original
+- Done - a single color per job (not 1st/2nd/3rd preference, a more
+  specific spec superseding this item's original
   wording), or "Any available" so an admin doesn't have to change
   filament, chosen from a dropdown of whatever an admin currently has
   enabled - plus a best-effort low-inventory notice, since it turned out
