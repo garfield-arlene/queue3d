@@ -265,6 +265,7 @@ def _system_context(admin: Admin) -> dict:
         "uptime": format_duration(snap["uptime_s"]),
         "disk_root_pct": disk_root_pct,
         "disk_data_pct": disk_data_pct,
+        "disk_mounts": sysmetrics.disk_mounts(),
         # The most recent sample on its own, for the "top" section's
         # live bars - separate from the *_series lists below, which are
         # the full history each chart needs. None for the brief instant

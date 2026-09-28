@@ -28,7 +28,9 @@ import threading
 import time
 from dataclasses import dataclass
 from collections import deque
+from pathlib import Path
 
+from backup import backup_targets
 from db import DATA_DIR
 
 # 5 minutes of history at a 2s sample interval - long enough to see a
@@ -286,3 +288,40 @@ def snapshot() -> dict:
         "disk_data": disk_data,
         "data_dir": str(DATA_DIR),
     }
+
+
+def disk_mounts() -> list[dict]:
+    """All four mountpoints worth watching on a real deployment - the OS
+    drive, the app's own data drive, and both rotating backup drives
+    (see backup.backup_targets) - always all four, unlike snapshot()'s
+    own single Data gauge above, which only shows a mountpoint when it's
+    a genuinely different device from root. That "only if different"
+    collapsing is right for a quick top-of-page glance, but wrong here:
+    a real deployment has four physically separate drives, and this
+    section exists specifically to watch all four at once, including a
+    dev setup where some happen to coincide - showing the same numbers
+    under more than one label there is more honest than silently
+    hiding what looks like a duplicate.
+
+    A backup drive's own directory may not exist yet in dev (nothing's
+    ever backed up there) - `usage` is None for a mountpoint that can't
+    be read at all, rather than raising, so a not-yet-existing or
+    (on the real device) unplugged drive shows as a clear "not
+    available" line instead of a crash."""
+    targets = backup_targets()
+    mounts = [
+        ("OS drive", Path("/")),
+        ("Data drive", DATA_DIR),
+        ("Backup drive A", targets["a"]),
+        ("Backup drive B", targets["b"]),
+    ]
+    result = []
+    for label, path in mounts:
+        try:
+            usage = shutil.disk_usage(path)
+            percent = usage.used / usage.total * 100 if usage.total else 0.0
+        except OSError:
+            usage = None
+            percent = None
+        result.append({"label": label, "path": str(path), "usage": usage, "percent": percent})
+    return result

@@ -3772,6 +3772,20 @@ path alone), the app's own `DATA_DIR` - showing the same numbers twice
 under both labels in a dev setup (single disk, no `QUEUE3D_DATA_DIR`
 set) would be clutter, not information.
 
+**A dedicated "Disk space" section (`sysmetrics.disk_mounts()`) covers
+all four mountpoints a real deployment actually has, always, unlike
+the quick two-gauge glance above.** The OS drive, the app's own data
+drive, and both rotating backup drives (`backup.backup_targets()`'s
+`a`/`b`, the same two USB targets `backup.py` itself writes to) each
+get their own bar and percentage - deliberately not collapsed by
+"is this actually a different device" the way the top section's single
+Data gauge is, since a real deployment has four physically separate
+drives and this section exists specifically to watch all four at
+once. A backup drive's own directory may not exist yet (nothing's
+been backed up there, or - on the real device - it's unplugged) -
+shown as a clear "not available" line for that one mountpoint rather
+than the whole section failing.
+
 ## 3D preview
 
 Two different views, both in `static/preview.js` (Three.js, vendored

@@ -59,6 +59,23 @@
     {% endif %}
   </p>
 
+  <h3>Disk space</h3>
+  <div class="sys-mem">
+    {% for mount in disk_mounts %}
+      {% if mount.usage %}{{ bar(mount.label, mount.percent) }}{% endif %}
+    {% endfor %}
+  </div>
+  <p class="muted">
+    {% for mount in disk_mounts %}
+      {% if mount.usage %}
+        {{ mount.label }}: {{ mount.usage.used | filesizeformat }} of {{ mount.usage.total | filesizeformat }} used ({{ mount.path }})
+      {% else %}
+        {{ mount.label }}: not available right now ({{ mount.path }})
+      {% endif %}
+      {%- if not loop.last %} &middot; {% endif %}
+    {% endfor %}
+  </p>
+
   <h3>History</h3>
   <div class="syscharts">
     <div class="syschart">
