@@ -615,8 +615,10 @@ sections for the full design rationale behind each.
   all yet - every one has identical, full access; decided later.
 - A "remember me" option on the login pages that remembers the
   submitted name/username for next time (never the PIN/password) -
-  a site-wide setting to enable or disable the feature entirely,
-  defaulting to enabled.
+  a per-account setting (alongside theme/mode on each account's own
+  Settings page) rather than a single site-wide switch, since one
+  person on a shared device may not want their name remembered on it
+  even if others do. Defaults to enabled.
 
 **Deployment**
 - Done, on the real hardware: mDNS hostname, the full `deploy.sh`
