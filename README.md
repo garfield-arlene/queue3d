@@ -490,6 +490,13 @@ sections for the full design rationale behind each.
   none, ever).
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
+- Holiday-themed variants (e.g. a Halloween or winter-holiday palette),
+  selectable only during the weeks surrounding their actual holiday
+  rather than sitting year-round as permanent clutter in the theme
+  picker - except always selectable regardless of the current date when
+  accessing via `127.0.0.1`, so development/testing against a holiday
+  theme doesn't require waiting for the actual season or faking the
+  system clock.
 
 **Help / instructions**
 - Done - one shared, no-login-required `/help` page (`app/routers/help.py`)
@@ -606,6 +613,10 @@ sections for the full design rationale behind each.
   immune to this, since it was a plain string snapshot from the start,
   never a live FK. Still open: no permission scoping between admins at
   all yet - every one has identical, full access; decided later.
+- A "remember me" option on the login pages that remembers the
+  submitted name/username for next time (never the PIN/password) -
+  a site-wide setting to enable or disable the feature entirely,
+  defaulting to enabled.
 
 **Deployment**
 - Done, on the real hardware: mDNS hostname, the full `deploy.sh`
