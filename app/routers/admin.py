@@ -164,6 +164,12 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
         "admin": admin,
         "last_backup": last_backup,
         "backup_stale": is_stale(last_backup),
+        # Live, not cached - the same sysmetrics.low_disk_mounts() call
+        # jobs.start_disk_space_poller() uses for its own once-per-
+        # episode activity-log entry, so a low mountpoint is surfaced
+        # here immediately for whoever's actually looking at the
+        # dashboard right now, not only discoverable in the log later.
+        "low_disk_mounts": sysmetrics.low_disk_mounts(),
         "rows": rows,
         "old_job_count": old_job_count,
         "old_job_threshold_days": threshold_days,

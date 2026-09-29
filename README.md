@@ -451,11 +451,17 @@ sections for the full design rationale behind each.
   `archive/` instead; this is about visibility into the database-level
   backups themselves (see `backup.py`), for confirming they're actually
   capturing what's expected.
-- Periodic disk-space checks on the relevant volumes - the OS disk and
-  each mounted USB backup flash drive (see `backup.py`'s rotation between
-  two targets) - so running low is surfaced before a backup silently
-  fails or the queue itself can't accept new uploads, not discovered
-  after the fact.
+- Done - periodic disk-space checks on every relevant volume: the OS
+  disk, the app's own data drive, and both rotating backup flash drives
+  (`backup.py`'s `a`/`b` targets). Two layers, both reusing
+  `sysmetrics.low_disk_mounts()` (90% used or more): a background check
+  every 5 minutes (`jobs.start_disk_space_poller`) logs a "system"
+  activity-log entry once per low-space episode per mountpoint, so it's
+  on record even if nobody's looking at the time; the admin dashboard
+  also shows a live banner for whichever mountpoint(s) are currently
+  low, computed fresh on every load. Running low is now surfaced before
+  a backup silently fails or the queue can't accept new uploads, not
+  discovered after the fact.
 
 **Print options**
 - Done - a single color per job (not 1st/2nd/3rd preference, a more

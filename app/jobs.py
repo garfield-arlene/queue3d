@@ -28,6 +28,7 @@ from storage import (
     scratch_paths,
     scratch_stl_path,
 )
+import sysmetrics
 
 
 class JobActionError(Exception):
@@ -1454,3 +1455,68 @@ def start_auto_finish_poller() -> None:
     what it actually checks each tick, and why it's deliberately
     conservative about when it acts."""
     threading.Thread(target=_auto_finish_poll_loop, daemon=True).start()
+
+
+# 5 minutes - disk space doesn't need checking anywhere near as often as
+# a print's own live status; frequent enough to catch a filling disk
+# well before it's an emergency, far too infrequent for the check itself
+# (a handful of stat() calls) to ever be a real cost.
+_DISK_SPACE_POLL_INTERVAL_S = 300
+
+# Which mountpoint labels (sysmetrics.disk_mounts()'s own) are currently
+# past LOW_DISK_THRESHOLD_PERCENT and already logged - same
+# episode-based shape as _untracked_print_logged above: log once when a
+# mountpoint crosses into low space, stay silent on every later tick
+# while it's still low, and allow a fresh log entry if it clears and
+# fills up again later rather than only ever firing once per process
+# lifetime.
+_disk_space_logged: set[str] = set()
+
+
+def _disk_space_poll_loop():
+    while True:
+        try:
+            low = {m["label"]: m for m in sysmetrics.low_disk_mounts()}
+            with Session(engine) as session:
+                for label, mount in low.items():
+                    if label in _disk_space_logged:
+                        continue
+                    _disk_space_logged.add(label)
+                    log_event(
+                        session, None, "system", "low_disk_space",
+                        detail=(
+                            f"{label} ({mount['path']}) is at "
+                            f"{mount['percent']:.0f}% used - see /admin/system "
+                            "for current disk space on every mountpoint."
+                        ),
+                    )
+                session.commit()
+            # Cleared mountpoints can log again if they fill up a second
+            # time later - only ever done outside the loop above so a
+            # label clearing mid-iteration can't affect this same tick's
+            # own logging decision for it.
+            for label in list(_disk_space_logged):
+                if label not in low:
+                    _disk_space_logged.discard(label)
+        except Exception:
+            # Best-effort background loop, same shape as every other
+            # poller here - never let one bad tick (a transient /proc or
+            # disk read) kill the whole thing.
+            pass
+        time.sleep(_DISK_SPACE_POLL_INTERVAL_S)
+
+
+def start_disk_space_poller() -> None:
+    """Starts the loop above on a daemon thread - called once, from
+    main.py's startup handler, alongside start_auto_finish_poller.
+    Closes README.md's Backups & recovery to-do item: low disk space on
+    the OS drive, the data drive, or either backup drive should be
+    surfaced before a backup silently fails or the queue can't accept
+    new uploads, not discovered after the fact - a permanent activity-
+    log record even if nobody happens to be looking at the dashboard
+    when it first crosses the threshold. The dashboard's own live
+    banner (routers/admin.py's _dashboard_context, same
+    sysmetrics.low_disk_mounts() call) is the immediate, no-log-diving-
+    required version of the same check for whoever's looking right
+    now."""
+    threading.Thread(target=_disk_space_poll_loop, daemon=True).start()

@@ -325,3 +325,28 @@ def disk_mounts() -> list[dict]:
             percent = None
         result.append({"label": label, "path": str(path), "usage": usage, "percent": percent})
     return result
+
+
+# Crossing this on any mountpoint disk_mounts() tracks is worth actively
+# surfacing - a dashboard banner (routers/admin.py's _dashboard_context)
+# and a logged, once-per-episode activity-log event
+# (jobs.start_disk_space_poller) - rather than only showing on the
+# System page for whoever happens to be looking at it right then. See
+# README.md's Backups & recovery to-do item this exists to close: disk
+# space running low should be surfaced before a backup silently fails
+# or the queue can't accept new uploads, not discovered after the fact.
+LOW_DISK_THRESHOLD_PERCENT = 90.0
+
+
+def low_disk_mounts() -> list[dict]:
+    """Every disk_mounts() entry at or past LOW_DISK_THRESHOLD_PERCENT
+    right now, and actually readable (`usage` is not None) - an
+    unreadable mountpoint (a backup drive unplugged, or its directory
+    not created yet) has no percentage to threshold against, and is
+    already its own distinct, visible problem (see the System page's
+    own "not available" line for it) - not silently folded into "low
+    space" too, which would be a misleading way to describe it."""
+    return [
+        m for m in disk_mounts()
+        if m["usage"] is not None and m["percent"] >= LOW_DISK_THRESHOLD_PERCENT
+    ]

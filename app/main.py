@@ -6,7 +6,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from auth import AuthRedirect, get_session_secret_key
 from db import engine, init_db
-from jobs import start_auto_finish_poller
+from jobs import start_auto_finish_poller, start_disk_space_poller
 from models import Settings
 from printer import close_connection
 from sysmetrics import start_metrics_sampler
@@ -77,6 +77,13 @@ def on_startup():
     # recent history the moment an admin opens it instead of starting
     # from blank.
     start_metrics_sampler()
+    # Logs a "system" activity-log event, once per low-space episode per
+    # mountpoint, if the OS drive, data drive, or either backup drive
+    # crosses 90% used - see jobs.start_disk_space_poller's own
+    # docstring. Closes README.md's Backups & recovery to-do item: low
+    # disk space should be surfaced before a backup silently fails or
+    # the queue can't accept new uploads, not discovered after the fact.
+    start_disk_space_poller()
 
 
 @app.on_event("shutdown")

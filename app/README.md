@@ -3786,6 +3786,33 @@ been backed up there, or - on the real device - it's unplugged) -
 shown as a clear "not available" line for that one mountpoint rather
 than the whole section failing.
 
+**Periodic disk-space alerts, not just a page an admin has to go
+check.** `sysmetrics.low_disk_mounts()` (90% used or more, reusing
+`disk_mounts()` above) is the one shared check behind two separate
+surfaces, so a low mountpoint is never only discoverable by whoever
+happens to be looking at `/admin/system` at the right moment:
+
+- **`jobs.start_disk_space_poller()`** - a background daemon thread
+  (started once from `main.py`'s startup handler, the same shape as
+  `start_auto_finish_poller`), checking every 5 minutes and logging a
+  `"system"`-actor `low_disk_space` activity-log entry the moment a
+  mountpoint crosses the threshold. Edge-triggered per mountpoint
+  (`jobs._disk_space_logged`, the same shape as
+  `_log_untracked_print_once`'s own set) - one entry when a mountpoint
+  first goes low, silence on every later tick while it's still low, and
+  a fresh entry if it clears and fills up again later. A permanent
+  record even if nobody's watching the dashboard at all that day.
+- **The admin dashboard's own live banner** (`routers/admin.py`'s
+  `_dashboard_context`) - the same `low_disk_mounts()` call, computed
+  fresh on every dashboard load, so whoever's actually looking at the
+  dashboard right now sees it immediately rather than needing to go
+  read the activity log.
+
+Deliberately checks all four `disk_mounts()` entries, not just the two
+the original to-do item named (the OS disk and the backup drives) - the
+data drive matters just as much for "the queue can't accept new
+uploads," the other half of what this exists to prevent.
+
 ## 3D preview
 
 Two different views, both in `static/preview.js` (Three.js, vendored
