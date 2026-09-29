@@ -598,6 +598,81 @@ per-zip model limit right under the file picker, reading the same
 through `_dashboard_context()`) rather than a second, hand-typed number
 that could drift out of sync with the real limit.
 
+### Uploading `.3mf` files
+
+**Why this exists:** many real-world downloads only offer `.3mf`, not
+`.stl`/`.obj` - and unlike those two, a real-world `.3mf` routinely
+bundles more than one object in a single file, each with its own
+placement transform, for exactly the case a zip's separate files can't
+represent: a multi-part assembly - hinges, gears, anything printed "in
+place" as one interlocking piece - where the parts have to end up
+printed *together*, at the relative positions the file itself already
+specifies. Splitting a `.3mf` the same way a zip's genuinely separate
+files are split (see "Fixing a real multi-model zip upload" above)
+would silently break the one thing an interlocking model actually
+needs.
+
+**`mesh.parse_3mf()` merges every object the file's own `<build>`
+section places into one flattened mesh, in world space, at upload
+time - the rest of this app's pipeline (exactly one object per job, see
+slicing/stl_to_3mf.py) never has to know the source was ever an
+assembly at all.** A `.3mf` is a zip container (the OPC package format)
+holding an XML model file, conventionally at `3D/3dmodel.model` -
+looked up directly by that exact path first, falling back to the first
+entry ending in `.model` for producers that don't use the conventional
+path. Parsed with the standard library's `xml.etree.ElementTree`
+(namespace-stripped by taking each tag's local name only - the exact
+namespace URI has varied slightly across spec revisions and producers,
+but the element names this needs are stable across all of them), not a
+third-party library - matching `parse_obj()`'s own from-scratch
+precedent above, and consistent with this app's usual reach for the
+standard library over a new pip dependency wherever the format is small
+enough to parse directly.
+
+**The 3MF "transform" attribute (12 space-separated numbers, a 4x3
+affine matrix) is applied per `<build><item>`, and composed recursively
+for nested `<components>`** - an object can be a direct `<mesh>`, or be
+built entirely out of other objects via `<components>`, each with its
+own transform relative to the parent (real for grouped/instanced parts
+some CAD tools export this way, not just a theoretical case the spec
+allows). A component's transform is composed with its parent's before
+recursing, so a doubly-nested part ends up positioned correctly in world
+space regardless of how many levels of grouping the original file used.
+
+**An object typed `support`/`solidsupport` is skipped entirely, not
+merged in** - a `.3mf` that's actually a pre-sliced export (rather than
+a raw model) can bundle its own generated supports as separate objects;
+merging those into the geometry this app slices would double up against
+the supports this app generates itself. Real, printable geometry
+(`type="model"`, the default when unspecified, plus `"surface"`/
+`"other"`) is never excluded - only these two support-specific types
+are.
+
+**Units are converted to millimeters once, at the very end, not
+per-vertex before transforms are applied** - a `.3mf`'s declared unit
+(`millimeter` by default; `micron`/`centimeter`/`inch`/`foot`/`meter`
+are the other five the spec allows) applies consistently to every
+coordinate and every transform's own translation alike, so scaling the
+fully-computed final position by one constant factor converts
+everything correctly in a single step, rather than needing the
+conversion threaded through every intermediate transform composition.
+
+**Errors are consistently `ValueError`, matching `parse_obj()`'s own
+contract** - not a valid zip container, no `3D/3dmodel.model` (or
+anything ending in `.model`) inside it, malformed transform/XML, no
+`<build>` section, or a `<build>` that ends up referencing no actual
+mesh geometry (every referenced object turned out to be support-typed,
+say) each get their own clear message rather than a raw exception
+type a caller would have to know to catch specially.
+
+The upload form's own instant client-side preview still only
+understands `.stl` (the vendored loader is STL-only, same limitation
+`.obj`/`.zip` already have) - a `.3mf` selection shows "Preview
+available after upload" rather than vendoring Three.js's heavier
+`3MFLoader` (plus its own `fflate` dependency) for a look available
+moments later anyway, once the real, post-slice preview (always from
+the server's own converted `.stl`) is ready.
+
 ### Restoring an archived job, and one-click reprint
 
 **Why this exists:** a `rejected`/`failed`/`done`/`expired` job had

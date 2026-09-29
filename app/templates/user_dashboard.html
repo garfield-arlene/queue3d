@@ -9,13 +9,17 @@
   <h2>Hi, {{ user.name }}</h2>
 
   <form id="upload-form" method="post" action="/upload" enctype="multipart/form-data">
-    <label>Upload a model (.stl, .obj, or a .zip of them)<br>
-      <input type="file" id="stl-file" name="file" accept=".stl,.obj,.zip" required>
+    <label>Upload a model (.stl, .obj, .3mf, or a .zip of them)<br>
+      <input type="file" id="stl-file" name="file" accept=".stl,.obj,.3mf,.zip" required>
     </label>
     <p class="muted">
       A .zip with more than one model becomes one job per model (up to
       {{ max_zip_models }} models per zip) - not a single combined-plate
-      print.
+      print. A .3mf with more than one object is the opposite: they're
+      combined into a single print, at the positions already saved in
+      the file - the right behavior for a multi-part assembly (hinges,
+      gears, anything meant to be printed together as one piece), not
+      split into separate jobs the way a zip's files are.
     </p>
     <label><input type="checkbox" name="enable_supports"> Generate supports</label>
     <label>Support style<br>
@@ -63,9 +67,9 @@
       const file = fileInput.files[0];
       if (!file) return;
       // Instant client-side preview only works for .stl right now (the
-      // vendored loader is STL-only - see static/preview.js) - an .obj
-      // or .zip selection still uploads and slices normally, it just
-      // doesn't get this immediate before-upload look. The real preview
+      // vendored loader is STL-only - see static/preview.js) - an .obj,
+      // .3mf, or .zip selection still uploads and slices normally, it
+      // just doesn't get this immediate before-upload look. The real preview
       // (post-slice, from the server's own always-STL copy - see
       // mesh.py) works the same regardless of what was originally
       // uploaded, once slicing finishes.

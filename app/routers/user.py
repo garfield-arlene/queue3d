@@ -35,7 +35,7 @@ from jobs import (
     start_reslice,
     submit_draft,
 )
-from mesh import convert_obj_to_stl
+from mesh import convert_3mf_to_stl, convert_obj_to_stl
 from models import DRAFT_STATUSES, Color, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, MAX_ZIP_MODEL_FILES, scratch_stl_path
 from templates_env import templates
@@ -370,29 +370,36 @@ def dashboard_jobs_table(
 
 def _stl_bytes_from_upload(filename: str, data: bytes) -> bytes:
     """Validates one uploaded model file and returns real STL bytes ready
-    to write to scratch/ - converting from OBJ first if that's what this
-    is (see mesh.py's own docstring for why that conversion happens here,
-    immediately, rather than teaching anything downstream a second
-    format). Raises ValueError with a user-facing message for anything
-    that shouldn't become a job at all: empty, oversized, or (for OBJ) not
-    actually parseable. Shared by a plain upload and each file pulled out
-    of an uploaded zip - both need the exact same validation+conversion,
-    just applied once vs. in a loop."""
+    to write to scratch/ - converting from OBJ or 3MF first if that's
+    what this is (see mesh.py's own docstring for why that conversion
+    happens here, immediately, rather than teaching anything downstream a
+    second/third format). A multi-object .3mf is flattened into one
+    merged mesh at this same step (see mesh.parse_3mf) - by the time this
+    returns, every caller sees a single-object STL either way, never
+    anything that looks like an assembly. Raises ValueError with a
+    user-facing message for anything that shouldn't become a job at all:
+    empty, oversized, or (for OBJ/3MF) not actually parseable. Shared by
+    a plain upload and each file pulled out of an uploaded zip - both
+    need the exact same validation+conversion, just applied once vs. in a
+    loop."""
     if not data:
         raise ValueError("empty file")
     if len(data) > MAX_UPLOAD_BYTES:
         raise ValueError(f"too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB)")
     ext = Path(filename).suffix.lower()
-    if ext != ".obj":
+    if ext not in (".obj", ".3mf"):
         return data
-    with tempfile.TemporaryDirectory(prefix="queue3d-objconvert-") as tmp:
-        obj_path = Path(tmp) / "in.obj"
+    with tempfile.TemporaryDirectory(prefix="queue3d-modelconvert-") as tmp:
+        in_path = Path(tmp) / f"in{ext}"
         stl_path = Path(tmp) / "out.stl"
-        obj_path.write_bytes(data)
+        in_path.write_bytes(data)
         try:
-            convert_obj_to_stl(obj_path, stl_path)
+            if ext == ".obj":
+                convert_obj_to_stl(in_path, stl_path)
+            else:
+                convert_3mf_to_stl(in_path, stl_path)
         except Exception as e:
-            raise ValueError(f"couldn't read as an OBJ file ({e})")
+            raise ValueError(f"couldn't read as {'an OBJ' if ext == '.obj' else 'a 3MF'} file ({e})")
         return stl_path.read_bytes()
 
 
@@ -495,7 +502,7 @@ def upload(
         except ValueError as e:
             return fail(str(e))
         if not entries:
-            return fail("No .stl or .obj files found in that zip.")
+            return fail("No .stl, .obj, or .3mf files found in that zip.")
         created = 0
         skipped = []
         for entry_name, entry_data in entries:
@@ -516,8 +523,8 @@ def upload(
             )
         return RedirectResponse("/dashboard", status_code=303)
 
-    if ext not in (".stl", ".obj"):
-        return fail("Only .stl, .obj, and .zip files are accepted.")
+    if ext not in (".stl", ".obj", ".3mf"):
+        return fail("Only .stl, .obj, .3mf, and .zip files are accepted.")
 
     try:
         stl_bytes = _stl_bytes_from_upload(filename, data)

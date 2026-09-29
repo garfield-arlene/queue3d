@@ -33,9 +33,12 @@ for _d in (SCRATCH_DIR, QUEUE_DIR, ARCHIVE_DIR):
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50MB - generous for a desktop-printer-scale STL
 
 # Model file extensions this app can actually turn into a job - see
-# app/mesh.py for the OBJ half (converted to a real .stl immediately on
-# upload, so nothing past that point needs to know OBJ ever existed).
-MODEL_EXTENSIONS = {".stl", ".obj"}
+# app/mesh.py for the OBJ and 3MF halves (both converted to a real .stl
+# immediately on upload, so nothing past that point needs to know either
+# format ever existed - a multi-object .3mf is flattened into one merged
+# mesh at that same step, not split the way a zip's several separate
+# files are, see mesh.parse_3mf's own docstring for why).
+MODEL_EXTENSIONS = {".stl", ".obj", ".3mf"}
 
 # A Thingiverse-style download is often a zip of several separate STLs
 # (variants, accessories, a multi-part model) rather than one file - per
@@ -59,10 +62,14 @@ MAX_ZIP_MODEL_FILES = 25
 
 
 def extract_model_files(zip_bytes: bytes) -> list[tuple[str, bytes]]:
-    """Returns [(filename, data), ...] for every .stl/.obj entry in the
-    zip - everything else (a README, a photo, a license file, a nested
-    folder Thingiverse sometimes wraps everything in) is silently
-    ignored, not an error. Raises ValueError with a user-facing message
+    """Returns [(filename, data), ...] for every .stl/.obj/.3mf entry in
+    the zip - everything else (a README, a photo, a license file, a
+    nested folder Thingiverse sometimes wraps everything in) is silently
+    ignored, not an error. Each entry is still handled as its own
+    separate job once extracted (see routers/user.py's upload()) - a
+    .3mf entry inside a zip gets flattened into one job the same way a
+    standalone .3mf upload does (see mesh.parse_3mf), it just isn't also
+    split further just because it arrived inside a zip. Raises ValueError with a user-facing message
     for anything that should stop the whole zip: not a real zip, more
     than MAX_ZIP_MODEL_FILES model files, or one individually over
     MAX_UPLOAD_BYTES (checked from the zip's own recorded uncompressed

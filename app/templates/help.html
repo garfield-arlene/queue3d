@@ -56,9 +56,15 @@
   <h3 id="submitting">Submitting a print</h3>
   <p>
     From <a href="/dashboard">My submissions</a>, upload a model
-    (<code>.stl</code>, <code>.obj</code>, or a <code>.zip</code>
-    containing several of either - each model inside becomes its own
-    job, not one combined plate) and it's sliced automatically. While
+    (<code>.stl</code>, <code>.obj</code>, <code>.3mf</code>, or a
+    <code>.zip</code> containing several of the first three - each model
+    inside becomes its own job, not one combined plate) and it's sliced
+    automatically. A <code>.3mf</code> containing more than one object is
+    the opposite of a zip: they're combined into a single print at the
+    positions already saved in the file, since a multi-part <code>.3mf</code>
+    (hinges, gears, anything meant to be printed together as one piece)
+    needs those parts to stay exactly where they were placed, not split
+    apart into separate jobs. While
     it's still a draft - before you submit it into the shared queue -
     you can change any of these as many times as you like, and each
     change just re-slices the same upload in place:

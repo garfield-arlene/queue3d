@@ -271,14 +271,20 @@ sections for the full design rationale behind each.
   doesn't need it: it reuses the exact already-sliced file and goes
   straight back into the queue, ready for an admin to release, with no
   re-slicing wait at all.
-- **Upload `.obj` files directly, and `.zip` files of one or more
-  `.stl`/`.obj` models** (a common Thingiverse shape - several separate
-  parts plus a README/photo that's just ignored). Each model in a zip
+- **Upload `.obj` or `.3mf` files directly, and `.zip` files of one or
+  more `.stl`/`.obj`/`.3mf` models** (a common Thingiverse shape -
+  several separate parts plus a README/photo that's just ignored). Each
+  model in a zip
   becomes its own separate job/draft, up to `MAX_ZIP_MODEL_FILES` (25) -
   stated right on the upload form, not just in this README - rather
   than a combined-plate print - the right design since this app's whole
   pipeline is built around one object per
-  job. An `.obj` upload is converted to a real `.stl` immediately
+  job. A `.3mf` file is treated the opposite way: any objects it bundles
+  (a multi-part assembly - hinges, gears, anything meant to print as one
+  interlocking piece) are merged into a single job at the positions
+  already saved in the file, not split apart, since those pieces are
+  meant to be printed together, unlike a zip's genuinely separate files.
+  An `.obj`/`.3mf` upload is converted to a real `.stl` immediately
   (losslessly - same geometry, different container) so nothing
   downstream (slicing, the 3D preview, re-slicing) needs to know it was
   ever anything but one; the original filename still displays as
@@ -357,17 +363,23 @@ sections for the full design rationale behind each.
 ## To do
 
 **Upload**
-- `.3mf` upload support - not yet built, and a meaningfully bigger lift
-  than `.obj`/`.zip` turned out to be: unlike OBJ (a flat, transform-free
-  mesh format converted to STL in a few dozen lines - see `app/mesh.py`),
-  a real-world `.3mf` can bundle multiple objects with their own
-  placement transforms in one file (the same "one object per job"
-  question `.zip` already answered - each object would become its own
-  job, matching that precedent) and the client-side instant preview
-  would need Three.js's heavier `3MFLoader` (plus its own `fflate`
-  dependency) vendored, not just a small loader file like OBJ's. Worth
-  doing, but as its own follow-up rather than folded into the
-  OBJ/zip work.
+- Done - `.3mf` upload support (`mesh.parse_3mf`). Unlike a `.zip`'s
+  several genuinely separate files, a real-world `.3mf` bundling
+  multiple objects with their own placement transforms is usually one
+  interlocking assembly (hinges, gears, anything meant to print
+  together as a single piece) - so every object referenced from the
+  file's own `<build>` section is merged into one flattened mesh at
+  upload time, at the exact relative positions the file already
+  specifies, and becomes a single job, the same as any other upload -
+  not split into separate jobs the way `.zip` is. Nested `<components>`
+  (grouped/instanced parts some CAD tools export that way) are resolved
+  recursively; an object typed `support`/`solidsupport` is skipped, so a
+  pre-sliced export's own baked-in supports can't double up against this
+  app's own support generation. The client-side instant preview still
+  only understands `.stl` (same as `.obj`/`.zip` already) - a `.3mf`
+  selection shows "Preview available after upload" like those do,
+  rather than vendoring Three.js's heavier `3MFLoader` for a look
+  available moments later anyway once it's actually sliced.
 - Model repair (like PrusaSlicer/OrcaSlicer's "Fix through Netfabb") -
   OrcaSlicer's CLI has no repair flag to lean on (that's a
   GUI-only feature there), so this would mean a dedicated repair pass
