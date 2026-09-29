@@ -106,6 +106,20 @@ def _3mf_local_tag(elem: ET.Element) -> str:
     return elem.tag.rsplit("}", 1)[-1]
 
 
+def _3mf_path_attr(elem: ET.Element) -> str | None:
+    """The Production Extension's "path" attribute (real key:
+    "{http://schemas.../production/2015/06}path", namespace-stripped the
+    same way _3mf_local_tag strips tag namespaces) on a <component> or
+    <build><item> - present when that reference points at an object
+    defined in a *different* part of the package, not the one currently
+    being read. None (use the current part) when absent, which is the
+    common case for a file with everything in one part."""
+    for key, value in elem.attrib.items():
+        if key.rsplit("}", 1)[-1] == "path":
+            return value
+    return None
+
+
 def _3mf_parse_transform(raw: str | None) -> tuple[float, ...]:
     """The 3MF "transform" attribute on a <build><item> or <component> -
     12 space-separated numbers: a 4x3 affine matrix in row-major order
@@ -182,7 +196,62 @@ def parse_3mf(path: Path) -> tuple[list[tuple[float, float, float]], list[tuple[
     each with its own transform relative to the parent) are resolved
     recursively, composing transforms down to world space - real for
     grouped/instanced parts some CAD tools export this way, not just a
-    theoretical case a flat reading of the spec suggests."""
+    theoretical case a flat reading of the spec suggests.
+
+    A real, common case, not just Production-Extension trivia: a
+    slicer-authored project .3mf (Bambu Studio/OrcaSlicer/Creality Print
+    all do this) routinely splits each real object out into its *own*
+    `.model` part under `3D/Objects/`, with the root `3D/3dmodel.model`
+    holding no mesh data of its own at all - just thin wrapper objects
+    whose <component>/<item> reference the real geometry in another part
+    via the Production Extension's `p:path` attribute (a real object id
+    is only unique *within* the part that defines it, never globally
+    across parts, since two different parts can each reuse the same
+    small integer ids independently). A first version of this only ever
+    read the root part, so an object reference elsewhere in the same
+    file resolved to nothing at all: no crash, just an empty merged mesh
+    and "no mesh geometry found" - wrong, and confusing, for a file that
+    plainly has real geometry in it. Every part this actually needs is
+    now loaded lazily, on first reference, and cached (`_3mfPackage`
+    below) rather than assumed to all live in the one root file."""
+
+    class _3mfPackage:
+        """Lazily loads and caches each part (`.model` file) this .3mf
+        package actually references, keyed by its own path inside the
+        zip - a part is only ever read and parsed once, however many
+        times it's referenced (a real assembly can reuse the same part
+        for several placed instances)."""
+
+        def __init__(self, zf: zipfile.ZipFile):
+            self.zf = zf
+            self.names = set(zf.namelist())
+            self._roots: dict[str, ET.Element] = {}
+            self._objects: dict[str, dict[str, ET.Element]] = {}
+
+        def objects_in(self, part_path: str) -> dict[str, ET.Element]:
+            normalized = part_path.lstrip("/")
+            if normalized not in self._objects:
+                if normalized not in self.names:
+                    raise ValueError(f"referenced part {part_path!r} not found in this .3mf file")
+                try:
+                    root = ET.fromstring(self.zf.read(normalized))
+                except ET.ParseError as e:
+                    raise ValueError(f"couldn't parse {part_path!r} ({e})")
+                self._roots[normalized] = root
+                objs: dict[str, ET.Element] = {}
+                for section in root:
+                    if _3mf_local_tag(section) != "resources":
+                        continue
+                    for obj in section:
+                        if _3mf_local_tag(obj) == "object" and obj.get("id") is not None:
+                            objs[obj.get("id")] = obj
+                self._objects[normalized] = objs
+            return self._objects[normalized]
+
+        def root_of(self, part_path: str) -> ET.Element:
+            self.objects_in(part_path)  # ensures it's loaded
+            return self._roots[part_path.lstrip("/")]
+
     # A .3mf is a zip container (the OPC package format) - a file that
     # isn't one at all (or claims the extension but is actually
     # something else entirely) raises zipfile.BadZipFile, not a
@@ -194,82 +263,74 @@ def parse_3mf(path: Path) -> tuple[list[tuple[float, float, float]], list[tuple[
     except zipfile.BadZipFile:
         raise ValueError("not a valid .3mf file (not a zip container)")
     with zf:
-        names = zf.namelist()
-        model_name = "3D/3dmodel.model" if "3D/3dmodel.model" in names else next(
-            (n for n in names if n.lower().endswith(".model")), None
+        pkg = _3mfPackage(zf)
+        root_model_name = "3D/3dmodel.model" if "3D/3dmodel.model" in pkg.names else next(
+            (n for n in pkg.names if n.lower().endswith(".model")), None
         )
-        if model_name is None:
+        if root_model_name is None:
             raise ValueError("no 3D model found inside this .3mf file")
-        try:
-            root = ET.fromstring(zf.read(model_name))
-        except ET.ParseError as e:
-            raise ValueError(f"couldn't parse the 3D model XML ({e})")
 
-    scale = _3MF_UNIT_TO_MM.get(root.get("unit", "millimeter"), 1.0)
+        pkg.objects_in(root_model_name)  # loads and validates the root part
+        root = pkg.root_of(root_model_name)
+        scale = _3MF_UNIT_TO_MM.get(root.get("unit", "millimeter"), 1.0)
 
-    objects: dict[str, ET.Element] = {}
-    for section in root:
-        if _3mf_local_tag(section) != "resources":
-            continue
-        for obj in section:
-            if _3mf_local_tag(obj) == "object" and obj.get("id") is not None:
-                objects[obj.get("id")] = obj
+        build = next((c for c in root if _3mf_local_tag(c) == "build"), None)
+        if build is None:
+            raise ValueError("no <build> section found in this .3mf file")
 
-    build = next((c for c in root if _3mf_local_tag(c) == "build"), None)
-    if build is None:
-        raise ValueError("no <build> section found in this .3mf file")
+        merged_vertices: list[tuple[float, float, float]] = []
+        merged_triangles: list[tuple[int, int, int]] = []
 
-    merged_vertices: list[tuple[float, float, float]] = []
-    merged_triangles: list[tuple[int, int, int]] = []
+        def flatten_mesh(mesh_elem: ET.Element, transform: tuple[float, ...]) -> None:
+            base = len(merged_vertices)
+            added_vertices: list[tuple[float, float, float]] = []
+            for part in mesh_elem:
+                part_tag = _3mf_local_tag(part)
+                if part_tag == "vertices":
+                    for v in part:
+                        if _3mf_local_tag(v) != "vertex":
+                            continue
+                        raw = (float(v.get("x", 0)), float(v.get("y", 0)), float(v.get("z", 0)))
+                        added_vertices.append(_3mf_apply_transform(raw, transform))
+                elif part_tag == "triangles":
+                    for t in part:
+                        if _3mf_local_tag(t) != "triangle":
+                            continue
+                        merged_triangles.append(
+                            (base + int(t.get("v1")), base + int(t.get("v2")), base + int(t.get("v3")))
+                        )
+            merged_vertices.extend(added_vertices)
 
-    def flatten_mesh(mesh_elem: ET.Element, transform: tuple[float, ...]) -> None:
-        base = len(merged_vertices)
-        added_vertices: list[tuple[float, float, float]] = []
-        for part in mesh_elem:
-            part_tag = _3mf_local_tag(part)
-            if part_tag == "vertices":
-                for v in part:
-                    if _3mf_local_tag(v) != "vertex":
-                        continue
-                    raw = (float(v.get("x", 0)), float(v.get("y", 0)), float(v.get("z", 0)))
-                    added_vertices.append(_3mf_apply_transform(raw, transform))
-            elif part_tag == "triangles":
-                for t in part:
-                    if _3mf_local_tag(t) != "triangle":
-                        continue
-                    merged_triangles.append(
-                        (base + int(t.get("v1")), base + int(t.get("v2")), base + int(t.get("v3")))
-                    )
-        merged_vertices.extend(added_vertices)
+        def resolve_object(part_path: str, obj: ET.Element, transform: tuple[float, ...], depth: int = 0) -> None:
+            if depth > 8:
+                raise ValueError("object references nested too deeply (a reference cycle?)")
+            if obj.get("type", "model") in _3MF_NON_PRINTABLE_TYPES:
+                return
+            for child in obj:
+                tag = _3mf_local_tag(child)
+                if tag == "mesh":
+                    flatten_mesh(child, transform)
+                elif tag == "components":
+                    for comp in child:
+                        if _3mf_local_tag(comp) != "component":
+                            continue
+                        target_part = _3mf_path_attr(comp) or part_path
+                        ref = pkg.objects_in(target_part).get(comp.get("objectid"))
+                        if ref is None:
+                            continue
+                        combined = _3mf_compose_transform(transform, _3mf_parse_transform(comp.get("transform")))
+                        resolve_object(target_part, ref, combined, depth + 1)
 
-    def resolve_object(obj: ET.Element, transform: tuple[float, ...], depth: int = 0) -> None:
-        if depth > 8:
-            raise ValueError("object references nested too deeply (a reference cycle?)")
-        if obj.get("type", "model") in _3MF_NON_PRINTABLE_TYPES:
-            return
-        for child in obj:
-            tag = _3mf_local_tag(child)
-            if tag == "mesh":
-                flatten_mesh(child, transform)
-            elif tag == "components":
-                for comp in child:
-                    if _3mf_local_tag(comp) != "component":
-                        continue
-                    ref = objects.get(comp.get("objectid"))
-                    if ref is None:
-                        continue
-                    combined = _3mf_compose_transform(transform, _3mf_parse_transform(comp.get("transform")))
-                    resolve_object(ref, combined, depth + 1)
-
-    items_resolved = 0
-    for item in build:
-        if _3mf_local_tag(item) != "item":
-            continue
-        obj = objects.get(item.get("objectid"))
-        if obj is None:
-            continue
-        resolve_object(obj, _3mf_parse_transform(item.get("transform")))
-        items_resolved += 1
+        items_resolved = 0
+        for item in build:
+            if _3mf_local_tag(item) != "item":
+                continue
+            target_part = _3mf_path_attr(item) or root_model_name
+            obj = pkg.objects_in(target_part).get(item.get("objectid"))
+            if obj is None:
+                continue
+            resolve_object(target_part, obj, _3mf_parse_transform(item.get("transform")))
+            items_resolved += 1
 
     if items_resolved == 0:
         raise ValueError("no printable objects found in this .3mf file's <build> section")

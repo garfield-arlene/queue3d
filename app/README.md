@@ -639,6 +639,27 @@ allows). A component's transform is composed with its parent's before
 recursing, so a doubly-nested part ends up positioned correctly in world
 space regardless of how many levels of grouping the original file used.
 
+**A real, common case a first version of this missed entirely: a
+slicer-authored `.3mf` routinely splits each real object out into its
+own part, not just its own `<object>` inside one file.** Bambu Studio,
+OrcaSlicer, and Creality Print (a real download - a two-part model
+exported by Creality Print - reported exactly this) all do this for a
+*project* export: the root `3D/3dmodel.model` holds no mesh data of its
+own at all, just thin wrapper objects whose `<component>`/`<build><item>`
+reference the real geometry in a *different* part (`3D/Objects/
+object_2.model`, say) via the Production Extension's `p:path` attribute.
+A real object id is only unique *within* the part that defines it, never
+globally - two different parts can and do reuse the same small integer
+ids independently. The first version of this only ever read the root
+part, so a reference elsewhere in the same file resolved to nothing:
+no crash, just an empty merged mesh and a "no mesh geometry found"
+error - technically a clean failure, but wrong, for a file that
+plainly has real printable geometry in it. Every part this actually
+needs is now loaded lazily, the first time something references it, and
+cached (`mesh.py`'s own `_3mfPackage`) rather than assumed to all live
+in the one root file - a part is read and parsed once no matter how
+many times an assembly reuses it.
+
 **An object typed `support`/`solidsupport` is skipped entirely, not
 merged in** - a `.3mf` that's actually a pre-sliced export (rather than
 a raw model) can bundle its own generated supports as separate objects;
@@ -659,7 +680,8 @@ conversion threaded through every intermediate transform composition.
 
 **Errors are consistently `ValueError`, matching `parse_obj()`'s own
 contract** - not a valid zip container, no `3D/3dmodel.model` (or
-anything ending in `.model`) inside it, malformed transform/XML, no
+anything ending in `.model`) inside it, a `p:path` pointing at a part
+that doesn't actually exist in the package, malformed transform/XML, no
 `<build>` section, or a `<build>` that ends up referencing no actual
 mesh geometry (every referenced object turned out to be support-typed,
 say) each get their own clear message rather than a raw exception
@@ -817,10 +839,10 @@ different mechanisms because they're different kinds of "slow":
   which only an XHR's own `upload.progress` event provides - a plain
   `<form>` submission gives no hook to show that at all. `user_dashboard.html`
   intercepts the form's submit, sends it manually via `XMLHttpRequest`, and
-  drives a `<progress>` bar off that event. Since the server always ends up
-  redirecting to `/dashboard` regardless of outcome (see below), the
-  completion handler doesn't need to inspect the response - it just
-  navigates there for real once the transfer finishes.
+  drives a `<progress>` bar off that event. See "A real silent-upload-
+  failure incident" below for why the completion handler *does* need to
+  inspect the response, despite this section's own original design not
+  thinking so.
 - **Slicing** (server-side, duration unknown up front) is handled by
   `templates/_jobs_table.html`, included by the dashboard and also served
   standalone at `GET /dashboard/jobs-table`. While any row is still
@@ -834,13 +856,15 @@ different mechanisms because they're different kinds of "slow":
   signal to send or forget to send.
 
 A validation failure (wrong extension, empty file, too large) is flashed
-into the session (`request.session["upload_error"]`) and redirected the
+into the session (`request.session["flash_error"]`) and redirected the
 same way a successful upload is, rather than re-rendering the dashboard
 directly as the POST response - keeps `/upload`'s response shape
 uniform (always a redirect to `/dashboard`) for the JS above, and is a
 better-behaved POST-redirect-GET regardless: refreshing the dashboard
 after a failed upload no longer re-triggers a browser's own "confirm form resubmission"
-prompt the way re-rendering the POST response used to.
+prompt the way re-rendering the POST response used to. (See the real
+incident just below for the one real exception this design's own
+"redirect the same way either way" idea ran into.)
 
 The redirect after upload returns in a fraction of a second
 even though the background slice is still running; a throttled transfer
@@ -850,6 +874,73 @@ requests stop the moment it does, request counts staying flat
 afterward. (This predates the slice/submit
 split below, which is why the end state here is `sliced` rather than
 `queued`.)
+
+### A real silent-upload-failure incident: XHR eating its own flash message
+
+**What happened:** a real `.3mf` upload was reported as producing
+nothing at all - no new job, no error message, and not even an activity-
+log entry for the attempt. The file itself turned out to genuinely fail
+this app's own `.3mf` parsing at the time (see "Uploading `.3mf` files"
+above for the separate, real parsing gap that specific file also
+exposed) - `routers/user.py`'s `upload()` correctly caught that and
+called its own `fail()` helper, which sets `request.session["flash_error"]`
+and returns a 303 redirect to `/dashboard`, exactly as designed. The
+flash message was real, and was genuinely set. It just never reached
+anyone.
+
+**Root cause: XHR follows a same-origin redirect transparently, and
+`GET /dashboard` pops (and clears) that flash message on every load -
+including the one the JS upload script never sees.** The upload form's
+own JS (see "Upload and slicing progress" above) sends the upload via
+`XMLHttpRequest` for real byte-progress, and its `load` handler - once
+the request settles - does its own separate `window.location.href =
+"/dashboard"` navigation. But by the time that handler runs, the XHR
+call has *already* transparently followed the server's 303 all the way
+to a real `GET /dashboard` response, fully rendered flash message and
+all - the JS's own completion handler never inspected that response
+body at all, just used it as a signal that the request was "done."
+`routers/user.py`'s `_dashboard_context()`/dashboard route reads the
+flash message with `request.session.pop("flash_error", None)` - a
+one-time read, gone the instant anything asks for it - so that
+invisible, JS-never-displays-it fetch is what actually consumed it. The
+JS's own later, real, visible navigation then fetches `/dashboard` a
+*second* time, landing after the message is already gone: a perfectly
+ordinary-looking dashboard, no error, and (since the failure happened in
+validation, before any job or log row is ever written) no job and no
+log entry either - completely indistinguishable from the upload having
+silently done nothing.
+
+**Fixed by never letting a failure redirect at all when the request
+came from this JS, not by changing how the flash message itself
+works.** The JS now sends `X-Requested-With: XMLHttpRequest` (the
+conventional marker used for exactly this kind of detection), and
+`upload()`'s `respond_with_message()` (what `fail()` now calls) responds
+to that case directly - the real message as a plain-text body, on a
+class-appropriate status (400 for an actual failure, 200 for a partial
+zip success that still has something worth saying) - with no `Location`
+header for XHR to auto-follow at all. A plain, JS-disabled
+`<form method=post>` submission never sends that header, so it keeps
+the original flash-and-redirect behavior, which was never actually
+broken for that path - a real top-level navigation only ever happens
+once, so there was never an invisible fetch to eat anything there.
+
+**The JS side can no longer trust status code alone to mean "just
+navigate," now that a genuine response can arrive as a direct 200
+too** (the partial-zip-success case) - it checks `xhr.responseURL`
+instead, which holds the *actual final URL XHR landed on*: still
+`/upload` when the server responded directly, `/dashboard` only when a
+plain, uneventful redirect was genuinely followed. Shows the message
+either way when it isn't a plain redirect, then navigates itself once
+there's actually been a moment to read it (immediately for a hard
+failure - nothing to wait around for; after a few seconds for a partial
+success, since real jobs were created and are worth going to look at).
+
+**A long-standing bug, not new to this session's `.3mf` work** - this
+upload form's XHR/progress-bar design predates this branch by a long
+way; any validation failure on *any* format (a bad OBJ, an oversized
+file, an empty one) has been silently invisible this same way for as
+long as that design existed. It just happened to take a real `.3mf`
+parsing failure to actually trigger it and get reported.
 
 ### A real stuck-slicing incident: subprocess stdin inheritance
 

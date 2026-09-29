@@ -2,7 +2,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from sqlmodel import Session, select
 
 import storage
@@ -484,9 +484,47 @@ def upload(
     if color_name is not None and color_name not in {c.name for c in _enabled_colors(session)}:
         color_name = None
 
-    def fail(message: str):
+    def respond_with_message(message: str, *, is_error: bool):
+        """A real incident, not a hypothetical: the upload form's own JS
+        (user_dashboard.html) sends this via XHR for real upload-byte
+        progress, and XHR follows a same-origin redirect transparently -
+        so redirecting here unconditionally meant that *invisible*,
+        JS-never-sees-it follow-up GET /dashboard was what actually
+        popped (and thus cleared) the one-time flash message this sets,
+        before the JS's own separate, visible `window.location.href`
+        navigation ever got to read it. A real validation failure (a
+        .3mf this app genuinely couldn't parse) looked identical to
+        nothing having happened at all: no error shown, no job created,
+        not even the request ever reaching a place that logs anything -
+        the flash message was real and correctly set, just already
+        consumed by a fetch nobody ever displayed. The exact same thing
+        would silently swallow a *partial* zip success's "these files
+        were skipped" notice too - real jobs still get created there, so
+        it's a smaller loss than a whole upload vanishing, but the same
+        root cause, so the same fix.
+
+        Fixed by not redirecting at all for this specific request shape:
+        the JS marks itself with the `X-Requested-With` header every
+        real browser XHR/fetch library uses for this by convention, and
+        for exactly that case this returns the message directly, as a
+        plain body (400 for a real failure, 200 for a success that still
+        has something worth saying), with nothing to auto-follow - the
+        JS checks `xhr.responseURL` for whether it actually got
+        redirected to `/dashboard` rather than trusting status code
+        alone (200 no longer safely means "just navigate," since this
+        can now also return 200 directly), shows this message either
+        way, then navigates itself once it's had a moment to be read. A
+        plain, JS-disabled `<form method=post>` submission never sends
+        that header, so it keeps the original flash-message-and-redirect
+        behavior, which works correctly there since no invisible
+        in-between fetch is ever involved."""
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return PlainTextResponse(message, status_code=400 if is_error else 200)
         request.session["flash_error"] = message
         return RedirectResponse("/dashboard", status_code=303)
+
+    def fail(message: str):
+        return respond_with_message(message, is_error=True)
 
     data = file.file.read()
 
@@ -518,8 +556,9 @@ def upload(
         if created == 0:
             return fail("Couldn't use any files in that zip: " + "; ".join(skipped))
         if skipped:
-            request.session["flash_error"] = (
-                f"Uploaded {created} model(s) from the zip. Skipped: " + "; ".join(skipped)
+            return respond_with_message(
+                f"Uploaded {created} model(s) from the zip. Skipped: " + "; ".join(skipped),
+                is_error=False,
             )
         return RedirectResponse("/dashboard", status_code=303)
 

@@ -92,21 +92,29 @@
     // because what's needed here is genuine upload-byte progress
     // (xhr.upload's own progress event), not an htmx-managed request/swap.
     //
-    // A real report caught the flaw in this comment's original assumption
-    // ("the server always ends at the same place... the completion handler
-    // doesn't need to inspect the response at all"): that's only true for
-    // error paths this app's own code controls (routers/user.py's fail()
-    // always redirects to /dashboard with a flash message set) - it's NOT
-    // true for a request that fails validation before upload() ever runs
-    // (a real 422 was seen for an actual zip upload, cause not yet fully
-    // understood - see README.md's To do list). That kind of failure never
-    // redirects at all, so blindly navigating to /dashboard regardless of
-    // xhr.status showed a perfectly ordinary dashboard with no job and no
-    // error text - indistinguishable from the upload having done nothing.
-    // XHR follows same-origin redirects transparently, so a normal
-    // success *or* an in-app fail() both still land on xhr.status 200 (the
-    // followed GET /dashboard) by the time "load" fires - only a failure
-    // that never got redirected at all surfaces as a non-2xx status here.
+    // A real report caught a real bug in this comment's original
+    // assumption ("the server always ends at the same place... the
+    // completion handler doesn't need to inspect the response at all"):
+    // XHR follows a same-origin redirect transparently, meaning a
+    // request routers/user.py's fail() redirects away from /upload gets
+    // *invisibly* fetched and fully resolved (including popping the
+    // one-time flash message it set) before this code ever sees a
+    // thing - then this code's own separate `window.location.href`
+    // navigates to /dashboard a second time, landing after that message
+    // is already gone. A real, genuinely-invalid upload looked
+    // completely indistinguishable from nothing having happened: no
+    // error, no job, nothing. Fixed on the server side (see
+    // routers/user.py's respond_with_message) by not redirecting at all
+    // for a request carrying this exact header - it responds directly
+    // instead, with the real message as the body, so there's nothing
+    // for XHR to auto-follow and silently consume. `xhr.responseURL` is
+    // how this code tells the two cases apart: it holds the *final*
+    // URL XHR actually landed on, so it still says "/upload" when the
+    // server responded directly, and only says "/dashboard" when a
+    // plain, uneventful redirect was actually followed - status code
+    // alone can't distinguish them any more, now that a message can
+    // come back as a direct 200 too (a partial zip success, some files
+    // skipped), not just a direct 4xx.
     const uploadForm = document.getElementById("upload-form");
     const uploadProgress = document.getElementById("upload-progress");
     const uploadError = document.getElementById("upload-error");
@@ -115,6 +123,7 @@
       uploadError.hidden = true;
       const xhr = new XMLHttpRequest();
       xhr.open("POST", uploadForm.action);
+      xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
       xhr.upload.addEventListener("progress", (e) => {
         if (!e.lengthComputable) return;
         uploadProgress.hidden = false;
@@ -122,20 +131,31 @@
         uploadProgress.max = e.total;
       });
       xhr.addEventListener("load", () => {
-        if (xhr.status >= 200 && xhr.status < 400) {
+        const goToDashboard = () => {
           // Carries the current page's own filter query string along
           // (see filters.filtered_redirect) - a fresh upload only ever
           // *adds* a job, never removes one a filter was already
           // matching, so there's no "did this just empty the filter"
           // case to check here the way a delete/reject/etc. has.
           window.location.href = "/dashboard" + window.location.search;
+        };
+        if (xhr.responseURL && xhr.responseURL.indexOf("/dashboard") !== -1
+            && xhr.status >= 200 && xhr.status < 400) {
+          goToDashboard();
           return;
         }
         uploadProgress.hidden = true;
         uploadError.hidden = false;
-        uploadError.textContent =
+        uploadError.textContent = xhr.responseText ||
           `Upload failed (server responded ${xhr.status}) - nothing was saved. ` +
           "Try a different file, or let an admin know if this keeps happening.";
+        // A direct (non-redirected) 2xx here means some jobs really were
+        // created (a partial zip success) - still worth ending up on the
+        // dashboard to see them, just after leaving the message up long
+        // enough to actually read it first.
+        if (xhr.status >= 200 && xhr.status < 300) {
+          window.setTimeout(goToDashboard, 5000);
+        }
       });
       xhr.addEventListener("error", () => {
         uploadProgress.hidden = true;
