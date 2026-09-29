@@ -3371,11 +3371,12 @@ model) combinatorially for a search with no particular reason to
 expect a better answer than a simpler sweep would find.
 `jobs._slice_with_rotation_retry()` tries the orientation actually
 requested first, and only sweeps
-the candidates if that fails *and* the requested orientation wasn't
-deliberately set (typed, drag-rotated, or Snap-to-surfaced) this
-editing session - see "A real silently-overridden-orientation incident"
-below for why that can't just be inferred from whether the value is
-x=0/y=0/z=0. If a
+the candidates if that fails *and* `Job.rotation_manual` is still
+`False` - i.e. this job's orientation has never been deliberately set
+(typed, drag-rotated, or Snap-to-surfaced) on any past re-slice - see "A
+real silently-overridden-orientation incident" below for why that can't
+just be inferred from a single request's own value or a single page
+load's own state. If a
 candidate other than the requested one is what worked,
 `slice_and_update()` updates `Job.rotate_x/y/z` to what was *actually*
 sliced (not silently leaving the fields showing the orientation that
@@ -3455,29 +3456,47 @@ logged, confirming the server received the deliberately-chosen `(0, 0,
 untouched default and swept right past it - overriding the exact
 choice it was supposed to protect.
 
-**Real fix: track *intent*, not value.** A hidden `rotation_touched`
-field on `job_edit.html`'s settings form starts at `"0"` on page load
-and is set to `"1"` by every control that actually changes
-rotation - typing a value, a drag-rotate commit, or a Snap-to-surface
-click - never reset back client-side, so once touched this editing
-session it stays deliberate through however many re-slices follow.
-`routers/user.py`'s `reslice()` reads it as `rotation_touched` and
-threads it through `jobs.start_reslice`/`slice_and_update` down to
-`_slice_with_rotation_retry` as `rotation_deliberate`, which now skips
-the sweep whenever *either* that flag is set *or* the value is
-non-default - so a deliberately-chosen `(0, 0, 0)` is finally
-respected the same as any other deliberate choice: the re-slice fails
-honestly, with a message explaining that reloading the page (to get a
-fresh, truly-untouched `rotation_touched`) is what opts back into the
-automatic sweep, since typing `0` into fields that are already `0`
-does nothing here. A plain no-JS form post can't set this hidden
-field at all, so it falls back to the original, imperfect value-only
-heuristic - a real but narrow regression versus the JS path, accepted
-because every real editing action on this page is already JS-driven
-(the 3D preview itself requires it). The genuinely-untouched-upload
-case (a fresh file, never rotated) is completely unchanged either
-way - this only closes the gap where a deliberate `(0, 0, 0)` and an
-untouched `(0, 0, 0)` were indistinguishable.
+**Second fix attempt (also insufficient): track *intent* for one
+submission at a time.** A hidden `rotation_touched` field on
+`job_edit.html`'s settings form starts at `"0"` on page load and is set
+to `"1"` by every control that actually changes rotation - typing a
+value, a drag-rotate commit, or a Snap-to-surface click.
+`routers/user.py`'s `reslice()` read it and skipped the sweep whenever
+either that flag was set or the value was non-default - so the
+deliberately-chosen `(0, 0, 0)` above was finally respected, on that
+one re-slice. It still wasn't enough: this flag lived only in that page
+load's own DOM, reset to `"0"` the moment the page reloaded for any
+reason - including the redirect back to the edit page after that very
+re-slice finished, success or failure. A second real report proved it:
+re-slicing an *already-deliberately-oriented, already-successfully-sliced*
+job a second time - without touching rotation at all, just re-submitting
+the same settings, which is a completely ordinary thing to do - looked
+exactly like a fresh untouched default again on that second submission,
+and got swept right back to lying on its side.
+
+**Real fix: make the choice persist on the job, not the page.** A new
+`Job.rotation_manual` column (schema 8.1.0) is set `True` the first time
+any re-slice arrives with `rotation_touched`, and stays `True` for the
+rest of that job's life regardless of how many page loads or
+not-about-rotation-at-all re-slices happen afterward -
+`jobs.start_reslice` ORs the incoming per-request flag into it rather
+than replacing it, and `slice_and_update` reads it fresh from the job
+row (never passed through as a stale parameter) when deciding whether
+`_slice_with_rotation_retry` may sweep. This closes the real gap above:
+a job's orientation, once deliberately chosen, is respected across
+every re-slice from then on, not just the one that set it. The one way
+back is now explicit rather than incidental: `job_edit.html` shows an
+"Let this app search for a working orientation automatically" checkbox
+whenever `rotation_manual` is set, and checking it (`auto_orient` in the
+form) resets the flag to `False` for that re-slice - reloading the page
+alone no longer does it, since that was exactly the accident this fix
+closes. A plain no-JS form post can't set either field, so it falls
+back to the original, imperfect value-only heuristic - a real but
+narrow regression versus the JS path, accepted because every real
+editing action on this page is already JS-driven (the 3D preview
+itself requires it). The genuinely-untouched-upload case (a fresh
+file, never rotated, `rotation_manual` still `False`) is completely
+unchanged either way.
 
 **A real remaining gap: the preview always shows the model
 centered in the frame, even when it's off-center on the bed.** True, and distinct

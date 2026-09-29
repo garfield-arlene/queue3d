@@ -325,6 +325,18 @@ class Job(SQLModel, table=True):
     rotate_x: float = Field(default=0.0)
     rotate_y: float = Field(default=0.0)
     rotate_z: float = Field(default=0.0)
+    # True once a human has ever deliberately set this job's rotation -
+    # typing a value, drag-rotating, or Snap to surface - as opposed to
+    # whatever a fresh upload's own automatic rotation-retry sweep left it
+    # at (see jobs.AUTO_ROTATE_CANDIDATES). Sticky for the rest of this
+    # job's life once set: a re-slice that doesn't touch rotation at all
+    # (toggling supports, say) still must not silently sweep away an
+    # orientation someone already chose on purpose, even across a page
+    # reload - see app/README.md's "A real silently-overridden-orientation
+    # incident" for the two real bugs (one value-based, one session-based)
+    # this persistent flag exists to fix, and job_edit.html's "auto_orient"
+    # checkbox for the one explicit way back to automatic search.
+    rotation_manual: bool = Field(default=False)
 
     # When this row was created (upload time) - NOT when it joined the
     # queue, which may be much later or never (see queued_at below). Used

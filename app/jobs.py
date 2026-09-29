@@ -1006,15 +1006,25 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
     untouched-default 0/0/0 by value alone, so the old check re-swept
     exactly the case it was supposed to protect - silently landing right
     back on whatever candidate (the model's side, say) had passed the
-    bed-centering check before. `rotation_deliberate` fixes this by
-    tracking *intent* instead of inferring it from the number: the
-    caller (routers/user.py's reslice()) sets it whenever the request
-    carries any sign the rotation fields were actually interacted with
-    this editing session (typing, drag-rotate, or Snap to surface - see
-    job_edit.html's own "rotation_touched" hidden field), regardless of
-    what value that interaction happened to produce. See app/README.md's
-    "A real silently-overridden-orientation incident" for the full
-    story, including the value-only first attempt this replaces.
+    bed-centering check before.
+
+    A second fix tracked *intent* instead of the number, but only for
+    one form submission at a time - also wrong, and also caught by a
+    real re-slice: reloading the edit page (which any status change, or
+    just navigating back to it, does) reset that per-request signal, so
+    a *second* re-slice of the exact same job - one whose orientation
+    had already been deliberately chosen and had already sliced
+    successfully - looked "untouched" all over again and got swept past
+    regardless.
+
+    `rotation_deliberate` here is fed by `job.rotation_manual` (see that
+    column's own docstring in models.py), which fixes both: sticky for
+    the rest of the job's life once any re-slice actually touches
+    rotation, so neither a page reload nor an unrelated settings-only
+    re-slice can undo it, with job_edit.html's own "auto_orient"
+    checkbox as the one explicit way back to automatic search. See
+    app/README.md's "A real silently-overridden-orientation incident"
+    for the full story, including both earlier attempts this replaces.
 
     Deliberately does NOT try to detect "is this the kind of failure
     rotation could plausibly fix" from the error text first when the
@@ -1044,27 +1054,24 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
         # to surface) - respected even on failure, never silently
         # replaced, and even when it happens to equal the plain
         # default's own value (see this function's own docstring).
-        retry_hint = (
-            # rotate_x/y/z already read 0/0/0 here - telling someone to
-            # "reset to 0/0/0" would be telling them to do nothing. The
-            # actual way back to automatic search is a fresh page load
-            # (this page's own rotation_touched flag never clears itself
-            # client-side - see job_edit.html).
-            "Reload this page (discarding any unsaved changes) and re-slice "
-            "without touching rotation, to let this app search for a working "
-            "orientation automatically."
-            if rotation_deliberate and (rotate_x, rotate_y, rotate_z) == (0.0, 0.0, 0.0)
-            else
-            "Try a different orientation, or reset rotation to 0/0/0 and "
-            "re-slice to let this app search for a working one automatically."
-        )
+        # Once a job's rotation has ever been deliberately set,
+        # job.rotation_manual stays sticky (see its own docstring) - not
+        # reset by a page reload, and not undone by typing/dragging to a
+        # *different* rotation (still deliberate) or even back to
+        # 0/0/0 (that's still a deliberate action, not "never touched" -
+        # see _slice_with_rotation_retry's own docstring). So "try a
+        # different value" is real advice, but "reset to 0/0/0" no
+        # longer means "opt back into automatic search" the way it used
+        # to - only the explicit checkbox does that now.
         note = (
             f"This orientation (x={rotate_x:g}, y={rotate_y:g}, z={rotate_z:g}) failed to "
             "slice. Not automatically re-rotated, since this orientation was set "
             "deliberately rather than left at the default - it's respected even when it "
             "fails, not silently replaced with whatever orientation happens to pass the "
             "printer's own bed-centering check, which has nothing to do with which "
-            f"orientation actually prints better. {retry_hint}\n\n"
+            "orientation actually prints better. Try a different orientation, or check "
+            "\"Let this app search for a working orientation automatically\" and re-slice "
+            "to opt back into that search.\n\n"
         )
         return False, note + detail, rotate_x, rotate_y, rotate_z, False
 
@@ -1102,7 +1109,6 @@ def slice_and_update(
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
     resubmit_to_queue: bool = False,
-    rotation_deliberate: bool = False,
 ) -> None:
     """Runs slicing for a draft and records the outcome as 'sliced' (ready
     to preview and, if the user wants, submit) or 'slice_failed' - never
@@ -1145,7 +1151,7 @@ def slice_and_update(
     working - a background task's exceptions don't propagate anywhere a
     user would ever see them.
 
-If slicing fails at the requested orientation *and* `rotation_deliberate`
+    If slicing fails at the requested orientation *and* `job.rotation_manual`
     is False, automatically sweeps AUTO_ROTATE_CANDIDATES above before
     giving up, since real models have repeatedly been fixed by nothing
     more than rotating. If a candidate other than the one requested is
@@ -1153,11 +1159,14 @@ If slicing fails at the requested orientation *and* `rotation_deliberate`
     was *actually* sliced (not silently left showing the orientation
     that failed), and a short note is recorded so this isn't a silent
     surprise - see job_edit.html's own handling of a 'sliced' job with a
-    note still set. A deliberately-set requested orientation (per
-    `rotation_deliberate`, threaded from routers/user.py's reslice()) is
-    never swept past this way on failure, regardless of its value - see
-    _slice_with_rotation_retry's own docstring for why this can't just
-    be inferred from whether the value happens to be x=0/y=0/z=0.
+    note still set. A job whose rotation was ever deliberately set
+    (`rotation_manual`, maintained by start_reslice - see its own and
+    models.Job.rotation_manual's docstrings) is never swept past this
+    way on failure, regardless of its value or of how many re-slices
+    (and page reloads) have happened since - read fresh from `job` here,
+    not passed in as a parameter, specifically so it can't go stale
+    against whatever start_reslice just committed moments before this
+    background task actually runs.
     """
     with Session(engine) as session:
         job = session.get(Job, job_id)
@@ -1176,7 +1185,7 @@ If slicing fails at the requested orientation *and* `rotation_deliberate`
                 rotate_x,
                 rotate_y,
                 rotate_z,
-                rotation_deliberate,
+                job.rotation_manual,
             )
         except Exception as e:
             success, detail, auto_rotated = False, f"Unexpected error while slicing: {e}", False
@@ -1252,20 +1261,30 @@ def start_reslice(
     rotate_x: float = 0.0,
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
-    rotation_deliberate: bool = False,
+    rotation_touched: bool = False,
+    auto_orient: bool = False,
 ) -> tuple[Path, bool]:
     """Resets a draft to re-slice the same already-uploaded file with new
     settings - the whole point of splitting slicing from submitting: a
     user can freely iterate on support settings, scale, or now rotation
     (see models.Job.rotate_x/y/z) before ever deciding to submit.
 
-    rotation_deliberate is only ever recorded here (in the log detail
-    below) - it doesn't change anything else this function does. The
-    actual sweep-or-not decision it drives happens later, in
-    slice_and_update/_slice_with_rotation_retry, once the background
-    task this kicks off actually runs; see that function's own
-    docstring for why it exists at all and can't just be inferred from
-    rotate_x/y/z's value.
+    rotation_touched is this one form submission's own signal that a
+    rotation control was actually used (see job_edit.html's
+    "rotation_touched" hidden field) - OR'd into job.rotation_manual
+    (sticky once True - see that column's own docstring) rather than
+    replacing it outright, so a re-slice that doesn't touch rotation at
+    all (toggling supports, say) can't accidentally un-mark a job whose
+    orientation was already deliberately chosen on an *earlier*
+    re-slice. auto_orient is the one explicit way back the other
+    direction - job_edit.html's own checkbox for "let this app search
+    for a working orientation automatically on this re-slice" -
+    overriding both the incoming flag and whatever was already sticky.
+    The actual sweep-or-not decision this drives happens later, in
+    slice_and_update/_slice_with_rotation_retry, reading job.rotation_manual
+    fresh once the background task this kicks off actually runs - not
+    passed through as a parameter, so it can never go stale against what
+    gets committed here.
 
     Also reachable for an already-queued/approved job, per the user,
     after "Edit was supposed to be all edit capability... same as the
@@ -1316,6 +1335,7 @@ def start_reslice(
     job.rotate_x = rotate_x
     job.rotate_y = rotate_y
     job.rotate_z = rotate_z
+    job.rotation_manual = False if auto_orient else (job.rotation_manual or rotation_touched)
     job.status = JobStatus.submitted
     job.slice_error = None
     session.add(job)
@@ -1325,10 +1345,11 @@ def start_reslice(
         + (f" scale={scale_factor:.2f}" if scale_factor != 1.0 else "")
         + (
             f" rotate=({rotate_x:.1f},{rotate_y:.1f},{rotate_z:.1f})"
-            + (" [explicit]" if rotation_deliberate and (rotate_x, rotate_y, rotate_z) == (0.0, 0.0, 0.0) else "")
-            if rotation_deliberate or (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0)
+            + (" [manual]" if job.rotation_manual and (rotate_x, rotate_y, rotate_z) == (0.0, 0.0, 0.0) else "")
+            if job.rotation_manual or (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0)
             else ""
         )
+        + (" [auto-orient requested]" if auto_orient else "")
         + (" (was queued - temporarily left the queue while this re-slices)" if was_queued else "")
     )
     log_event(session, job.id, _user_actor(session, job.user_id), "reslice_started", detail=style_detail)

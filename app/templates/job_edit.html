@@ -300,6 +300,18 @@
        value on the server. Stays "0" (the server's own signal to fall
        back to the older value-only heuristic) for a plain no-JS post. #}
     <input type="hidden" id="rotation-touched" name="rotation_touched" value="0">
+    {% if job.rotation_manual %}
+      <label><input type="checkbox" name="auto_orient"> Let this app search
+        for a working orientation automatically on this re-slice, instead
+        of keeping the rotation above</label>
+      <p class="muted">
+        This job's rotation is currently locked in as deliberate (it was
+        typed, drag-rotated, or Snap-to-surfaced at some point) - a
+        failed re-slice is never silently swept to a different
+        orientation any more, even after reloading this page. Check the
+        box above to explicitly opt back into automatic search.
+      </p>
+    {% endif %}
     {% if job.status.value in ('queued', 'approved') %}
       <p class="muted">
         Re-slicing an already-queued job temporarily pulls it out of the
