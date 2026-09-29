@@ -972,16 +972,15 @@ AUTO_ROTATE_CANDIDATES = [
 ]
 
 
-def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, support_style, scratch_supports, scale_factor, rotate_x, rotate_y, rotate_z):
+def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, support_style, scratch_supports, scale_factor, rotate_x, rotate_y, rotate_z, rotation_deliberate=False):
     """Tries the requested orientation first, then - only if that fails
-    *and* nothing about the requested orientation was actually
-    deliberate (it's still the untouched default, exactly
-    x=0/y=0/z=0) - sweeps AUTO_ROTATE_CANDIDATES above, stopping at the
-    first success. Returns (success, detail, used_rotate_x, used_y,
-    used_z, auto_rotated) - auto_rotated is True only when a candidate
-    other than the originally-requested rotation is what actually
-    worked, so the caller can record what really got sliced and note
-    that it wasn't what was asked for.
+    *and* the caller says nothing about the requested orientation was
+    actually deliberate - sweeps AUTO_ROTATE_CANDIDATES above, stopping
+    at the first success. Returns (success, detail, used_rotate_x,
+    used_y, used_z, auto_rotated) - auto_rotated is True only when a
+    candidate other than the originally-requested rotation is what
+    actually worked, so the caller can record what really got sliced
+    and note that it wasn't what was asked for.
 
     A real, reported problem, not a hypothetical: a model that first
     slices lying on its side, reoriented deliberately via "Snap to
@@ -993,14 +992,29 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
     nothing to do with which orientation actually prints *better* -
     that's a judgment call only the person who clicked Snap to surface
     can make), overriding a choice that was never naive or accidental
-    in the first place. The docstring here always claimed "respecting
-    an explicit user choice, not second-guessing it," but the code
-    only ever honored that for the *first* attempt, abandoning it
-    completely the moment that attempt failed - now it means what it
-    says: once the requested orientation is anything other than the
-    plain default, a failure is reported as a failure, full stop, not
-    quietly replaced with whichever candidate happens to pass a check
-    that was never about print quality to begin with.
+    in the first place.
+
+    A first fix here tried to tell "deliberate" from "untouched
+    default" purely by *value*: sweep only when the requested rotation
+    was exactly x=0/y=0/z=0. That's wrong, and a real re-slice proved
+    it wrong immediately: Snap to surface computes a *result*, not a
+    fixed number, and its result can legitimately land back on exactly
+    0/0/0 - e.g. clicking the face that makes the model's own original,
+    as-modeled orientation the new "bottom," which is precisely what
+    "make it stand up the way it was designed to" usually means. A
+    deliberately-chosen 0/0/0 is indistinguishable from an
+    untouched-default 0/0/0 by value alone, so the old check re-swept
+    exactly the case it was supposed to protect - silently landing right
+    back on whatever candidate (the model's side, say) had passed the
+    bed-centering check before. `rotation_deliberate` fixes this by
+    tracking *intent* instead of inferring it from the number: the
+    caller (routers/user.py's reslice()) sets it whenever the request
+    carries any sign the rotation fields were actually interacted with
+    this editing session (typing, drag-rotate, or Snap to surface - see
+    job_edit.html's own "rotation_touched" hidden field), regardless of
+    what value that interaction happened to produce. See app/README.md's
+    "A real silently-overridden-orientation incident" for the full
+    story, including the value-only first attempt this replaces.
 
     Deliberately does NOT try to detect "is this the kind of failure
     rotation could plausibly fix" from the error text first when the
@@ -1025,20 +1039,32 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
     if success:
         return success, detail, rotate_x, rotate_y, rotate_z, False
 
-    if (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0):
+    if rotation_deliberate or (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0):
         # A deliberate orientation (drag-rotate, typed values, or Snap
         # to surface) - respected even on failure, never silently
-        # replaced. See this function's own docstring for the real
-        # incident this fixes.
+        # replaced, and even when it happens to equal the plain
+        # default's own value (see this function's own docstring).
+        retry_hint = (
+            # rotate_x/y/z already read 0/0/0 here - telling someone to
+            # "reset to 0/0/0" would be telling them to do nothing. The
+            # actual way back to automatic search is a fresh page load
+            # (this page's own rotation_touched flag never clears itself
+            # client-side - see job_edit.html).
+            "Reload this page (discarding any unsaved changes) and re-slice "
+            "without touching rotation, to let this app search for a working "
+            "orientation automatically."
+            if rotation_deliberate and (rotate_x, rotate_y, rotate_z) == (0.0, 0.0, 0.0)
+            else
+            "Try a different orientation, or reset rotation to 0/0/0 and "
+            "re-slice to let this app search for a working one automatically."
+        )
         note = (
             f"This orientation (x={rotate_x:g}, y={rotate_y:g}, z={rotate_z:g}) failed to "
             "slice. Not automatically re-rotated, since this orientation was set "
             "deliberately rather than left at the default - it's respected even when it "
             "fails, not silently replaced with whatever orientation happens to pass the "
             "printer's own bed-centering check, which has nothing to do with which "
-            "orientation actually prints better. Try a different orientation, or reset "
-            "rotation to 0/0/0 and re-slice to let this app search for a working one "
-            "automatically.\n\n"
+            f"orientation actually prints better. {retry_hint}\n\n"
         )
         return False, note + detail, rotate_x, rotate_y, rotate_z, False
 
@@ -1076,6 +1102,7 @@ def slice_and_update(
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
     resubmit_to_queue: bool = False,
+    rotation_deliberate: bool = False,
 ) -> None:
     """Runs slicing for a draft and records the outcome as 'sliced' (ready
     to preview and, if the user wants, submit) or 'slice_failed' - never
@@ -1118,19 +1145,19 @@ def slice_and_update(
     working - a background task's exceptions don't propagate anywhere a
     user would ever see them.
 
-If slicing fails at the requested orientation *and* that orientation is
-    still the untouched default (x=0/y=0/z=0 - nothing rotated yet),
-    automatically sweeps AUTO_ROTATE_CANDIDATES above before giving up,
-    since real models have repeatedly been fixed by nothing more than
-    rotating. If a candidate other than the one requested is what
-    actually worked, job.rotate_x/y/z are updated to reflect what was
-    *actually* sliced (not silently left showing the orientation that
-    failed), and a short note is recorded so this isn't a silent
+If slicing fails at the requested orientation *and* `rotation_deliberate`
+    is False, automatically sweeps AUTO_ROTATE_CANDIDATES above before
+    giving up, since real models have repeatedly been fixed by nothing
+    more than rotating. If a candidate other than the one requested is
+    what actually worked, job.rotate_x/y/z are updated to reflect what
+    was *actually* sliced (not silently left showing the orientation
+    that failed), and a short note is recorded so this isn't a silent
     surprise - see job_edit.html's own handling of a 'sliced' job with a
-    note still set. A *non*-default requested orientation (set
-    deliberately, e.g. via "Snap to surface") is never swept past this
-    way on failure - see _slice_with_rotation_retry's own docstring for
-    the real incident that distinction exists to prevent.
+    note still set. A deliberately-set requested orientation (per
+    `rotation_deliberate`, threaded from routers/user.py's reslice()) is
+    never swept past this way on failure, regardless of its value - see
+    _slice_with_rotation_retry's own docstring for why this can't just
+    be inferred from whether the value happens to be x=0/y=0/z=0.
     """
     with Session(engine) as session:
         job = session.get(Job, job_id)
@@ -1149,6 +1176,7 @@ If slicing fails at the requested orientation *and* that orientation is
                 rotate_x,
                 rotate_y,
                 rotate_z,
+                rotation_deliberate,
             )
         except Exception as e:
             success, detail, auto_rotated = False, f"Unexpected error while slicing: {e}", False
@@ -1224,11 +1252,20 @@ def start_reslice(
     rotate_x: float = 0.0,
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
+    rotation_deliberate: bool = False,
 ) -> tuple[Path, bool]:
     """Resets a draft to re-slice the same already-uploaded file with new
     settings - the whole point of splitting slicing from submitting: a
     user can freely iterate on support settings, scale, or now rotation
     (see models.Job.rotate_x/y/z) before ever deciding to submit.
+
+    rotation_deliberate is only ever recorded here (in the log detail
+    below) - it doesn't change anything else this function does. The
+    actual sweep-or-not decision it drives happens later, in
+    slice_and_update/_slice_with_rotation_retry, once the background
+    task this kicks off actually runs; see that function's own
+    docstring for why it exists at all and can't just be inferred from
+    rotate_x/y/z's value.
 
     Also reachable for an already-queued/approved job, per the user,
     after "Edit was supposed to be all edit capability... same as the
@@ -1288,7 +1325,8 @@ def start_reslice(
         + (f" scale={scale_factor:.2f}" if scale_factor != 1.0 else "")
         + (
             f" rotate=({rotate_x:.1f},{rotate_y:.1f},{rotate_z:.1f})"
-            if (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0)
+            + (" [explicit]" if rotation_deliberate and (rotate_x, rotate_y, rotate_z) == (0.0, 0.0, 0.0) else "")
+            if rotation_deliberate or (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0)
             else ""
         )
         + (" (was queued - temporarily left the queue while this re-slices)" if was_queued else "")

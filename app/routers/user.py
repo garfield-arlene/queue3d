@@ -665,6 +665,7 @@ def reslice(
     rotate_x: float = Form(0.0),
     rotate_y: float = Form(0.0),
     rotate_z: float = Form(0.0),
+    rotation_touched: bool = Form(False),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
@@ -685,7 +686,19 @@ def reslice(
     scale_percent, not a raw factor, in the form itself - matches what
     the edit page actually shows/lets someone type (see job_edit.html).
     rotate_x/y/z are already in degrees, applied in that order - see
-    models.Job.rotate_x's own docstring for why the order matters."""
+    models.Job.rotate_x's own docstring for why the order matters.
+
+    rotation_touched is job_edit.html's own hidden field, set to true by
+    its JS the moment any rotation control (typed value, drag-rotate, or
+    Snap to surface) is actually used this editing session - the only
+    reliable way to know a requested rotation is deliberate rather than
+    an untouched default, since a deliberate choice can legitimately
+    compute out to the same x=0/y=0/z=0 the default itself uses (see
+    jobs._slice_with_rotation_retry's own docstring for the real
+    incident this exists to fix). Defaults to False, matching a plain
+    no-JS form post, which has no way to set it - that case falls back
+    to the older, imperfect value-only heuristic, same as before this
+    existed."""
     job = _owned_job(session, user, job_id)
     if support_style not in SUPPORT_STYLES:
         support_style = "default"
@@ -700,6 +713,7 @@ def reslice(
             rotate_x,
             rotate_y,
             rotate_z,
+            rotation_touched,
         )
     except JobActionError as e:
         request.session["flash_error"] = str(e)
@@ -716,6 +730,7 @@ def reslice(
         rotate_y,
         rotate_z,
         resubmit_to_queue,
+        rotation_touched,
     )
     return RedirectResponse(f"/jobs/{job_id}/edit", status_code=303)
 

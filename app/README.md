@@ -3371,10 +3371,11 @@ model) combinatorially for a search with no particular reason to
 expect a better answer than a simpler sweep would find.
 `jobs._slice_with_rotation_retry()` tries the orientation actually
 requested first, and only sweeps
-the candidates if that fails *and* the requested orientation is still
-the untouched default (x=0/y=0/z=0) - see "A real
-silently-overridden-orientation incident" below for the fix that added
-that second condition. If a
+the candidates if that fails *and* the requested orientation wasn't
+deliberately set (typed, drag-rotated, or Snap-to-surfaced) this
+editing session - see "A real silently-overridden-orientation incident"
+below for why that can't just be inferred from whether the value is
+x=0/y=0/z=0. If a
 candidate other than the requested one is what worked,
 `slice_and_update()` updates `Job.rotate_x/y/z` to what was *actually*
 sliced (not silently leaving the fields showing the orientation that
@@ -3431,17 +3432,52 @@ that was never meant to adjudicate print quality, with no way to say
 indication it had happened beyond a note most people would only find
 by opening the edit page's own collapsed error detail.
 
-**Fixed by only sweeping when the requested orientation is still
-exactly the default.** Any non-`(0, 0, 0)` requested orientation - a
-manually typed value, a drag-rotate, or a Snap-to-surface result - is
-now respected all the way through: if it fails, it's reported as a
-failure, in full, with a clear explanation of *why* it wasn't
-auto-corrected and what to do next (try a different orientation, or
-reset rotation to 0/0/0 to opt back into the automatic sweep), rather
-than silently replaced. The original, valuable behavior for a genuinely
-naive upload (never rotated at all) is completely unchanged - this
-only closes the gap where a deliberate choice and an untouched default
-were being treated identically.
+**First fix attempt (insufficient): only sweep when the requested
+orientation is still exactly `(0, 0, 0)`.** Any other requested value
+was respected all the way through: if it failed, it was reported as a
+failure, in full, rather than silently replaced. This shipped, and a
+real re-slice of the same job proved it wrong within minutes: **the
+sweep still ran, and the job still came back lying on its side.**
+
+**Real root cause: a deliberate choice can itself compute out to
+exactly `(0, 0, 0)`, and value alone can't tell that apart from "never
+touched."** Snap to surface doesn't produce a fixed number - it
+computes whatever absolute rotation makes the clicked face the new
+bottom. For this job, the face the submitter clicked to "stand it back
+up" was the one that restores the model's own original, as-designed
+orientation - which is `(0, 0, 0)`, the exact same value an untouched
+upload starts at. The activity log proved it directly:
+`reslice_started`'s own detail string only omits its `rotate=(...)`
+suffix when the three values it was actually given are precisely
+`(0.0, 0.0, 0.0)` - and that's exactly what every re-slice attempt
+logged, confirming the server received the deliberately-chosen `(0, 0,
+0)` and, by the first fix's own value-only test, treated it as an
+untouched default and swept right past it - overriding the exact
+choice it was supposed to protect.
+
+**Real fix: track *intent*, not value.** A hidden `rotation_touched`
+field on `job_edit.html`'s settings form starts at `"0"` on page load
+and is set to `"1"` by every control that actually changes
+rotation - typing a value, a drag-rotate commit, or a Snap-to-surface
+click - never reset back client-side, so once touched this editing
+session it stays deliberate through however many re-slices follow.
+`routers/user.py`'s `reslice()` reads it as `rotation_touched` and
+threads it through `jobs.start_reslice`/`slice_and_update` down to
+`_slice_with_rotation_retry` as `rotation_deliberate`, which now skips
+the sweep whenever *either* that flag is set *or* the value is
+non-default - so a deliberately-chosen `(0, 0, 0)` is finally
+respected the same as any other deliberate choice: the re-slice fails
+honestly, with a message explaining that reloading the page (to get a
+fresh, truly-untouched `rotation_touched`) is what opts back into the
+automatic sweep, since typing `0` into fields that are already `0`
+does nothing here. A plain no-JS form post can't set this hidden
+field at all, so it falls back to the original, imperfect value-only
+heuristic - a real but narrow regression versus the JS path, accepted
+because every real editing action on this page is already JS-driven
+(the 3D preview itself requires it). The genuinely-untouched-upload
+case (a fresh file, never rotated) is completely unchanged either
+way - this only closes the gap where a deliberate `(0, 0, 0)` and an
+untouched `(0, 0, 0)` were indistinguishable.
 
 **A real remaining gap: the preview always shows the model
 centered in the frame, even when it's off-center on the bed.** True, and distinct
