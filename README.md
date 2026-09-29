@@ -302,15 +302,19 @@ sections for the full design rationale behind each.
   already-submitted job shows it at whatever scale it was actually
   sliced at too, not just the original file size.
 - **Automatic rotation retry on a slicing failure** - if a model fails to
-  slice at whatever orientation was requested, the app automatically
-  tries a handful of likely rotations (quarter/eighth turns, and
-  standing the model on each of its other faces) before giving up,
-  since real models have repeatedly turned out to need nothing more
-  than a different rotation to slice successfully at all. If one of
-  those works, the job's rotation is updated to match and a clear note
-  says so (not silently applied without explanation); if none do, the
-  job fails as before, with a note that this was already tried so a
-  manual re-attempt at the same rotations won't help.
+  slice at the *default* orientation (never rotated at all), the app
+  automatically tries a handful of likely rotations (quarter/eighth
+  turns, and standing the model on each of its other faces) before
+  giving up, since real models have repeatedly turned out to need
+  nothing more than a different rotation to slice successfully at all.
+  If one of those works, the job's rotation is updated to match and a
+  clear note says so (not silently applied without explanation); if
+  none do, the job fails as before, with a note that this was already
+  tried so a manual re-attempt at the same rotations won't help. A
+  *deliberately* chosen orientation (drag-rotate, typed values, or Snap
+  to surface) is never swept past this way on failure - it's reported
+  as a failure in full, since only the person who chose it can judge
+  whether a different one would actually print better.
 - **Rotate and snap to surface** - free rotation on any axis (three
   degree fields, live preview as you type), plus a "Snap to surface"
   button: click it, then click any face on the model, and it reorients

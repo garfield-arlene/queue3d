@@ -3370,8 +3370,11 @@ multi-axis grid, which would multiply the real per-attempt cost
 model) combinatorially for a search with no particular reason to
 expect a better answer than a simpler sweep would find.
 `jobs._slice_with_rotation_retry()` tries the orientation actually
-requested first (never overriding an explicit choice), and only sweeps
-the candidates if that fails, stopping at the first success. If a
+requested first, and only sweeps
+the candidates if that fails *and* the requested orientation is still
+the untouched default (x=0/y=0/z=0) - see "A real
+silently-overridden-orientation incident" below for the fix that added
+that second condition. If a
 candidate other than the requested one is what worked,
 `slice_and_update()` updates `Job.rotate_x/y/z` to what was *actually*
 sliced (not silently leaving the fields showing the orientation that
@@ -3396,7 +3399,51 @@ background slicing task run to completion lands it on
 happened and why the rotation fields show a value nobody manually
 entered.
 
-**A related, real remaining gap: the preview always shows the model
+### A real silently-overridden-orientation incident
+
+**What happened:** a model sliced lying on its side by default; the
+submitter used "Snap to surface" to deliberately reorient it standing
+upright instead, since it prints better that way. Re-slicing with that
+chosen orientation failed the printer's own bed-centering check
+(`mbotmake`'s `assert -0.15 < xrel < 0.15`, same check "A real
+stuck-slicing incident" and the Flexi_Seal investigation elsewhere in
+this file already cover) - and the job came back lying on its side
+again anyway, `Job.rotate_x/y/z` silently reset to whatever candidate
+in `AUTO_ROTATE_CANDIDATES` happened to pass that check first. Every
+further attempt at a different upright orientation met the identical
+fate.
+
+**Root cause: the retry sweep never actually distinguished "the
+requested orientation is the untouched default" from "someone chose
+this on purpose."** `_slice_with_rotation_retry()`'s own docstring
+always claimed "respecting an explicit user choice, not second-guessing
+it," but the code only ever honored that for the *first* attempt at
+whatever orientation was requested - the instant that attempt failed,
+it swept every `AUTO_ROTATE_CANDIDATES` entry regardless of whether the
+requested orientation came from a genuinely untouched upload or from
+someone deliberately dragging/snapping it into place, silently landing
+on and saving whichever candidate happened to pass the bed-centering
+check. That check has nothing to do with which orientation actually
+prints *better* - only the person who clicked Snap to surface can judge
+that - so a real, considered choice was being overridden by a check
+that was never meant to adjudicate print quality, with no way to say
+"no, I want it this way even if that check fails" and no clear
+indication it had happened beyond a note most people would only find
+by opening the edit page's own collapsed error detail.
+
+**Fixed by only sweeping when the requested orientation is still
+exactly the default.** Any non-`(0, 0, 0)` requested orientation - a
+manually typed value, a drag-rotate, or a Snap-to-surface result - is
+now respected all the way through: if it fails, it's reported as a
+failure, in full, with a clear explanation of *why* it wasn't
+auto-corrected and what to do next (try a different orientation, or
+reset rotation to 0/0/0 to opt back into the automatic sweep), rather
+than silently replaced. The original, valuable behavior for a genuinely
+naive upload (never rotated at all) is completely unchanged - this
+only closes the gap where a deliberate choice and an untouched default
+were being treated identically.
+
+**A real remaining gap: the preview always shows the model
 centered in the frame, even when it's off-center on the bed.** True, and distinct
 from the calculation bug above (which is fixed - the red/blue color and
 info text are now numerically correct for exactly this case). The
