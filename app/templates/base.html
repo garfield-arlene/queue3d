@@ -294,6 +294,42 @@
       --section-title-bg: #b5541f;
       --section-title-text: #fff3d6;
     }
+
+    /* Winter theme (see themes.py) - same shared sidebar/full-width/
+       bordered-section layout, seasonal like Halloween/Thanksgiving.
+       --sidebar-bg is a fixed deep winter blue in both modes, same
+       "fixed identity, the real look comes from the background image"
+       reasoning as the other two seasonal themes. --section-title-bg is
+       a deep berry red - matching the snowman mascot's own scarf/hat
+       color - with a warm cream text, a deliberately warm accent
+       against this theme's cool blue palette, the same "warm structure
+       against a cool sky" pairing the cabin scene's own halo/fill
+       already uses. */
+    [data-theme="winter"] {
+      color-scheme: light;
+      --bg: #f2f6fa;
+      --text: #1a2a44;
+      --error: #c0392b;
+      --border: #d7e3ee;
+      --border-strong: #b9cde0;
+      --detail-bg: #8881;
+      --sidebar-bg: #22355a;
+      --content-bg: #fbfdff;
+      --section-title-bg: #a8291c;
+      --section-title-text: #fdf6ec;
+    }
+    [data-theme="winter"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #0d1420;
+      --text: #e6edf5;
+      --error: #ff6b6b;
+      --border: #223350;
+      --border-strong: #34496b;
+      --sidebar-bg: #22355a;
+      --content-bg: #161f30;
+      --section-title-bg: #a8291c;
+      --section-title-text: #fdf6ec;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -468,7 +504,8 @@
     [data-theme="fil"] body,
     [data-theme="bmms"] body,
     [data-theme="halloween"] body,
-    [data-theme="thanksgiving"] body {
+    [data-theme="thanksgiving"] body,
+    [data-theme="winter"] body {
       max-width: none;
       margin: 0;
       padding: 0;
@@ -481,7 +518,8 @@
     [data-theme="fil"] header,
     [data-theme="bmms"] header,
     [data-theme="halloween"] header,
-    [data-theme="thanksgiving"] header {
+    [data-theme="thanksgiving"] header,
+    [data-theme="winter"] header {
       flex: 0 0 220px;
       box-sizing: border-box;
       flex-direction: column;
@@ -503,7 +541,8 @@
     [data-theme="fil"] header h1,
     [data-theme="bmms"] header h1,
     [data-theme="halloween"] header h1,
-    [data-theme="thanksgiving"] header h1 {
+    [data-theme="thanksgiving"] header h1,
+    [data-theme="winter"] header h1 {
       margin: 0 0 1rem 0.25rem;
     }
     /* Every page's own nav block is a flat list of <a> tags (plus one
@@ -521,7 +560,9 @@
     [data-theme="halloween"] header a,
     [data-theme="halloween"] header form,
     [data-theme="thanksgiving"] header a,
-    [data-theme="thanksgiving"] header form {
+    [data-theme="thanksgiving"] header form,
+    [data-theme="winter"] header a,
+    [data-theme="winter"] header form {
       display: block;
     }
     [data-theme="console"] header a,
@@ -529,7 +570,8 @@
     [data-theme="fil"] header a,
     [data-theme="bmms"] header a,
     [data-theme="halloween"] header a,
-    [data-theme="thanksgiving"] header a {
+    [data-theme="thanksgiving"] header a,
+    [data-theme="winter"] header a {
       padding: 0.6rem 0.75rem;
       border-radius: 4px;
       color: var(--text);
@@ -539,7 +581,8 @@
     [data-theme="fil"] header a:hover,
     [data-theme="bmms"] header a:hover,
     [data-theme="halloween"] header a:hover,
-    [data-theme="thanksgiving"] header a:hover {
+    [data-theme="thanksgiving"] header a:hover,
+    [data-theme="winter"] header a:hover {
       background: var(--border);
     }
     [data-theme="console"] header form,
@@ -547,7 +590,8 @@
     [data-theme="fil"] header form,
     [data-theme="bmms"] header form,
     [data-theme="halloween"] header form,
-    [data-theme="thanksgiving"] header form {
+    [data-theme="thanksgiving"] header form,
+    [data-theme="winter"] header form {
       margin-top: 0.5rem;
       padding-top: 0.75rem;
       border-top: 1px solid var(--border);
@@ -557,7 +601,8 @@
     [data-theme="fil"] header form button,
     [data-theme="bmms"] header form button,
     [data-theme="halloween"] header form button,
-    [data-theme="thanksgiving"] header form button {
+    [data-theme="thanksgiving"] header form button,
+    [data-theme="winter"] header form button {
       width: 100%;
     }
     [data-theme="console"] main,
@@ -565,7 +610,8 @@
     [data-theme="fil"] main,
     [data-theme="bmms"] main,
     [data-theme="halloween"] main,
-    [data-theme="thanksgiving"] main {
+    [data-theme="thanksgiving"] main,
+    [data-theme="winter"] main {
       flex: 1 1 auto;
       min-width: 0;
       padding: 2rem 2.5rem;
@@ -586,7 +632,8 @@
     [data-theme="fil"] .theme-section,
     [data-theme="bmms"] .theme-section,
     [data-theme="halloween"] .theme-section,
-    [data-theme="thanksgiving"] .theme-section {
+    [data-theme="thanksgiving"] .theme-section,
+    [data-theme="winter"] .theme-section {
       border: 1px solid var(--border-strong);
       border-radius: 6px;
       margin-bottom: 1.5rem;
@@ -597,7 +644,8 @@
     [data-theme="fil"] .theme-section > h3,
     [data-theme="bmms"] .theme-section > h3,
     [data-theme="halloween"] .theme-section > h3,
-    [data-theme="thanksgiving"] .theme-section > h3 {
+    [data-theme="thanksgiving"] .theme-section > h3,
+    [data-theme="winter"] .theme-section > h3 {
       margin: 0;
       padding: 0.6rem 1rem;
       background: var(--section-title-bg);
@@ -608,7 +656,8 @@
     [data-theme="fil"] .theme-section > :not(h3),
     [data-theme="bmms"] .theme-section > :not(h3),
     [data-theme="halloween"] .theme-section > :not(h3),
-    [data-theme="thanksgiving"] .theme-section > :not(h3) {
+    [data-theme="thanksgiving"] .theme-section > :not(h3),
+    [data-theme="winter"] .theme-section > :not(h3) {
       margin-left: 1rem;
       margin-right: 1rem;
     }
@@ -617,7 +666,8 @@
     [data-theme="fil"] .theme-section > *:last-child,
     [data-theme="bmms"] .theme-section > *:last-child,
     [data-theme="halloween"] .theme-section > *:last-child,
-    [data-theme="thanksgiving"] .theme-section > *:last-child {
+    [data-theme="thanksgiving"] .theme-section > *:last-child,
+    [data-theme="winter"] .theme-section > *:last-child {
       margin-bottom: 1rem;
     }
     [data-theme="console"] .theme-section > table,
@@ -625,7 +675,8 @@
     [data-theme="fil"] .theme-section > table,
     [data-theme="bmms"] .theme-section > table,
     [data-theme="halloween"] .theme-section > table,
-    [data-theme="thanksgiving"] .theme-section > table {
+    [data-theme="thanksgiving"] .theme-section > table,
+    [data-theme="winter"] .theme-section > table {
       /* The one child that should reach the section's own edges rather
          than sit inset like everything else - a table's own header row
          already reads as a boundary, and insetting it just wastes width
@@ -756,6 +807,34 @@
       border: none;
     }
 
+    /* Winter-specific: the sidebar's background scene (see
+       theme-winter-cabin.svg) plus the same fixed light nav text
+       override every photo/art-backed sidebar theme in this app already
+       needs. This is a dusk scene like Halloween's, not a bright one
+       like Thanksgiving's, so its scrim uses Halloween's own "only a
+       touch heavier in dark mode" weighting rather than Thanksgiving's
+       much bigger jump. */
+    [data-theme="winter"] header {
+      background-image: linear-gradient(rgba(10, 15, 25, 0.2), rgba(10, 15, 25, 0.2)), url("/static/theme-winter-cabin.svg");
+      background-size: cover;
+      background-position: center top;
+    }
+    [data-theme="winter"][data-mode="dark"] header {
+      background-image: linear-gradient(rgba(4, 6, 12, 0.4), rgba(4, 6, 12, 0.4)), url("/static/theme-winter-cabin.svg");
+    }
+    [data-theme="winter"] header,
+    [data-theme="winter"] header a {
+      color: #f2f6fa;
+    }
+    [data-theme="winter"] header a:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+    [data-theme="winter"] header form button {
+      background: var(--section-title-bg);
+      color: var(--section-title-text);
+      border: none;
+    }
+
     /* Fil-specific: the two mascot images (see the <body> markup below
        and theme-fil-*.svg) - both <img> tags are always present in the
        markup on every theme, so JS never needs to add/remove them; they
@@ -877,6 +956,31 @@
       50% { transform: translateY(-3px); }
     }
 
+    /* Winter-specific: the snowman (see the <body> markup below and
+       theme-winter-snowman.svg) - same bottom-of-the-window standing
+       slot and gentle bob as the Thanksgiving turkey above (a snowman
+       just stands, same reasoning), reusing the exact spot since only
+       one of the three ever applies to a given page. */
+    .winter-snowman {
+      display: none;
+      position: fixed;
+      pointer-events: none;
+      z-index: 5;
+    }
+    [data-theme="winter"] .winter-snowman {
+      display: block;
+      bottom: 0;
+      right: 60px;
+      width: 80px;
+      height: auto;
+      animation: snowman-bob 6s ease-in-out infinite;
+      pointer-events: auto;
+    }
+    @keyframes snowman-bob {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-3px); }
+    }
+
     /* BMMS-specific: the school's own logo (app/static/bmms-logo.png),
        shown near the "queue3d" title in the sidebar header - always in
        the markup (see the <body> below), hidden by default the same way
@@ -915,7 +1019,7 @@
     // replace themselves via hx-swap), not just on initial load, so a
     // background refresh can't silently leave a swapped-in section
     // unboxed.
-    const SECTION_THEMES = ["console", "savanna", "fil", "bmms", "halloween", "thanksgiving"];
+    const SECTION_THEMES = ["console", "savanna", "fil", "bmms", "halloween", "thanksgiving", "winter"];
     function applyThemeSections() {
       if (!SECTION_THEMES.includes(document.documentElement.getAttribute("data-theme"))) return;
       // A descendant selector, not just direct children of <main> - some
@@ -968,6 +1072,10 @@
        hidden-except-under-its-own-theme treatment as the two pairs
        above. -->
   <img src="/static/theme-thanksgiving-turkey.svg" alt="" aria-hidden="true" class="thanksgiving-turkey" title="Gobble gobble!">
+  <!-- Winter's own mascot - same always-in-the-markup,
+       hidden-except-under-its-own-theme treatment as the three pairs
+       above. -->
+  <img src="/static/theme-winter-snowman.svg" alt="" aria-hidden="true" class="winter-snowman" title="Stay cozy!">
   <header>
     <img src="/static/bmms-logo.png" alt="Black Mountain Middle School Raiders logo" class="bmms-logo">
     <h1>queue3d</h1>

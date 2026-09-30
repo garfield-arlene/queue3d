@@ -2348,6 +2348,59 @@ rendered page rather than the coordinates alone:
   of each other - so they read as two distinct groups rather than one
   undifferentiated row of circles.
 
+### The "Winter" theme - a third seasonal theme, and its first year-wrapping window
+
+**Why this exists:** the same shared sidebar/full-width/bordered-section
+layout again, seasonal like Halloween and Thanksgiving (December 1 -
+January 15) - a cozy snowy-dusk scene (a pale winter moon, snow-capped
+evergreens, a log cabin with glowing windows and a smoking chimney,
+drifting snowflakes) behind the sidebar, and a snowman standing at the
+bottom of the window in the same slot the Thanksgiving turkey stands in
+- a snowman just stands, the same reasoning that moved the turkey there
+in the first place, applied here from the start rather than found as a
+bug afterward. Deliberately a generic winter/snow theme, not Christmas,
+Hanukkah, or any other specific holiday - the same "school-appropriate
+for everyone" bar Halloween's ghosts-not-religion and Thanksgiving's
+harvest-not-Pilgrims choices already follow, applied to winter's own
+obvious alternative (a decorated tree, a menorah) that this deliberately
+stays clear of.
+
+**A real bug this theme's own date window exposed, not a hypothetical
+one avoided by luck: `_in_season()` didn't handle a window crossing the
+calendar year boundary at all.** Halloween and Thanksgiving's own
+windows both sit entirely within one calendar year, so the original
+implementation - build both `start` and `end` as real `date()` objects
+in *today's* year, then check `start <= today <= end` - never had reason
+to fail. Winter's own window (December 1 - January 15) does exactly
+that: on any date in December, `end` (January 15, built in the same
+year as `today`) lands *earlier* than `start` (December 1), so
+`today <= end` is false for literally every December date, and the
+window would never match at all. Fixed by comparing plain `(month,
+day)` tuples instead of real dates - `start_md <= today_md <= end_md`
+for a normal window, `today_md >= start_md or today_md <= end_md` for a
+wrapping one (today is in season if it's on or after the start
+*or* on or before the end, not both at once) - which also sidesteps a
+second, smaller problem for free: building a literal `date(year, 2, 29)`
+for some future window's boundary would raise outright in a year that
+isn't a leap year, something bare tuple comparison never has to worry
+about. Verified with the exact boundary dates a manual test would be
+most likely to get wrong (November 30, December 1, December 31, January
+1, January 15, January 16) plus a regression check that Halloween's own
+non-wrapping window still resolves correctly, then re-verified
+end-to-end against a real account and a request carrying a real
+deployment hostname while genuinely out of season, the same way both
+earlier seasonal themes were.
+
+**The cabin scene applies every lesson both earlier seasonal scenes
+needed their own passes to learn, from the start:** a portrait canvas,
+the moon tucked into a top corner clear of the nav column, the cabin
+given a halo behind it plus a lighter, warmer fill against the cool sky
+rather than a silhouette that blends into it, every window kept clear of
+every roofline and wall corner, and the ground-level snow-dusted bushes
+given real bumpy, scalloped shape language from the start rather than a
+plain circle - Thanksgiving's own hay-bale/pumpkin fix's exact lesson,
+applied here before it could repeat rather than after.
+
 ### Login rate-limiting
 
 **Why this exists:** PINs are short by design (low

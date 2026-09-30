@@ -152,6 +152,24 @@ THEMES = {
     # when it's actually offered, and app/README.md's "The
     # 'Thanksgiving' theme" section for the full writeup.
     "thanksgiving": "Thanksgiving",
+    # Same shared sidebar/full-width/bordered-section layout again,
+    # seasonal like Halloween/Thanksgiving - a cozy snowy-dusk scene
+    # (app/static/theme-winter-cabin.svg: a pale winter moon, snow-capped
+    # evergreens, a lodge with glowing windows and a smoking chimney,
+    # drifting snowflakes) behind the sidebar, and a snowman standing at
+    # the bottom of the window, in the same slot the Thanksgiving turkey
+    # stands in - a snowman just stands, the same reasoning that moved
+    # the turkey there in the first place applies from the start here,
+    # no edge-gripping/hanging concept ever considered for this one.
+    # Deliberately a generic winter/snow theme, not Christmas, Hanukkah,
+    # or any other specific holiday - the same "school-appropriate for
+    # everyone" bar Halloween's ghosts-not-religion and Thanksgiving's
+    # harvest-not-Pilgrims choices already follow, applied to winter's
+    # own obvious alternative (a decorated tree, menorah, etc.) that this
+    # deliberately stays clear of. See SEASONAL_THEMES below for when
+    # it's actually offered, and app/README.md's "The 'Winter' theme"
+    # section for the full writeup.
+    "winter": "Winter",
 }
 
 MODES = {
@@ -163,13 +181,19 @@ MODES = {
 # start_day), (end_month, end_day)), both ends inclusive, checked against
 # today's date. Halloween's window is deliberately wider than just the
 # few days around October 31st (mid-September through mid-November) so
-# it's not gone again the moment the holiday itself passes. Any theme id
-# not listed here (every non-seasonal one) is available year-round -
-# see is_theme_selectable() below for the actual gating, and its own
-# always-available-on-127.0.0.1 exception.
+# it's not gone again the moment the holiday itself passes. A window may
+# cross the calendar year boundary (end < start, like Winter's own
+# December-into-January span below) - see _in_season()'s own docstring
+# for how that's actually handled. Any theme id not listed here (every
+# non-seasonal one) is available year-round - see is_theme_selectable()
+# below for the actual gating, and its own always-available-on-127.0.0.1
+# exception.
 SEASONAL_THEMES = {
     "halloween": ((9, 15), (11, 15)),
     "thanksgiving": ((10, 15), (11, 30)),
+    # Crosses the calendar year boundary - see _in_season()'s own
+    # docstring for why that needed a real fix, not just a new entry.
+    "winter": ((12, 1), (1, 15)),
 }
 
 
@@ -205,11 +229,31 @@ def _is_dev_loopback(request) -> bool:
 
 
 def _in_season(window: tuple[tuple[int, int], tuple[int, int]]) -> bool:
+    """Whether today falls within window's (month, day) range, inclusive
+    of both ends - compared as plain (month, day) tuples, not real
+    date() objects, which sidesteps two separate problems a first
+    version (before Winter existed to actually need this) didn't have to
+    handle: Winter's own window (December 1 - January 15) crosses the
+    calendar year boundary, which "build both ends in today's own year,
+    then check start <= today <= end" gets backwards - the "end" would
+    land three and a half weeks *before* the "start" in the same
+    calendar year, so nothing in December would ever match at all.
+    Comparing bare (month, day) pairs instead handles a wrapping window
+    with one extra branch below and, as a side effect, can never raise
+    trying to construct a real February 29th in a year that isn't a leap
+    year either, for any future window that happens to touch it."""
     (start_month, start_day), (end_month, end_day) = window
     today = date.today()
-    start = date(today.year, start_month, start_day)
-    end = date(today.year, end_month, end_day)
-    return start <= today <= end
+    today_md = (today.month, today.day)
+    start_md = (start_month, start_day)
+    end_md = (end_month, end_day)
+    if start_md <= end_md:
+        return start_md <= today_md <= end_md
+    # Wraps across the new year (e.g. Winter's Dec 1 - Jan 15) - "today"
+    # is in season if it's on or after the start (anywhere from
+    # December through year's end) or on or before the end (anywhere
+    # from January 1st up to the cutoff), not both at once.
+    return today_md >= start_md or today_md <= end_md
 
 
 def is_theme_selectable(theme_id: str, request, current: str | None = None) -> bool:
