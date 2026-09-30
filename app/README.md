@@ -2354,8 +2354,9 @@ rendered page rather than the coordinates alone:
 layout again, seasonal like Halloween and Thanksgiving (December 1 -
 January 15) - a cozy snowy-dusk scene (a pale winter moon, snow-capped
 evergreens, a log cabin with glowing windows and a smoking chimney,
-drifting snowflakes) behind the sidebar, and a snowman standing at the
-bottom of the window in the same slot the Thanksgiving turkey stands in
+drifting snowflakes, a frozen pond with a few kids ice skating) behind
+the sidebar, and a snowman standing at the bottom of the window in the
+same slot the Thanksgiving turkey stands in
 - a snowman just stands, the same reasoning that moved the turkey there
 in the first place, applied here from the start rather than found as a
 bug afterward. Deliberately a generic winter/snow theme, not Christmas,
@@ -2395,11 +2396,29 @@ earlier seasonal themes were.
 needed their own passes to learn, from the start:** a portrait canvas,
 the moon tucked into a top corner clear of the nav column, the cabin
 given a halo behind it plus a lighter, warmer fill against the cool sky
-rather than a silhouette that blends into it, every window kept clear of
-every roofline and wall corner, and the ground-level snow-dusted bushes
-given real bumpy, scalloped shape language from the start rather than a
-plain circle - Thanksgiving's own hay-bale/pumpkin fix's exact lesson,
-applied here before it could repeat rather than after.
+rather than a silhouette that blends into it, and every window kept
+clear of every roofline and wall corner.
+
+**One thing still needed its own second pass regardless: the original
+ground-level decoration was a pair of snow-dusted bushes, given the
+exact "real, specific shape language, not a plain blob" treatment
+Thanksgiving's own hay-bale/pumpkin fix already established - and it
+still wasn't enough.** Asked about directly rather than misread
+silently ("What's below the house?"), same as Thanksgiving's own
+"spotlights" question. A bumpy green silhouette with a white cap is a
+real, deliberate shape, but it's still fundamentally *a green blob*, and
+the lesson that fix actually taught wasn't "add texture to a blob," it
+was "give ambiguous ground clutter something to specifically be."
+Replaced entirely instead of redrawn: a frozen pond with a few kids ice
+skating - a real, distinctly-colored shape (not another patch of the
+same snow it sits on) with small figures whose pose (arms out, one leg
+forward, a skate trail curving behind them) has no plausible second
+reading at all, unlike a bumpy mound that could still be read as
+several different things at a glance. Every kid is built identically
+simple (a round head, a puffy coat, thin legs, a small hat) with only
+the coat/hat color varying between them - the same level of abstraction
+as Fil (a stick figure) or the turkey/snowman mascots, not an attempt at
+a realistic or specific-looking person.
 
 ### Login rate-limiting
 
