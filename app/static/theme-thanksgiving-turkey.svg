@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 150" width="120" height="150">
+  <!-- Thanksgiving theme's own mascot (see themes.py/base.html). Fil
+       (theme-fil-hang.svg) and the Halloween spider (theme-halloween-
+       spider.svg) both attach to the TOP of the window - a fist
+       gripping the edge, a strand of web - which reads fine for a
+       filament creature or a spider, both things that plausibly cling
+       to or dangle from something. A turkey doesn't have an equivalent:
+       an earlier version perched it there the same way, feet gripping
+       the top edge, and checked against a real render it just read as
+       "hanging," odd for a bird that stands. Standing at the *bottom*
+       of the window instead - feet planted at the very bottom edge,
+       body/head/tail above them - the ordinary way a bird actually
+       looks, no edge-gripping concept needed at all. -->
+
+  <!-- tail: a fan of five rounded feathers behind the body, drawn first
+       so the body sits in front of/on top of their shared base. Each is
+       a plain ellipse, rotated out from a common anchor point. -->
+  <g stroke="#3a2210" stroke-width="1.5">
+    <g transform="translate(60,78) rotate(-62)"><ellipse cx="0" cy="-30" rx="14" ry="33" fill="#a13d2c"/></g>
+    <g transform="translate(60,78) rotate(-31)"><ellipse cx="0" cy="-30" rx="14" ry="33" fill="#d97a2e"/></g>
+    <g transform="translate(60,78) rotate(0)"><ellipse cx="0" cy="-30" rx="14" ry="33" fill="#e0a83a"/></g>
+    <g transform="translate(60,78) rotate(31)"><ellipse cx="0" cy="-30" rx="14" ry="33" fill="#d97a2e"/></g>
+    <g transform="translate(60,78) rotate(62)"><ellipse cx="0" cy="-30" rx="14" ry="33" fill="#a13d2c"/></g>
+  </g>
+
+  <!-- legs, standing on the ground (the bottom edge, y=150) - a light
+       backing stroke first, then a darker line, same "sticker" double-
+       stroke the body/head below use, so the legs stay visible against
+       both light and dark content backgrounds. -->
+  <g stroke-linecap="round">
+    <g stroke="#fff3d6" stroke-width="5">
+      <line x1="52" y1="140" x2="55" y2="110"/>
+      <line x1="68" y1="140" x2="65" y2="110"/>
+    </g>
+    <g stroke="#b5541f" stroke-width="2.8">
+      <line x1="52" y1="140" x2="55" y2="110"/>
+      <line x1="68" y1="140" x2="65" y2="110"/>
+    </g>
+  </g>
+  <!-- feet, standing on the ground -->
+  <g fill="none" stroke-linecap="round">
+    <g stroke="#fff3d6" stroke-width="4.5">
+      <path d="M52,140 L46,150 M52,140 L52,150 M52,140 L58,150"/>
+      <path d="M68,140 L62,150 M68,140 L68,150 M68,140 L74,150"/>
+    </g>
+    <g stroke="#b5541f" stroke-width="2.4">
+      <path d="M52,140 L46,150 M52,140 L52,150 M52,140 L58,150"/>
+      <path d="M68,140 L62,150 M68,140 L68,150 M68,140 L74,150"/>
+    </g>
+  </g>
+
+  <!-- folded wings, either side of the body -->
+  <path d="M28,58 Q18,78 32,101 Q30,78 40,63 Z" fill="#8a3a1a" stroke="#5c2a1a" stroke-width="2"/>
+  <path d="M92,58 Q102,78 88,101 Q90,78 80,63 Z" fill="#8a3a1a" stroke="#5c2a1a" stroke-width="2"/>
+
+  <!-- body - light backing ring first, then real fill/outline -->
+  <ellipse cx="60" cy="78" rx="33" ry="30" fill="none" stroke="#fff3d6" stroke-width="3"/>
+  <ellipse cx="60" cy="78" rx="31.5" ry="28.5" fill="#b5541f" stroke="#5c2a1a" stroke-width="2.5"/>
+
+  <!-- head, same double-outline treatment -->
+  <circle cx="60" cy="43" r="19.5" fill="none" stroke="#fff3d6" stroke-width="3"/>
+  <circle cx="60" cy="43" r="18" fill="#c9601f" stroke="#5c2a1a" stroke-width="2.5"/>
+
+  <!-- wattle -->
+  <path d="M60,56 Q54,67 60,75 Q66,67 60,56 Z" fill="#c0392b" stroke="#7a1f18" stroke-width="1.5"/>
+
+  <!-- beak -->
+  <path d="M46,45 L34,49 L46,53 Z" fill="#f0a830" stroke="#a86f18" stroke-width="1.5"/>
+
+  <!-- googly eyes -->
+  <circle cx="52" cy="35" r="7" fill="#ffffff"/>
+  <circle cx="68" cy="35" r="7" fill="#ffffff"/>
+  <circle cx="51" cy="36" r="3.2" fill="#241a3a"/>
+  <circle cx="67" cy="36" r="3.2" fill="#241a3a"/>
+</svg>

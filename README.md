@@ -479,7 +479,7 @@ sections for the full design rationale behind each.
   selection" section.
 
 **Appearance**
-- Done - five themes beyond Default: "Console" (sidebar nav,
+- Done - six themes beyond Default: "Console" (sidebar nav,
   bordered/titled sections, full browser width), "Savanna" (the same
   layout with a desert-sunrise background photo), "Fil" (the same
   layout again with an original mascot instead of a photo - a Mickey
@@ -487,25 +487,31 @@ sections for the full design rationale behind each.
   `app/README.md`'s "The 'Fil' theme" section for why), "BMMS"
   (the same layout built for this app's actual deployment site - Black
   Mountain Middle School's own maroon-and-gold colors and Raiders logo,
-  also shown on both login pages regardless of theme), and "Halloween"
-  (the same layout again, seasonal rather than year-round - see the
-  dedicated bullet below). All five ship both a light and dark palette -
-  see `app/README.md`'s "The 'Console' theme," "The 'Savanna' theme,"
-  "The 'Fil' theme," "The 'BMMS' theme," and "The 'Halloween' theme"
-  sections. Further themes beyond these remain open; everything must
-  still ship as local static files, no CDN fonts or external image URLs
-  (see "Deployment: zero internet access" - this app runs with none,
-  ever).
+  also shown on both login pages regardless of theme), "Halloween," and
+  "Thanksgiving" (the same layout again, both seasonal rather than
+  year-round - see the dedicated bullet below). All six ship both a
+  light and dark palette - see `app/README.md`'s "The 'Console' theme,"
+  "The 'Savanna' theme," "The 'Fil' theme," "The 'BMMS' theme," "The
+  'Halloween' theme," and "The 'Thanksgiving' theme" sections. Further
+  themes beyond these remain open; everything must still ship as local
+  static files, no CDN fonts or external image URLs (see "Deployment:
+  zero internet access" - this app runs with none, ever).
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
-- Done, for Halloween - a seasonal "Halloween" theme (haunted-mansion
-  night scene, a spider hanging from the top of the window), selectable
-  in the theme picker only from September 15 to November 15 rather than
-  sitting year-round as permanent clutter, except always selectable
-  regardless of the current date when accessing via `127.0.0.1`, so
-  development/testing against it doesn't require waiting for the actual
-  season or faking the system clock. See `app/README.md`'s "The
-  'Halloween' theme" section. A winter-holiday variant remains open.
+- Done, for Halloween and Thanksgiving - two seasonal themes (a
+  haunted-mansion night scene with a spider hanging from the top of the
+  window; a harvest-dusk scene with a barn and a turkey standing at the
+  bottom),
+  each selectable in the theme picker only during its own date window
+  (September 15 - November 15 for Halloween, October 15 - November 30
+  for Thanksgiving) rather than sitting year-round as permanent clutter,
+  except always selectable regardless of the current date when accessing
+  via `127.0.0.1`, so development/testing against either doesn't require
+  waiting for the actual season or faking the system clock. An account
+  that picks a seasonal theme actually reverts to Default once its
+  window closes, rather than silently keeping it forever. See
+  `app/README.md`'s "The 'Halloween' theme" and "The 'Thanksgiving'
+  theme" sections. A winter-holiday variant remains open.
 
 **Printer**
 - ~~Correct the fallback time estimate using real completion history~~

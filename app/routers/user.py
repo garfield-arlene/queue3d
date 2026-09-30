@@ -39,7 +39,7 @@ from mesh import convert_3mf_to_stl, convert_obj_to_stl
 from models import DRAFT_STATUSES, Color, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, MAX_ZIP_MODEL_FILES, scratch_stl_path
 from templates_env import templates
-from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, is_theme_selectable, is_valid_mode, is_valid_theme, theme_choices
+from themes import DEFAULT_MODE, MODES, effective_theme, is_theme_selectable, is_valid_mode, is_valid_theme, theme_choices
 
 # OrcaSlicer's own support_style values, each confirmed (by directly
 # comparing sliced gcode output, not just guessed) to actually produce
@@ -162,16 +162,25 @@ def logout(request: Request):
 
 
 def _user_settings_context(request: Request, user: User, error: str | None = None, saved: bool = False):
-    selected_theme = user.theme or DEFAULT_THEME
+    # effective_theme(), not a plain `user.theme or DEFAULT_THEME` - if
+    # user.theme is a seasonal theme that's since fallen out of its own
+    # window, this already reports DEFAULT_THEME, matching what
+    # current_theme() (templates_env.py, which also persists the same
+    # reset to the account's own stored value) renders on this exact
+    # response - without this, the dropdown would keep showing the old
+    # expired choice as "selected" for one extra page load, since
+    # current_theme()'s own reset happens during Jinja rendering, after
+    # this context dict is already built.
+    selected_theme = effective_theme(user.theme, request)
     return {
         "user": user,
         # Filtered to what's actually pickable right now (a seasonal
         # theme outside its own window disappears from the dropdown,
-        # except on 127.0.0.1) - see themes.theme_choices(). The
-        # account's own already-saved choice is always included even if
-        # it's since fallen out of season, so the dropdown keeps showing
-        # what's really selected instead of silently defaulting to
-        # whatever option happens to come first.
+        # except on 127.0.0.1) - see themes.theme_choices(). selected_theme
+        # is already DEFAULT_THEME by the time it gets here whenever
+        # user.theme itself has expired (see above), so this "always
+        # include the current choice" exemption only ever protects a
+        # still-genuinely-active one.
         "themes": theme_choices(request, selected_theme),
         "modes": MODES,
         "selected_theme": selected_theme,

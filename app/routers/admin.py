@@ -66,7 +66,7 @@ from models import Admin, Color, Job, QUEUE_STATUSES, Settings, TERMINAL_STATUSE
 from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
 from support_bundle import build_support_bundle
 from templates_env import is_valid_timezone, set_display_timezone, templates
-from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, is_theme_selectable, is_valid_mode, is_valid_theme, theme_choices
+from themes import DEFAULT_MODE, MODES, effective_theme, is_theme_selectable, is_valid_mode, is_valid_theme, theme_choices
 
 router = APIRouter(prefix="/admin")
 
@@ -999,7 +999,9 @@ def get_settings(session: Session) -> Settings:
 def _admin_settings_context(
     request: Request, session: Session, admin: Admin, error: str | None = None, saved: bool = False
 ):
-    selected_theme = admin.theme or DEFAULT_THEME
+    # See routers/user.py's _user_settings_context for why this is
+    # effective_theme(), not a plain `admin.theme or DEFAULT_THEME`.
+    selected_theme = effective_theme(admin.theme, request)
     return {
         "admin": admin,
         "settings": get_settings(session),

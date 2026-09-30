@@ -2171,13 +2171,29 @@ SEASONAL_THEMES` maps a theme id to a `((start_month, start_day),
 Halloween, both ends inclusive), and `theme_choices()`/
 `is_theme_selectable()` filter the settings pages' dropdown down to
 what's actually pickable right now, rather than leaving an
-out-of-season theme sitting there as permanent clutter.** An account
-that already has a seasonal theme saved stays on it regardless of the
-calendar (`current_theme()` in templates_env.py never re-checks the
-season - only the dropdown does), and always includes an account's own
-current choice as an option even if it's since fallen out of season, so
-resubmitting an unrelated settings-page change doesn't get rejected as
-if the untouched theme field were a fresh, disallowed pick.
+out-of-season theme sitting there as permanent clutter.** Picking a
+seasonal theme while it's in season doesn't just add a dropdown entry
+that quietly disappears later, either - once its window closes (and
+this isn't a 127.0.0.1/localhost request), the account actually reverts
+to `DEFAULT_THEME`, the same "`None` means no preference, follow
+`DEFAULT_THEME`" meaning every other cleared `theme` column already has
+(see `db._migrate_to_7_1_0`'s own use of exactly that). `themes.
+effective_theme()` is the one rule both sides share: `current_theme()`
+(templates_env.py) uses it to decide what to render *and* persists the
+reset back to the account's own stored value (in `_signed_in_account()`,
+the one place both `current_theme()`/`current_mode()` already fetch the
+account from), while the settings pages' own `selected_theme` uses the
+exact same function purely for display - without that second use, a
+settings page loaded on the very request that triggers the reset would
+still show the old, now-cleared theme as "selected" for one extra page
+load, since `current_theme()`'s own reset happens during Jinja
+rendering, strictly after the settings route has already built its
+response context. An account's own current choice is still always
+included as a dropdown *option* even if it's since expired
+(`theme_choices()`'s own `current` exemption) - by the time that
+matters, `selected_theme` is already `DEFAULT_THEME` per the paragraph
+above, so this exemption only ever protects a still-genuinely-active
+choice, not a stale one.
 
 **Always selectable regardless of date when hitting the app directly at
 127.0.0.1/localhost - deliberately checked via `request.url.hostname`
@@ -2252,6 +2268,85 @@ seam-crossing overlaps, caught by zooming into a real render, not
 visible from the coordinates alone.** Both windows moved to comfortable
 clearance from every roofline and wall corner they were meant to sit
 inside instead.
+
+### The "Thanksgiving" theme - a second seasonal theme, and the general mechanism proven out twice
+
+**Why this exists:** the same shared sidebar/full-width/bordered-section
+layout again, seasonal like Halloween (October 15 - November 30) - a
+cozy harvest-dusk scene (a low harvest sun, a barn, corn shocks,
+pumpkins and gourds, a rail fence, drifting leaves) behind the sidebar,
+and a turkey standing at the bottom of the window. Deliberately just an
+autumn-harvest theme, not depicting Pilgrims, the First Thanksgiving, or
+any Native American imagery - the same nothing-that-could-offend bar
+Halloween's own "friendly, not frightening" design already follows,
+applied to a different holiday's own actual sensitivity.
+
+**The turkey stands, it doesn't hang.** Fil and the Halloween spider
+both attach to the *top* of the window - a fist gripping the edge, a
+strand of web - completely ordinary for a filament creature or a
+spider, neither of which has a standing pose to fall back on anyway. A
+turkey does, and a first version giving it the same top-edge treatment
+anyway (feet gripping the edge in Fil's own spot) read as flatly
+"hanging" once checked against a real render - odd for a bird, and
+besides that, dangling by anything reads too close to actual
+Thanksgiving-dinner imagery to belong in a school app in the first
+place. Standing at the *bottom* of the window instead needs no
+edge-gripping concept at all: feet planted on the ground, body/head/tail
+above them, the ordinary way a bird actually looks - a plain
+front-facing cartoon turkey otherwise, a fan of tail feathers behind a
+round body and head.
+
+**`themes.SEASONAL_THEMES` needing exactly one more entry to add a
+second seasonal theme confirms the mechanism built for Halloween is
+actually general, not something that happened to work once.** Every
+other piece - `theme_choices()`/`is_theme_selectable()`'s dropdown
+filtering, `effective_theme()`'s render-time fallback and its
+`_signed_in_account()`-persisted reset, the 127.0.0.1 exception - needed
+no changes at all to also cover Thanksgiving; only `THEMES` and
+`SEASONAL_THEMES` themselves gained a new key each, plus this theme's
+own CSS/artwork. Verified end-to-end against a real account and a real
+request carrying a real deployment hostname, not just by inspection: a
+`theme` column set to `"thanksgiving"`, rendered while genuinely out of
+season through a non-127.0.0.1 request, reverts to `DEFAULT_THEME` and
+stays that way on every later request - the same reset Halloween's own
+section above describes, exercised a second time on a different theme
+with no seasonal-mechanism code changes of its own.
+
+**The sidebar scene applies every lesson Halloween's own manor scene
+needed a second pass to learn, from the start instead of after the
+fact:** a portrait canvas (not landscape, for the same `cover`-crops-a-
+narrow-sidebar reason), the sun tucked into the top corner clear of the
+nav column beneath it, the barn given a lighter fill/outline/halo
+against the sky rather than a near-black silhouette, and every window
+kept clear of every roofline and wall corner. Several things still
+needed a real second pass even so, all caught by looking at an actual
+rendered page rather than the coordinates alone:
+
+- The tail feathers on the mascot itself first used hand-drawn wedge
+  paths that read as thin antennae rather than a fan - rebuilt as plain
+  rotated ellipses radiating from a shared anchor point instead, simpler
+  to get reading clearly as a fanned turkey tail than hand-tuned petal
+  curves turned out to be.
+- The center pumpkin on the ground first had a soft warm glow behind it,
+  copied from the windows/hayloft door above without carrying over their
+  actual justification (real lit interior light at dusk) - a plain
+  uncarved gourd has no light source to explain one. Removed - the other
+  two pumpkins never had it either.
+- The pumpkins/gourds and hay bales, together, went a full round further
+  than that: plain ovals (the pumpkins) sitting right next to plain
+  circles (the bales), both similarly sized and similarly colored, with
+  nothing but one faint crease line distinguishing a "pumpkin" from
+  anything else round - described back as "all just look like
+  spotlights, I can't tell if those are pumpkins." Fixed with real,
+  specific shape language for each rather than a subtler color/line
+  tweak: pumpkins are now wider than tall (an actual pumpkin's own
+  proportions) with three visible vertical ridges and a real curved
+  stem; hay bales are flattened ellipses with horizontal straw
+  striations and a dashed binding band, in a visibly different gold-tan
+  from the pumpkins' orange. The two clusters also moved apart
+  vertically - a real gap between them, not stacked immediately on top
+  of each other - so they read as two distinct groups rather than one
+  undifferentiated row of circles.
 
 ### Login rate-limiting
 

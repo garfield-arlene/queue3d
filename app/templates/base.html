@@ -258,6 +258,42 @@
       --section-title-bg: #e8720c;
       --section-title-text: #2a1400;
     }
+
+    /* Thanksgiving theme (see themes.py) - same shared sidebar/
+       full-width/bordered-section layout, seasonal like Halloween.
+       --sidebar-bg is a fixed warm brown in both modes, same "fixed
+       identity, the real look comes from the background image" reasoning
+       as Halloween's own sidebar-bg. --section-title-bg is a burnt
+       sienna, matching the barn scene's own accent color
+       (theme-thanksgiving-harvest.svg) and the turkey mascot's own body
+       color, with a warm cream for its text - both fixed across modes,
+       same "a saturated accent needs to stay saturated" reasoning as
+       every other theme's own section-title color. */
+    [data-theme="thanksgiving"] {
+      color-scheme: light;
+      --bg: #fdf6ec;
+      --text: #3a2314;
+      --error: #c0392b;
+      --border: #ecdcc0;
+      --border-strong: #d9c096;
+      --detail-bg: #8881;
+      --sidebar-bg: #4a2416;
+      --content-bg: #fffaf0;
+      --section-title-bg: #b5541f;
+      --section-title-text: #fff3d6;
+    }
+    [data-theme="thanksgiving"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #17100a;
+      --text: #f3e6d3;
+      --error: #ff6b6b;
+      --border: #3a2a1c;
+      --border-strong: #55402a;
+      --sidebar-bg: #4a2416;
+      --content-bg: #211711;
+      --section-title-bg: #b5541f;
+      --section-title-text: #fff3d6;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -431,7 +467,8 @@
     [data-theme="savanna"] body,
     [data-theme="fil"] body,
     [data-theme="bmms"] body,
-    [data-theme="halloween"] body {
+    [data-theme="halloween"] body,
+    [data-theme="thanksgiving"] body {
       max-width: none;
       margin: 0;
       padding: 0;
@@ -443,7 +480,8 @@
     [data-theme="savanna"] header,
     [data-theme="fil"] header,
     [data-theme="bmms"] header,
-    [data-theme="halloween"] header {
+    [data-theme="halloween"] header,
+    [data-theme="thanksgiving"] header {
       flex: 0 0 220px;
       box-sizing: border-box;
       flex-direction: column;
@@ -464,7 +502,8 @@
     [data-theme="savanna"] header h1,
     [data-theme="fil"] header h1,
     [data-theme="bmms"] header h1,
-    [data-theme="halloween"] header h1 {
+    [data-theme="halloween"] header h1,
+    [data-theme="thanksgiving"] header h1 {
       margin: 0 0 1rem 0.25rem;
     }
     /* Every page's own nav block is a flat list of <a> tags (plus one
@@ -480,14 +519,17 @@
     [data-theme="bmms"] header a,
     [data-theme="bmms"] header form,
     [data-theme="halloween"] header a,
-    [data-theme="halloween"] header form {
+    [data-theme="halloween"] header form,
+    [data-theme="thanksgiving"] header a,
+    [data-theme="thanksgiving"] header form {
       display: block;
     }
     [data-theme="console"] header a,
     [data-theme="savanna"] header a,
     [data-theme="fil"] header a,
     [data-theme="bmms"] header a,
-    [data-theme="halloween"] header a {
+    [data-theme="halloween"] header a,
+    [data-theme="thanksgiving"] header a {
       padding: 0.6rem 0.75rem;
       border-radius: 4px;
       color: var(--text);
@@ -496,14 +538,16 @@
     [data-theme="savanna"] header a:hover,
     [data-theme="fil"] header a:hover,
     [data-theme="bmms"] header a:hover,
-    [data-theme="halloween"] header a:hover {
+    [data-theme="halloween"] header a:hover,
+    [data-theme="thanksgiving"] header a:hover {
       background: var(--border);
     }
     [data-theme="console"] header form,
     [data-theme="savanna"] header form,
     [data-theme="fil"] header form,
     [data-theme="bmms"] header form,
-    [data-theme="halloween"] header form {
+    [data-theme="halloween"] header form,
+    [data-theme="thanksgiving"] header form {
       margin-top: 0.5rem;
       padding-top: 0.75rem;
       border-top: 1px solid var(--border);
@@ -512,14 +556,16 @@
     [data-theme="savanna"] header form button,
     [data-theme="fil"] header form button,
     [data-theme="bmms"] header form button,
-    [data-theme="halloween"] header form button {
+    [data-theme="halloween"] header form button,
+    [data-theme="thanksgiving"] header form button {
       width: 100%;
     }
     [data-theme="console"] main,
     [data-theme="savanna"] main,
     [data-theme="fil"] main,
     [data-theme="bmms"] main,
-    [data-theme="halloween"] main {
+    [data-theme="halloween"] main,
+    [data-theme="thanksgiving"] main {
       flex: 1 1 auto;
       min-width: 0;
       padding: 2rem 2.5rem;
@@ -539,7 +585,8 @@
     [data-theme="savanna"] .theme-section,
     [data-theme="fil"] .theme-section,
     [data-theme="bmms"] .theme-section,
-    [data-theme="halloween"] .theme-section {
+    [data-theme="halloween"] .theme-section,
+    [data-theme="thanksgiving"] .theme-section {
       border: 1px solid var(--border-strong);
       border-radius: 6px;
       margin-bottom: 1.5rem;
@@ -549,7 +596,8 @@
     [data-theme="savanna"] .theme-section > h3,
     [data-theme="fil"] .theme-section > h3,
     [data-theme="bmms"] .theme-section > h3,
-    [data-theme="halloween"] .theme-section > h3 {
+    [data-theme="halloween"] .theme-section > h3,
+    [data-theme="thanksgiving"] .theme-section > h3 {
       margin: 0;
       padding: 0.6rem 1rem;
       background: var(--section-title-bg);
@@ -559,7 +607,8 @@
     [data-theme="savanna"] .theme-section > :not(h3),
     [data-theme="fil"] .theme-section > :not(h3),
     [data-theme="bmms"] .theme-section > :not(h3),
-    [data-theme="halloween"] .theme-section > :not(h3) {
+    [data-theme="halloween"] .theme-section > :not(h3),
+    [data-theme="thanksgiving"] .theme-section > :not(h3) {
       margin-left: 1rem;
       margin-right: 1rem;
     }
@@ -567,14 +616,16 @@
     [data-theme="savanna"] .theme-section > *:last-child,
     [data-theme="fil"] .theme-section > *:last-child,
     [data-theme="bmms"] .theme-section > *:last-child,
-    [data-theme="halloween"] .theme-section > *:last-child {
+    [data-theme="halloween"] .theme-section > *:last-child,
+    [data-theme="thanksgiving"] .theme-section > *:last-child {
       margin-bottom: 1rem;
     }
     [data-theme="console"] .theme-section > table,
     [data-theme="savanna"] .theme-section > table,
     [data-theme="fil"] .theme-section > table,
     [data-theme="bmms"] .theme-section > table,
-    [data-theme="halloween"] .theme-section > table {
+    [data-theme="halloween"] .theme-section > table,
+    [data-theme="thanksgiving"] .theme-section > table {
       /* The one child that should reach the section's own edges rather
          than sit inset like everything else - a table's own header row
          already reads as a boundary, and insetting it just wastes width
@@ -675,6 +726,36 @@
       border: none;
     }
 
+    /* Thanksgiving-specific: the sidebar's background scene (see
+       theme-thanksgiving-harvest.svg) plus the same fixed light nav
+       text override every photo/art-backed sidebar theme in this app
+       already needs, for the same reason. Unlike Halloween's night
+       scene, this is a warm dusk - dark mode's scrim is noticeably
+       heavier than light's here (not just "a touch," Halloween's own
+       description), since the scene's own base colors are much
+       brighter to start with and need more dimming to sit comfortably
+       next to dark mode's near-black content area. */
+    [data-theme="thanksgiving"] header {
+      background-image: linear-gradient(rgba(20, 8, 5, 0.2), rgba(20, 8, 5, 0.2)), url("/static/theme-thanksgiving-harvest.svg");
+      background-size: cover;
+      background-position: center top;
+    }
+    [data-theme="thanksgiving"][data-mode="dark"] header {
+      background-image: linear-gradient(rgba(10, 4, 2, 0.55), rgba(10, 4, 2, 0.55)), url("/static/theme-thanksgiving-harvest.svg");
+    }
+    [data-theme="thanksgiving"] header,
+    [data-theme="thanksgiving"] header a {
+      color: #fff3d6;
+    }
+    [data-theme="thanksgiving"] header a:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+    [data-theme="thanksgiving"] header form button {
+      background: var(--section-title-bg);
+      color: var(--section-title-text);
+      border: none;
+    }
+
     /* Fil-specific: the two mascot images (see the <body> markup below
        and theme-fil-*.svg) - both <img> tags are always present in the
        markup on every theme, so JS never needs to add/remove them; they
@@ -763,6 +844,39 @@
       50% { transform: rotate(3deg); }
     }
 
+    /* Thanksgiving-specific: the turkey (see the <body> markup below
+       and theme-thanksgiving-turkey.svg) - unlike Fil's .fil-hang and
+       Halloween's .halloween-spider above, this stands at the *bottom*
+       of the window (bottom: 0), not the top. A first version put it in
+       that same top-edge slot, feet gripping the edge the way Fil's
+       fist does - checked against a real render and found to just read
+       as "hanging," odd for a bird, unlike Fil (a filament creature) or
+       a spider (a strand of web is completely ordinary for it), neither
+       of which have a standing pose to fall back on anyway. Standing at
+       the bottom instead needs no edge-gripping concept at all - see
+       the SVG's own top comment. Same idea, a gentle bob rather than a
+       rotating swing, for the same reason as before: standing, not
+       hanging/swinging from anything. */
+    .thanksgiving-turkey {
+      display: none;
+      position: fixed;
+      pointer-events: none;
+      z-index: 5;
+    }
+    [data-theme="thanksgiving"] .thanksgiving-turkey {
+      display: block;
+      bottom: 0;
+      right: 60px;
+      width: 85px;
+      height: auto;
+      animation: turkey-bob 5s ease-in-out infinite;
+      pointer-events: auto;
+    }
+    @keyframes turkey-bob {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-3px); }
+    }
+
     /* BMMS-specific: the school's own logo (app/static/bmms-logo.png),
        shown near the "queue3d" title in the sidebar header - always in
        the markup (see the <body> below), hidden by default the same way
@@ -801,7 +915,7 @@
     // replace themselves via hx-swap), not just on initial load, so a
     // background refresh can't silently leave a swapped-in section
     // unboxed.
-    const SECTION_THEMES = ["console", "savanna", "fil", "bmms", "halloween"];
+    const SECTION_THEMES = ["console", "savanna", "fil", "bmms", "halloween", "thanksgiving"];
     function applyThemeSections() {
       if (!SECTION_THEMES.includes(document.documentElement.getAttribute("data-theme"))) return;
       // A descendant selector, not just direct children of <main> - some
@@ -850,6 +964,10 @@
   <!-- Halloween's own hanging mascot - same always-in-the-markup,
        hidden-except-under-its-own-theme treatment as Fil's pair above. -->
   <img src="/static/theme-halloween-spider.svg" alt="" aria-hidden="true" class="halloween-spider" title="Boo!">
+  <!-- Thanksgiving's own mascot - same always-in-the-markup,
+       hidden-except-under-its-own-theme treatment as the two pairs
+       above. -->
+  <img src="/static/theme-thanksgiving-turkey.svg" alt="" aria-hidden="true" class="thanksgiving-turkey" title="Gobble gobble!">
   <header>
     <img src="/static/bmms-logo.png" alt="Black Mountain Middle School Raiders logo" class="bmms-logo">
     <h1>queue3d</h1>

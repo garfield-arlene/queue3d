@@ -133,6 +133,25 @@ THEMES = {
     # app/README.md's "The 'Halloween' theme" section for the full
     # writeup.
     "halloween": "Halloween",
+    # Same shared sidebar/full-width/bordered-section layout again,
+    # seasonal like Halloween - a cozy harvest-dusk scene (app/static/
+    # theme-thanksgiving-harvest.svg: a warm harvest sun, a barn, corn
+    # shocks, pumpkins and gourds, a rail fence, drifting leaves) behind
+    # the sidebar, and a turkey standing at the bottom of the window
+    # (app/static/theme-thanksgiving-turkey.svg) - not attached to the
+    # top edge the way Fil/the Halloween spider are: a fist gripping the
+    # edge or a strand of web both read fine for a filament creature or
+    # a spider, but a turkey doesn't have an equivalent (and specifically
+    # dangling by anything read too close to actual Thanksgiving-dinner
+    # imagery to belong in a school app besides) - standing normally at
+    # the bottom, feet on the ground, sidesteps that entirely. Deliberately
+    # just an autumn harvest theme, not depicting Pilgrims, the First
+    # Thanksgiving, or any Native American imagery - the same
+    # "school-appropriate," nothing-that-could-offend bar every other
+    # seasonal theme in this app follows. See SEASONAL_THEMES below for
+    # when it's actually offered, and app/README.md's "The
+    # 'Thanksgiving' theme" section for the full writeup.
+    "thanksgiving": "Thanksgiving",
 }
 
 MODES = {
@@ -150,6 +169,7 @@ MODES = {
 # always-available-on-127.0.0.1 exception.
 SEASONAL_THEMES = {
     "halloween": ((9, 15), (11, 15)),
+    "thanksgiving": ((10, 15), (11, 30)),
 }
 
 
@@ -198,14 +218,18 @@ def is_theme_selectable(theme_id: str, request, current: str | None = None) -> b
     its own date window, or unconditionally for a developer hitting the
     app directly at 127.0.0.1/localhost (see _is_dev_loopback's own
     docstring). `current` is the account's *already-saved* theme, always
-    treated as selectable regardless of season/host - without it, a
-    settings form resubmitted after Halloween's window closes (without
-    anyone touching that dropdown) would reject its own currently-shown
-    value as if it were a fresh, disallowed pick. Doesn't affect
-    rendering an account that's kept a seasonal theme past its window
-    either way - that's current_theme() in templates_env.py, a separate
-    concern from what a settings page's own dropdown offers going
-    forward."""
+    treated as selectable regardless of season/host when passed - without
+    it, a settings form resubmitted after Halloween's window closes
+    (without anyone touching that dropdown) would reject its own
+    currently-shown value as if it were a fresh, disallowed pick.
+
+    Called without `current` (the default), this is also exactly "is the
+    account's own existing pick still active right now" -
+    effective_theme() below uses it that way, deliberately with no
+    exemption for the account's own value: unlike the dropdown-listing
+    case above, keeping an expired seasonal theme selected *is* the
+    thing meant to end once its window (or the 127.0.0.1 exception)
+    closes, not something to protect from rejection."""
     if theme_id == current:
         return True
     if theme_id not in SEASONAL_THEMES:
@@ -217,3 +241,25 @@ def theme_choices(request, current: str | None = None) -> dict[str, str]:
     """THEMES filtered to what a settings page's theme <select> should
     actually offer - see is_theme_selectable() above for the rule."""
     return {tid: name for tid, name in THEMES.items() if is_theme_selectable(tid, request, current)}
+
+
+def effective_theme(theme: str | None, request) -> str:
+    """What an account with this stored theme choice should actually
+    render as right now: the stored value itself, unless it's unset or a
+    seasonal theme that's since fallen out of its own window (and this
+    isn't a 127.0.0.1/localhost dev request - is_theme_selectable's own
+    exception) - DEFAULT_THEME in either of those cases. A seasonal theme
+    doesn't just stop being offered in the settings dropdown once its
+    season ends (theme_choices() already handles that) - it stops being
+    the account's *active* theme at all, reverting to DEFAULT_THEME
+    rather than silently continuing to render something no longer "in
+    season" until someone manually changes it back. Used both by
+    current_theme() (templates_env.py, which also persists this back to
+    the account's own stored value - see _signed_in_account()) and by
+    the settings pages' own selected_theme (routers/user.py,
+    routers/admin.py), so a settings page's dropdown reflects the same
+    reset on the very same render that triggers it, not one request
+    later."""
+    if theme and is_theme_selectable(theme, request):
+        return theme
+    return DEFAULT_THEME
