@@ -2152,6 +2152,107 @@ themselves don't also center.
 The logo appears with no theme applied at all on all three logged-out
 pages, at its current size/position.
 
+### The "Halloween" theme - seasonal, haunted-mansion, and always on at 127.0.0.1
+
+**Why this exists:** the same shared sidebar/full-width/bordered-section
+layout once more, this time seasonal rather than a permanent option -
+a friendly haunted-mansion night scene (moon, bats, a picket fence,
+tombstones, glowing jack-o'-lanterns) behind the sidebar, and a spider
+hanging from the top of the window on its own strand of web, in the
+same spot Fil hangs from under that theme. Friendly, not frightening:
+no weapons, no blood, nothing sharper than a jack-o'-lantern's carved
+smile - every character has a plain round smiling face, matching the
+same school-appropriate bar the signup page's own acceptable-use rule
+sets for anything a user submits.
+
+**Seasonal by date, not a permanent theme-picker entry - `themes.
+SEASONAL_THEMES` maps a theme id to a `((start_month, start_day),
+(end_month, end_day))` window (September 15 - November 15 for
+Halloween, both ends inclusive), and `theme_choices()`/
+`is_theme_selectable()` filter the settings pages' dropdown down to
+what's actually pickable right now, rather than leaving an
+out-of-season theme sitting there as permanent clutter.** An account
+that already has a seasonal theme saved stays on it regardless of the
+calendar (`current_theme()` in templates_env.py never re-checks the
+season - only the dropdown does), and always includes an account's own
+current choice as an option even if it's since fallen out of season, so
+resubmitting an unrelated settings-page change doesn't get rejected as
+if the untouched theme field were a fresh, disallowed pick.
+
+**Always selectable regardless of date when hitting the app directly at
+127.0.0.1/localhost - deliberately checked via `request.url.hostname`
+(built from the `Host` header), never `request.client.host` (the actual
+TCP peer).** The real deployment (see "Deployment: zero internet
+access" above) always puts nginx in front, proxying to `uvicorn` over
+127.0.0.1 - from `uvicorn`'s own perspective, `request.client.host` is
+*always* 127.0.0.1 there too, for every real visitor on the deployment
+LAN, since that's nginx's own loopback connection making the request,
+not theirs. Verified directly against a running server: a request
+hitting `uvicorn` straight (a raw dev session) reports
+`url.hostname == "127.0.0.1"`; the exact same request with a
+`Host: q3d.home.mygarfield.us` header - what nginx's own
+`proxy_set_header Host $host` actually forwards, carrying the real
+visitor's requested host, not nginx's own - reports that real hostname
+instead, while `client.host` stayed "127.0.0.1" in both cases. Using
+`client.host` here would have made every seasonal theme permanently
+available in production, defeating the entire feature.
+
+**The sidebar scene is a portrait SVG, not a landscape one like
+Savanna's photo.** `background-size: cover; background-position:
+center top` crops a narrow, tall sidebar (220px wide, full viewport
+height) out of whatever image sits behind it - against a wide landscape
+source, `cover` scales the image up so much to match the sidebar's own
+height that only its leftmost ~20% of width ever survives the crop,
+however a scene is arranged across it; checked against a real rendered
+sidebar and confirmed only the moon ever showed up, regardless of what
+else the scene contained. A portrait canvas shaped like the sidebar
+itself (`theme-halloween-manor.svg`, roughly 3:10) doesn't have that
+problem - `cover` crops off extra top/bottom margin instead of the
+actual scene, which is why the moon, the manor, and the pumpkin row
+stack vertically down the middle of the image rather than spreading
+across a wide horizon.
+
+**Two separate legibility passes, both found by looking at an actual
+rendered sidebar, not by reading the CSS alone.** The moon originally
+sat at the sidebar's vertical center, directly behind the nav column
+(the "queue3d" title, Dashboard/Submit a model/Settings, Log out) that
+renders on top of this same background image - a bright, near-white
+moon behind near-white nav text (the same fixed light color Savanna/
+BMMS's own sidebars already need) left almost no contrast at all.
+Fixed by shrinking the moon and moving it into the very top corner,
+clear of the nav column entirely, rather than just darkening the whole
+scene to compensate - a heavier scrim would have dimmed the moon itself
+into a washed-out smudge along with everything else. Separately, the
+manor's own walls and roofs first used near-black fills matching the
+sky's own darkest tones, which read as barely visible against a
+near-black sky - fixed the way a real moonlit silhouette actually
+works: a soft cool radial halo sits behind the whole building, every
+wall/roof shape gets a fill lighter than the sky immediately behind it,
+and a thin lavender outline stroke on top, the same "outlined shape,
+not a flat silhouette" style `theme-fil-hang.svg` and this theme's own
+spider already draw their characters in.
+
+**The hanging spider needed its own, different fix for the same root
+problem - it floats over the main content area, not the sidebar's fixed
+night-sky image, and that area's own background flips between
+near-white and near-black across light/dark mode.** A single dark
+purple fill/stroke (readable against Fil's fixed light sidebar, the
+model that inspired it) nearly disappeared against dark mode's
+near-black content background - checked against a real dark-mode render
+and found to read as "just a round object with eyes." Fixed with a
+brighter violet fill (readable against both extremes on its own) and a
+"sticker" double-stroke on every leg: a thicker light backing line
+under a thinner dark one, so at least one half of that pair always has
+real contrast against whatever's actually behind it.
+
+**The tower's round window originally sat exactly where the main roof's
+own diagonal eave crosses the tower wall, and the second main-body
+window's edge reached 7px into the tower's own footprint - both real
+seam-crossing overlaps, caught by zooming into a real render, not
+visible from the coordinates alone.** Both windows moved to comfortable
+clearance from every roofline and wall corner they were meant to sit
+inside instead.
+
 ### Login rate-limiting
 
 **Why this exists:** PINs are short by design (low

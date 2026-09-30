@@ -1,0 +1,229 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 1000" width="300" height="1000">
+  <!-- Halloween theme's sidebar scene (see themes.py/base.html) - a
+       friendly haunted-mansion night, not a scary one: every face (the
+       ghosts, the jack-o'-lanterns) is a plain round smile, no fangs, no
+       weapons, no blood - the same "school-appropriate" bar the signup
+       page's own acceptable-use rule sets.
+
+       Portrait, not landscape, and everything centered horizontally -
+       CSS applies this as background-size: cover; background-position:
+       center top on the sidebar (220px wide, full viewport height,
+       same recipe theme-savanna-sunset.jpg uses). A first version of
+       this file was a wide landscape scene instead, the same shape as
+       Savanna's photo - checked against a real rendered 220px-wide
+       sidebar crop and found to only ever show the moon: `cover`
+       against a narrow, tall target scales a landscape source up so
+       much (matching its height to the viewport) that only its
+       leftmost ~20% of width ever survives the crop, however things
+       are arranged across it. A portrait canvas shaped like the
+       sidebar itself (roughly 3:10, close to a real 220px-wide/
+       ~700-900px-tall sidebar) doesn't have that problem - "cover"
+       crops off extra top/bottom margin instead of the actual scene,
+       which is exactly why this version stacks the moon, the manor,
+       and the pumpkin row vertically down the middle rather than
+       spreading them across a wide horizon. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#241a3d"/>
+      <stop offset="45%" stop-color="#160f28"/>
+      <stop offset="100%" stop-color="#0b0714"/>
+    </linearGradient>
+    <radialGradient id="moonglow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff6d8" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#fff6d8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="pumpkinglow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff9d2e" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#ff9d2e" stop-opacity="0"/>
+    </radialGradient>
+    <!-- a cool moonlit halo, used behind the manor below - not the warm
+         pumpkinglow above - so the building's own silhouette reads
+         clearly against the sky rather than blending into it, the same
+         way the moon's glow separates it from the sky above. -->
+    <radialGradient id="moonlit" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#7c6aad" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#7c6aad" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="300" height="1000" fill="url(#sky)"/>
+
+  <!-- stars, scattered around the moon -->
+  <g fill="#f3ecff" opacity="0.8">
+    <circle cx="40" cy="130" r="1.6"/>
+    <circle cx="70" cy="40" r="1.2"/>
+    <circle cx="250" cy="35" r="1.6"/>
+    <circle cx="230" cy="115" r="1.2"/>
+    <circle cx="30" cy="185" r="1.2"/>
+    <circle cx="265" cy="150" r="1.4"/>
+  </g>
+
+  <!-- full moon, friendly and round, with a soft glow - kept small and
+       tucked near the very top corner (not the header's own vertical
+       center) so it clears the nav links below it (the queue3d title +
+       Dashboard/Submit a model/Settings/Log out column, all rendered on
+       top of this image - see base.html's header CSS): a real
+       legibility problem, caught by looking at an actual rendered page,
+       not a hypothetical - a full-size, brighter moon centered lower
+       down previously sat directly behind that near-white nav text,
+       and near-white text on a near-white moon has almost no contrast
+       at all regardless of theme. Moved up and shrunk instead of just
+       darkening the whole scene to compensate, so the moon itself stays
+       recognizable rather than becoming a dim smudge. -->
+  <circle cx="215" cy="55" r="80" fill="url(#moonglow)"/>
+  <circle cx="215" cy="55" r="34" fill="#fdf6df"/>
+  <circle cx="203" cy="43" r="5" fill="#f3e6be" opacity="0.6"/>
+  <circle cx="226" cy="66" r="3.5" fill="#f3e6be" opacity="0.6"/>
+  <circle cx="206" cy="68" r="2.2" fill="#f3e6be" opacity="0.5"/>
+
+  <!-- a drifting wisp of cloud crossing the moon's lower edge -->
+  <path d="M155,78 Q185,66 215,77 Q245,66 275,79 Q245,91 215,88 Q185,93 155,78 Z"
+        fill="#2a2044" opacity="0.55"/>
+
+  <!-- bats, spread through the now-open upper-left sky - simple
+       double-curve wings, no fangs, no menace -->
+  <g fill="#1a1330">
+    <path d="M45,70 Q60,52 75,70 Q65,64 60,72 Q55,64 45,70 Z"/>
+    <path d="M90,140 Q105,122 120,140 Q110,134 105,142 Q100,134 90,140 Z"/>
+    <path d="M55,190 Q67,176 79,190 Q71,185 67,191 Q63,185 55,190 Z"/>
+  </g>
+
+  <!-- a simple pair of bare, leafless trees flanking the manor - a
+       trunk plus a few splayed branch lines, not anything sharp -->
+  <g stroke="#140d24" stroke-width="4" stroke-linecap="round" fill="none">
+    <path d="M28,560 L28,460"/>
+    <path d="M28,480 L10,455 M28,475 L44,450 M28,460 L14,435 M28,460 L40,432"/>
+    <path d="M272,560 L272,470"/>
+    <path d="M272,490 L256,465 M272,485 L288,462 M272,470 L260,445"/>
+  </g>
+
+  <!-- the manor itself: a blocky, friendly haunted-house silhouette,
+       centered in the canvas. The first version used near-black fills
+       (matching the sky's own darkest tones) with no outline at all -
+       checked against a real render and found "difficult to see," a
+       real legibility complaint, not a hypothetical: a near-black
+       building against a near-black sky has almost no edge to read at
+       all. Fixed the same way real moonlit silhouettes actually work,
+       not just by picking two arbitrary different grays: a soft cool
+       halo (#moonlit, distinct from the warm #pumpkinglow the windows
+       below use) sits behind the whole building first, then every wall/
+       roof shape gets a lighter fill than the sky immediately behind it
+       plus a thin lavender outline stroke - the same "outlined shape,
+       not a flat silhouette" style theme-fil-hang.svg and
+       theme-halloween-spider.svg already draw their own characters in. -->
+  <circle cx="150" cy="480" r="190" fill="url(#moonlit)"/>
+  <g stroke="#6a5a94" stroke-width="2.5">
+    <!-- main body -->
+    <rect x="70" y="430" width="160" height="150" fill="#3a2c58"/>
+    <!-- right tower -->
+    <rect x="190" y="360" width="60" height="220" fill="#443368"/>
+    <!-- tower roof: a simple pyramid, not a spike -->
+    <polygon points="180,360 220,318 260,360" fill="#2b2048" stroke-linejoin="round"/>
+    <!-- main roof: a simple gable -->
+    <polygon points="55,430 150,375 245,430" fill="#2b2048" stroke-linejoin="round"/>
+    <!-- left porch roof -->
+    <polygon points="45,470 80,448 115,470" fill="#2b2048" stroke-linejoin="round"/>
+  </g>
+
+    <!-- a round tower window, glowing warmly - cx/cy deliberately not
+         the tower's own horizontal/vertical center (220,430ish): the
+         main roof's own right eave (its diagonal edge from the peak
+         down to (245,430) - see the roof polygon above) cuts across
+         exactly that spot, so a window centered there sat right on top
+         of the roof line itself, a real seam-crossing glitch caught on
+         a real render, not a hypothetical. Moved down and slightly
+         right instead, comfortably below where that diagonal edge ends
+         (y<=430 everywhere along it) and away from the tower's own left
+         wall, so it reads as a clean window in open tower wall. -->
+    <circle cx="228" cy="460" r="15" fill="url(#pumpkinglow)"/>
+    <circle cx="228" cy="460" r="9" fill="#ffcf7a"/>
+    <line x1="228" y1="452" x2="228" y2="468" stroke="#140d24" stroke-width="1.5"/>
+    <line x1="220" y1="460" x2="236" y2="460" stroke="#140d24" stroke-width="1.5"/>
+
+    <!-- two main-body windows, warm and inviting - the right one's x
+         moved from an earlier 175 (only 15px from the tower's own left
+         wall at x=190, its right edge actually crossing 7px into the
+         tower's own footprint - the same class of overlap as the tower
+         window above, just against a wall corner instead of a roof
+         line) to a clear 13px margin instead. -->
+    <rect x="95" y="475" width="22" height="30" rx="2" fill="url(#pumpkinglow)"/>
+    <rect x="100" y="481" width="12" height="18" fill="#ffcf7a"/>
+    <rect x="155" y="475" width="22" height="30" rx="2" fill="url(#pumpkinglow)"/>
+    <rect x="160" y="481" width="12" height="18" fill="#ffcf7a"/>
+
+    <!-- a friendly arched front door -->
+    <path d="M133,580 L133,545 A17,17 0 0 1 167,545 L167,580 Z" fill="#0f0a1c"/>
+    <circle cx="160" cy="562" r="2" fill="#ffcf7a"/>
+
+    <!-- a small friendly ghost peeking from behind the tower - a plain
+         rounded blob with a wavy hem, dot eyes, a round "o" mouth, no
+         teeth -->
+    <g transform="translate(238,400)">
+      <path d="M0,55 L0,20 A27,27 0 0 1 54,20 L54,55
+               Q47,48 40,55 Q33,48 27,55 Q20,48 13,55 Q6,48 0,55 Z"
+            fill="#f4f1fb" opacity="0.92"/>
+      <circle cx="18" cy="28" r="3.6" fill="#241a3a"/>
+      <circle cx="36" cy="28" r="3.6" fill="#241a3a"/>
+      <circle cx="27" cy="39" r="3.6" fill="#241a3a"/>
+    </g>
+
+  <!-- a low wrought-iron-style picket fence along the front -->
+  <g stroke="#140d24" stroke-width="4" stroke-linecap="round">
+    <line x1="0" y1="640" x2="300" y2="640"/>
+    <line x1="0" y1="652" x2="300" y2="652"/>
+    <line x1="12" y1="625" x2="12" y2="652"/>
+    <line x1="42" y1="625" x2="42" y2="652"/>
+    <line x1="72" y1="625" x2="72" y2="652"/>
+    <line x1="228" y1="625" x2="228" y2="652"/>
+    <line x1="258" y1="625" x2="258" y2="652"/>
+    <line x1="288" y1="625" x2="288" y2="652"/>
+    <circle cx="12" cy="623" r="3"/>
+    <circle cx="42" cy="623" r="3"/>
+    <circle cx="72" cy="623" r="3"/>
+    <circle cx="228" cy="623" r="3"/>
+    <circle cx="258" cy="623" r="3"/>
+    <circle cx="288" cy="623" r="3"/>
+  </g>
+
+  <!-- ground -->
+  <rect x="0" y="652" width="300" height="348" fill="#100a1d"/>
+
+  <!-- two plain rounded tombstones, no epitaph text - purely decorative
+       Halloween-lawn dressing, nothing depicting a real grave -->
+  <g fill="#2e2648">
+    <path d="M40,700 L40,668 A16,16 0 0 1 72,668 L72,700 Z"/>
+    <path d="M250,712 L250,684 A14,14 0 0 1 278,684 L278,712 Z"/>
+  </g>
+
+  <!-- a row of glowing jack-o'-lanterns along the ground, each a plain
+       round smiling face - triangle eyes/nose, a zigzag grin, a green
+       stem, no scowl -->
+  <g>
+    <!-- center pumpkin -->
+    <g transform="translate(150,715)">
+      <circle r="34" fill="url(#pumpkinglow)"/>
+      <ellipse rx="29" ry="25" fill="#ff8a1e"/>
+      <path d="M-11,-25 Q0,-34 11,-25 L9,-22 Q0,-29 -9,-22 Z" fill="#3f7d2c"/>
+      <polygon points="-13,-5 -6,7 -20,7" fill="#3a1a05"/>
+      <polygon points="13,-5 20,7 6,7" fill="#3a1a05"/>
+      <path d="M-18,13 L-9,7 L-2,13 L4,7 L11,13 L18,7" stroke="#3a1a05" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <!-- left pumpkin, smaller -->
+    <g transform="translate(80,745) scale(0.8)">
+      <circle r="34" fill="url(#pumpkinglow)"/>
+      <ellipse rx="29" ry="25" fill="#ff8a1e"/>
+      <path d="M-11,-25 Q0,-34 11,-25 L9,-22 Q0,-29 -9,-22 Z" fill="#3f7d2c"/>
+      <polygon points="-13,-5 -6,7 -20,7" fill="#3a1a05"/>
+      <polygon points="13,-5 20,7 6,7" fill="#3a1a05"/>
+      <path d="M-16,11 Q0,22 16,11" stroke="#3a1a05" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+    </g>
+    <!-- right pumpkin, smaller -->
+    <g transform="translate(222,748) scale(0.72)">
+      <circle r="34" fill="url(#pumpkinglow)"/>
+      <ellipse rx="29" ry="25" fill="#ff8a1e"/>
+      <path d="M-11,-25 Q0,-34 11,-25 L9,-22 Q0,-29 -9,-22 Z" fill="#3f7d2c"/>
+      <polygon points="-13,-5 -6,7 -20,7" fill="#3a1a05"/>
+      <polygon points="13,-5 20,7 6,7" fill="#3a1a05"/>
+      <path d="M-18,13 L-9,7 L-2,13 L4,7 L11,13 L18,7" stroke="#3a1a05" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+</svg>

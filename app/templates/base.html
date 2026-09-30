@@ -220,6 +220,44 @@
       --section-title-bg: #7a1420;
       --section-title-text: #f0c975;
     }
+
+    /* Halloween theme (see themes.py) - same shared sidebar/full-width/
+       bordered-section layout again, seasonal rather than year-round
+       (themes.SEASONAL_THEMES). --sidebar-bg is a fixed deep purple in
+       both modes, same reasoning as BMMS's own fixed maroon: the
+       sidebar's real look comes from theme-halloween-manor.svg's own
+       night scene further down, which already looks the same regardless
+       of mode, so there's nothing to "flip" the way Console's flat
+       sidebar color does. --section-title-bg is a pumpkin orange,
+       matching the jack-o'-lanterns in that same scene, with a dark
+       "carved-pumpkin" brown for its text - both fixed across modes,
+       same "a saturated accent needs to stay saturated" reasoning as
+       every other theme's own section-title color. */
+    [data-theme="halloween"] {
+      color-scheme: light;
+      --bg: #f6f2fb;
+      --text: #241a3a;
+      --error: #c0392b;
+      --border: #ded4f0;
+      --border-strong: #c7b8e8;
+      --detail-bg: #8881;
+      --sidebar-bg: #201735;
+      --content-bg: #fdfaff;
+      --section-title-bg: #e8720c;
+      --section-title-text: #2a1400;
+    }
+    [data-theme="halloween"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #120b1f;
+      --text: #ece5f7;
+      --error: #ff6b6b;
+      --border: #2c2147;
+      --border-strong: #40315f;
+      --sidebar-bg: #201735;
+      --content-bg: #1c1530;
+      --section-title-bg: #e8720c;
+      --section-title-text: #2a1400;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -392,7 +430,8 @@
     [data-theme="console"] body,
     [data-theme="savanna"] body,
     [data-theme="fil"] body,
-    [data-theme="bmms"] body {
+    [data-theme="bmms"] body,
+    [data-theme="halloween"] body {
       max-width: none;
       margin: 0;
       padding: 0;
@@ -403,7 +442,8 @@
     [data-theme="console"] header,
     [data-theme="savanna"] header,
     [data-theme="fil"] header,
-    [data-theme="bmms"] header {
+    [data-theme="bmms"] header,
+    [data-theme="halloween"] header {
       flex: 0 0 220px;
       box-sizing: border-box;
       flex-direction: column;
@@ -423,7 +463,8 @@
     [data-theme="console"] header h1,
     [data-theme="savanna"] header h1,
     [data-theme="fil"] header h1,
-    [data-theme="bmms"] header h1 {
+    [data-theme="bmms"] header h1,
+    [data-theme="halloween"] header h1 {
       margin: 0 0 1rem 0.25rem;
     }
     /* Every page's own nav block is a flat list of <a> tags (plus one
@@ -437,13 +478,16 @@
     [data-theme="fil"] header a,
     [data-theme="fil"] header form,
     [data-theme="bmms"] header a,
-    [data-theme="bmms"] header form {
+    [data-theme="bmms"] header form,
+    [data-theme="halloween"] header a,
+    [data-theme="halloween"] header form {
       display: block;
     }
     [data-theme="console"] header a,
     [data-theme="savanna"] header a,
     [data-theme="fil"] header a,
-    [data-theme="bmms"] header a {
+    [data-theme="bmms"] header a,
+    [data-theme="halloween"] header a {
       padding: 0.6rem 0.75rem;
       border-radius: 4px;
       color: var(--text);
@@ -451,13 +495,15 @@
     [data-theme="console"] header a:hover,
     [data-theme="savanna"] header a:hover,
     [data-theme="fil"] header a:hover,
-    [data-theme="bmms"] header a:hover {
+    [data-theme="bmms"] header a:hover,
+    [data-theme="halloween"] header a:hover {
       background: var(--border);
     }
     [data-theme="console"] header form,
     [data-theme="savanna"] header form,
     [data-theme="fil"] header form,
-    [data-theme="bmms"] header form {
+    [data-theme="bmms"] header form,
+    [data-theme="halloween"] header form {
       margin-top: 0.5rem;
       padding-top: 0.75rem;
       border-top: 1px solid var(--border);
@@ -465,13 +511,15 @@
     [data-theme="console"] header form button,
     [data-theme="savanna"] header form button,
     [data-theme="fil"] header form button,
-    [data-theme="bmms"] header form button {
+    [data-theme="bmms"] header form button,
+    [data-theme="halloween"] header form button {
       width: 100%;
     }
     [data-theme="console"] main,
     [data-theme="savanna"] main,
     [data-theme="fil"] main,
-    [data-theme="bmms"] main {
+    [data-theme="bmms"] main,
+    [data-theme="halloween"] main {
       flex: 1 1 auto;
       min-width: 0;
       padding: 2rem 2.5rem;
@@ -490,7 +538,8 @@
     [data-theme="console"] .theme-section,
     [data-theme="savanna"] .theme-section,
     [data-theme="fil"] .theme-section,
-    [data-theme="bmms"] .theme-section {
+    [data-theme="bmms"] .theme-section,
+    [data-theme="halloween"] .theme-section {
       border: 1px solid var(--border-strong);
       border-radius: 6px;
       margin-bottom: 1.5rem;
@@ -499,7 +548,8 @@
     [data-theme="console"] .theme-section > h3,
     [data-theme="savanna"] .theme-section > h3,
     [data-theme="fil"] .theme-section > h3,
-    [data-theme="bmms"] .theme-section > h3 {
+    [data-theme="bmms"] .theme-section > h3,
+    [data-theme="halloween"] .theme-section > h3 {
       margin: 0;
       padding: 0.6rem 1rem;
       background: var(--section-title-bg);
@@ -508,20 +558,23 @@
     [data-theme="console"] .theme-section > :not(h3),
     [data-theme="savanna"] .theme-section > :not(h3),
     [data-theme="fil"] .theme-section > :not(h3),
-    [data-theme="bmms"] .theme-section > :not(h3) {
+    [data-theme="bmms"] .theme-section > :not(h3),
+    [data-theme="halloween"] .theme-section > :not(h3) {
       margin-left: 1rem;
       margin-right: 1rem;
     }
     [data-theme="console"] .theme-section > *:last-child,
     [data-theme="savanna"] .theme-section > *:last-child,
     [data-theme="fil"] .theme-section > *:last-child,
-    [data-theme="bmms"] .theme-section > *:last-child {
+    [data-theme="bmms"] .theme-section > *:last-child,
+    [data-theme="halloween"] .theme-section > *:last-child {
       margin-bottom: 1rem;
     }
     [data-theme="console"] .theme-section > table,
     [data-theme="savanna"] .theme-section > table,
     [data-theme="fil"] .theme-section > table,
-    [data-theme="bmms"] .theme-section > table {
+    [data-theme="bmms"] .theme-section > table,
+    [data-theme="halloween"] .theme-section > table {
       /* The one child that should reach the section's own edges rather
          than sit inset like everything else - a table's own header row
          already reads as a boundary, and insetting it just wastes width
@@ -588,6 +641,40 @@
       border: none;
     }
 
+    /* Halloween-specific: the sidebar's background scene (see
+       theme-halloween-manor.svg's own top comment for why it's a
+       portrait composition, not a landscape one like Savanna's photo)
+       plus the same "fixed light nav text regardless of mode" override
+       Savanna/BMMS both already need, for the same reason - the scene's
+       own brightness varies across it, so a single reliably-light color
+       (plus the scrim below) is what stays readable everywhere on it in
+       either mode. Dark mode's scrim is only slightly heavier than
+       light's, unlike Savanna's day-vs-dusk jump - this is already a
+       night scene either way, it just needs a touch more dimming so the
+       *content* side of the page (--content-bg, genuinely different
+       between the two modes) doesn't read as brighter than its own
+       sidebar. */
+    [data-theme="halloween"] header {
+      background-image: linear-gradient(rgba(10, 5, 20, 0.25), rgba(10, 5, 20, 0.25)), url("/static/theme-halloween-manor.svg");
+      background-size: cover;
+      background-position: center top;
+    }
+    [data-theme="halloween"][data-mode="dark"] header {
+      background-image: linear-gradient(rgba(5, 2, 10, 0.45), rgba(5, 2, 10, 0.45)), url("/static/theme-halloween-manor.svg");
+    }
+    [data-theme="halloween"] header,
+    [data-theme="halloween"] header a {
+      color: #f4eeff;
+    }
+    [data-theme="halloween"] header a:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+    [data-theme="halloween"] header form button {
+      background: var(--section-title-bg);
+      color: var(--section-title-text);
+      border: none;
+    }
+
     /* Fil-specific: the two mascot images (see the <body> markup below
        and theme-fil-*.svg) - both <img> tags are always present in the
        markup on every theme, so JS never needs to add/remove them; they
@@ -647,6 +734,35 @@
       50% { transform: rotate(4deg); }
     }
 
+    /* Halloween-specific: the hanging spider (see the <body> markup
+       below and theme-halloween-spider.svg) - same fixed-position/
+       hangs-from-the-top-edge/gentle-swing treatment as Fil's own
+       .fil-hang above (same slot, even - top: 0, right: 60px - since
+       only one of the two themes is ever active on a given page), just
+       a different class/image and a slightly slower, smaller sway,
+       since a spider on a web thread drifts rather than swings on
+       purpose the way Fil's yoyo trick does. */
+    .halloween-spider {
+      display: none;
+      position: fixed;
+      pointer-events: none;
+      z-index: 5;
+    }
+    [data-theme="halloween"] .halloween-spider {
+      display: block;
+      top: 0;
+      right: 60px;
+      width: 80px;
+      height: auto;
+      transform-origin: top center;
+      animation: spider-sway 7s ease-in-out infinite;
+      pointer-events: auto;
+    }
+    @keyframes spider-sway {
+      0%, 100% { transform: rotate(-3deg); }
+      50% { transform: rotate(3deg); }
+    }
+
     /* BMMS-specific: the school's own logo (app/static/bmms-logo.png),
        shown near the "queue3d" title in the sidebar header - always in
        the markup (see the <body> below), hidden by default the same way
@@ -685,7 +801,7 @@
     // replace themselves via hx-swap), not just on initial load, so a
     // background refresh can't silently leave a swapped-in section
     // unboxed.
-    const SECTION_THEMES = ["console", "savanna", "fil", "bmms"];
+    const SECTION_THEMES = ["console", "savanna", "fil", "bmms", "halloween"];
     function applyThemeSections() {
       if (!SECTION_THEMES.includes(document.documentElement.getAttribute("data-theme"))) return;
       // A descendant selector, not just direct children of <main> - some
@@ -731,6 +847,9 @@
        either tooltip's text. -->
   <img src="/static/theme-fil-peek.svg" alt="" aria-hidden="true" class="fil-peek" title="Peek-a-boo">
   <img src="/static/theme-fil-hang.svg" alt="" aria-hidden="true" class="fil-hang" title="Hi, I'm Fil">
+  <!-- Halloween's own hanging mascot - same always-in-the-markup,
+       hidden-except-under-its-own-theme treatment as Fil's pair above. -->
+  <img src="/static/theme-halloween-spider.svg" alt="" aria-hidden="true" class="halloween-spider" title="Boo!">
   <header>
     <img src="/static/bmms-logo.png" alt="Black Mountain Middle School Raiders logo" class="bmms-logo">
     <h1>queue3d</h1>

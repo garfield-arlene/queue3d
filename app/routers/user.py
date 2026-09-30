@@ -39,7 +39,7 @@ from mesh import convert_3mf_to_stl, convert_obj_to_stl
 from models import DRAFT_STATUSES, Color, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, MAX_ZIP_MODEL_FILES, scratch_stl_path
 from templates_env import templates
-from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
+from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, is_theme_selectable, is_valid_mode, is_valid_theme, theme_choices
 
 # OrcaSlicer's own support_style values, each confirmed (by directly
 # comparing sliced gcode output, not just guessed) to actually produce
@@ -161,12 +161,20 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
-def _user_settings_context(user: User, error: str | None = None, saved: bool = False):
+def _user_settings_context(request: Request, user: User, error: str | None = None, saved: bool = False):
+    selected_theme = user.theme or DEFAULT_THEME
     return {
         "user": user,
-        "themes": THEMES,
+        # Filtered to what's actually pickable right now (a seasonal
+        # theme outside its own window disappears from the dropdown,
+        # except on 127.0.0.1) - see themes.theme_choices(). The
+        # account's own already-saved choice is always included even if
+        # it's since fallen out of season, so the dropdown keeps showing
+        # what's really selected instead of silently defaulting to
+        # whatever option happens to come first.
+        "themes": theme_choices(request, selected_theme),
         "modes": MODES,
-        "selected_theme": user.theme or DEFAULT_THEME,
+        "selected_theme": selected_theme,
         "selected_mode": user.theme_mode or DEFAULT_MODE,
         "error": error,
         "saved": saved,
@@ -178,7 +186,7 @@ def settings_page(
     request: Request,
     user: User = Depends(require_user),
 ):
-    return templates.TemplateResponse(request, "user_settings.html", _user_settings_context(user))
+    return templates.TemplateResponse(request, "user_settings.html", _user_settings_context(request, user))
 
 
 @router.post("/settings")
@@ -192,6 +200,8 @@ def update_settings(
     error = None
     if not is_valid_theme(theme):
         error = "Not a real theme choice."
+    elif not is_theme_selectable(theme, request, user.theme):
+        error = "That theme isn't available right now."
     elif not is_valid_mode(mode):
         error = "Not a real mode choice."
     else:
@@ -200,7 +210,7 @@ def update_settings(
         session.add(user)
         session.commit()
     return templates.TemplateResponse(
-        request, "user_settings.html", _user_settings_context(user, error, error is None)
+        request, "user_settings.html", _user_settings_context(request, user, error, error is None)
     )
 
 
@@ -241,7 +251,7 @@ def update_pin(
         log_event(session, None, f"user:{user.name}", "pin_changed")
         session.commit()
     return templates.TemplateResponse(
-        request, "user_settings.html", _user_settings_context(user, error, error is None)
+        request, "user_settings.html", _user_settings_context(request, user, error, error is None)
     )
 
 

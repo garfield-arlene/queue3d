@@ -66,7 +66,7 @@ from models import Admin, Color, Job, QUEUE_STATUSES, Settings, TERMINAL_STATUSE
 from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
 from support_bundle import build_support_bundle
 from templates_env import is_valid_timezone, set_display_timezone, templates
-from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
+from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, is_theme_selectable, is_valid_mode, is_valid_theme, theme_choices
 
 router = APIRouter(prefix="/admin")
 
@@ -996,13 +996,18 @@ def get_settings(session: Session) -> Settings:
     return settings
 
 
-def _admin_settings_context(session: Session, admin: Admin, error: str | None = None, saved: bool = False):
+def _admin_settings_context(
+    request: Request, session: Session, admin: Admin, error: str | None = None, saved: bool = False
+):
+    selected_theme = admin.theme or DEFAULT_THEME
     return {
         "admin": admin,
         "settings": get_settings(session),
-        "themes": THEMES,
+        # See routers/user.py's _user_settings_context for why this is
+        # theme_choices(), not the raw THEMES dict.
+        "themes": theme_choices(request, selected_theme),
         "modes": MODES,
-        "selected_theme": admin.theme or DEFAULT_THEME,
+        "selected_theme": selected_theme,
         "selected_mode": admin.theme_mode or DEFAULT_MODE,
         # Sorted once per render, not cached - this list only matters
         # while the settings page itself is open, nowhere near often
@@ -1037,7 +1042,7 @@ def settings_page(
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return templates.TemplateResponse(request, "admin_settings.html", _admin_settings_context(session, admin))
+    return templates.TemplateResponse(request, "admin_settings.html", _admin_settings_context(request, session, admin))
 
 
 @router.post("/settings")
@@ -1069,7 +1074,7 @@ def update_settings(
         # timestamp shown.
         set_display_timezone(display_timezone)
     return templates.TemplateResponse(
-        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
+        request, "admin_settings.html", _admin_settings_context(request, session, admin, error, error is None)
     )
 
 
@@ -1089,6 +1094,8 @@ def update_admin_theme(
     error = None
     if not is_valid_theme(theme):
         error = "Not a real theme choice."
+    elif not is_theme_selectable(theme, request, admin.theme):
+        error = "That theme isn't available right now."
     elif not is_valid_mode(mode):
         error = "Not a real mode choice."
     else:
@@ -1097,7 +1104,7 @@ def update_admin_theme(
         session.add(admin)
         session.commit()
     return templates.TemplateResponse(
-        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
+        request, "admin_settings.html", _admin_settings_context(request, session, admin, error, error is None)
     )
 
 
@@ -1141,7 +1148,7 @@ def update_admin_password(
         log_event(session, None, _admin_actor(admin), "password_changed")
         session.commit()
     return templates.TemplateResponse(
-        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
+        request, "admin_settings.html", _admin_settings_context(request, session, admin, error, error is None)
     )
 
 
