@@ -377,6 +377,33 @@ def _migrate_to_7_1_0(conn):
     conn.execute(text("UPDATE admin SET theme = NULL"))
 
 
+def _migrate_to_8_1_0(conn):
+    """New Job.rotation_manual column - see models.Job's own docstring on
+    it and app/README.md's "A real silently-overridden-orientation
+    incident" for why a per-request "was rotation touched this form
+    submission" signal turned out not to be enough: a page reload between
+    re-slices reset it, so a second re-slice of a job whose orientation
+    had already been deliberately chosen (and already successfully
+    sliced) could still get silently swept past. This column makes that
+    choice sticky for the rest of the job's life instead of just one
+    form submission.
+
+    Defaults to False, so an existing job (deliberately rotated before
+    this column existed, or never rotated at all) reads as "not yet
+    marked manual" either way - indistinguishable from a genuinely
+    fresh upload until its next re-slice, at which point a real
+    deliberate change (or job_edit.html's own now-checked-by-default
+    intent) sets it properly. Not worth a data migration to backfill:
+    a job whose rotate_x/y/z already differs from (0, 0, 0) at least
+    still can't be silently reset to a *different* orientation by the
+    sweep the way (0, 0, 0) could (see jobs._slice_with_rotation_retry),
+    so the narrow gap this leaves is strictly smaller than the one this
+    whole column exists to close."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "rotation_manual" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN rotation_manual BOOLEAN NOT NULL DEFAULT 0"))
+
+
 # Keyed by the app VERSION a schema (or, as of 7.1.0, sometimes pure
 # data) change shipped in, not a separate incrementing number - per the
 # user, a schema change should always come with a version bump, so
@@ -392,6 +419,15 @@ def _migrate_to_7_1_0(conn):
 #
 # Adding a future migration: bump app/VERSION, write a new function next
 # to _migrate_to_2_1_0, and add it here keyed by that same new version.
+#
+# Not every version bump needs an entry here at all - schema 8.2.0 (the
+# new Feedback table, models.py) is a purely new table, no existing one
+# touched, so create_all() below already handles it for free the same
+# way it already does for a brand new database; same reasoning 6.2.0's
+# own migration function only covers Job's new columns, never the new
+# Color table that shipped in that same version. VERSION still bumps
+# regardless, per the user - a schema change (a new table counts) always
+# needs one, whether or not it happens to need an ALTER TABLE too.
 MIGRATIONS = {
     "2.1.0": _migrate_to_2_1_0,
     "2.4.0": _migrate_to_2_4_0,
@@ -410,6 +446,7 @@ MIGRATIONS = {
     "6.5.0": _migrate_to_6_5_0,
     "6.6.0": _migrate_to_6_6_0,
     "7.1.0": _migrate_to_7_1_0,
+    "8.1.0": _migrate_to_8_1_0,
 }
 
 

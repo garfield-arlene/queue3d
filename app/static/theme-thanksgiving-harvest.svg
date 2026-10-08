@@ -1,0 +1,196 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 1000" width="300" height="1000">
+  <!-- Thanksgiving theme's sidebar scene (see themes.py/base.html) - a
+       cozy harvest-dusk scene, secular and food/decor-only: a barn,
+       corn stalks, pumpkins and gourds, a rail fence, drifting leaves.
+       Deliberately no people, no Pilgrims, no Native American imagery
+       of any kind - the same school-appropriate bar every other
+       seasonal theme in this app follows, and the reason this stays a
+       plain autumn-harvest scene rather than anything depicting the
+       actual first Thanksgiving.
+
+       Portrait, not landscape, for the same reason
+       theme-halloween-manor.svg is: CSS applies this as
+       background-size: cover; background-position: center top on the
+       220px-wide, full-viewport-height sidebar - a landscape source
+       only ever shows its own leftmost ~20% of width once `cover`
+       scales it to match a narrow, tall target's height, checked
+       against a real render for that theme. Every element here also
+       sits centered-and-margined within the canvas from the start
+       (not adjusted after the fact) to clear two specific problems
+       found the same way on that theme: the sun/moon kept well away
+       from the header's own nav-link column (queue3d title, Dashboard/
+       Submit a model/Settings, Log out - all rendered on top of this
+       image), and the barn given a lighter fill/outline/halo against
+       the sky from the start rather than a near-black silhouette that
+       blends into a near-black sky. -->
+  <defs>
+    <linearGradient id="hsky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#d98a4a"/>
+      <stop offset="40%" stop-color="#8a4426"/>
+      <stop offset="100%" stop-color="#3a1c12"/>
+    </linearGradient>
+    <radialGradient id="sunglow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffd28a" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#ffd28a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="barnhalo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#e8a15a" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#e8a15a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="windowglow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffdb8a" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#ffdb8a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="300" height="1000" fill="url(#hsky)"/>
+
+  <!-- a low harvest sun/moon, tucked into the top corner from the start
+       - same lesson as Halloween's own moon fix: nothing bright sits
+       behind the nav column below it. -->
+  <circle cx="80" cy="60" r="80" fill="url(#sunglow)"/>
+  <circle cx="80" cy="60" r="32" fill="#ffcf7a"/>
+
+  <!-- a pair of geese, flying south in a simple V - safe, iconic autumn
+       imagery, no other creatures needed -->
+  <g stroke="#3a1c12" stroke-width="2.5" fill="none" stroke-linecap="round">
+    <path d="M170,90 L185,80 L200,90"/>
+    <path d="M195,105 L210,95 L225,105"/>
+  </g>
+
+  <!-- a couple of bare-branched trees flanking the barn, same idea as
+       Halloween's own pair -->
+  <g stroke="#2a1a10" stroke-width="4" stroke-linecap="round" fill="none">
+    <path d="M26,570 L26,470"/>
+    <path d="M26,490 L8,465 M26,485 L42,460 M26,470 L12,445 M26,470 L38,442"/>
+    <path d="M274,570 L274,480"/>
+    <path d="M274,500 L258,475 M274,495 L290,472 M274,480 L262,455"/>
+  </g>
+
+  <!-- the barn: a soft warm halo behind it first, then every wall/roof
+       shape filled lighter than the sky immediately behind it, with a
+       thin outline stroke for edge definition - the same technique
+       theme-halloween-manor.svg's own fix uses. -->
+  <circle cx="150" cy="480" r="185" fill="url(#barnhalo)"/>
+  <g stroke="#7a4a2a" stroke-width="2.5">
+    <!-- main barn body -->
+    <rect x="75" y="440" width="150" height="140" fill="#8a3a24"/>
+    <!-- gambrel-ish roof: two simple trapezoids, not a spike -->
+    <polygon points="60,440 100,390 200,390 240,440" fill="#5c2818" stroke-linejoin="round"/>
+    <polygon points="100,390 130,355 170,355 200,390" fill="#4a2013" stroke-linejoin="round"/>
+    <!-- small cupola on the roof ridge -->
+    <rect x="138" y="335" width="24" height="22" fill="#5c2818"/>
+    <polygon points="134,335 150,318 166,335" fill="#4a2013" stroke-linejoin="round"/>
+  </g>
+
+  <!-- a round hayloft door up in the gambrel, glowing warmly - kept
+       well clear of every roof edge above (see the comment on the
+       margins used) after the tower-window overlap found on
+       theme-halloween-manor.svg. -->
+  <circle cx="150" cy="410" r="16" fill="url(#windowglow)"/>
+  <circle cx="150" cy="410" r="10" fill="#ffdb8a"/>
+  <line x1="150" y1="401" x2="150" y2="419" stroke="#4a2013" stroke-width="1.5"/>
+  <line x1="141" y1="410" x2="159" y2="410" stroke="#4a2013" stroke-width="1.5"/>
+
+  <!-- two main-body windows, generous margin from every wall edge and
+       from the barn's own big sliding door below -->
+  <rect x="98" y="480" width="24" height="32" rx="2" fill="url(#windowglow)"/>
+  <rect x="103" y="486" width="14" height="20" fill="#ffdb8a"/>
+  <rect x="178" y="480" width="24" height="32" rx="2" fill="url(#windowglow)"/>
+  <rect x="183" y="486" width="14" height="20" fill="#ffdb8a"/>
+
+  <!-- a big sliding barn door, off-white with an X brace -->
+  <rect x="120" y="535" width="60" height="45" fill="#e8dcc8" stroke="#7a4a2a" stroke-width="2.5"/>
+  <path d="M120,535 L180,580 M180,535 L120,580" stroke="#7a4a2a" stroke-width="2"/>
+
+  <!-- a couple of corn shocks (bundled stalks) flanking the barn door -->
+  <g>
+    <g transform="translate(90,565)">
+      <path d="M0,10 L-10,-38 M0,10 L-3,-40 M0,10 L3,-40 M0,10 L10,-38" stroke="#a9832f" stroke-width="3" stroke-linecap="round"/>
+      <path d="M-13,-30 Q0,-46 13,-30" fill="none" stroke="#7a5f22" stroke-width="3" stroke-linecap="round"/>
+    </g>
+    <g transform="translate(210,565)">
+      <path d="M0,10 L-10,-38 M0,10 L-3,-40 M0,10 L3,-40 M0,10 L10,-38" stroke="#a9832f" stroke-width="3" stroke-linecap="round"/>
+      <path d="M-13,-30 Q0,-46 13,-30" fill="none" stroke="#7a5f22" stroke-width="3" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <!-- a simple wooden rail fence along the front -->
+  <g stroke="#4a2a16" stroke-width="5" stroke-linecap="round">
+    <line x1="0" y1="638" x2="300" y2="638"/>
+    <line x1="0" y1="654" x2="300" y2="654"/>
+    <line x1="20" y1="618" x2="20" y2="658"/>
+    <line x1="70" y1="618" x2="70" y2="658"/>
+    <line x1="230" y1="618" x2="230" y2="658"/>
+    <line x1="280" y1="618" x2="280" y2="658"/>
+  </g>
+
+  <!-- ground -->
+  <rect x="0" y="658" width="300" height="342" fill="#2a150d"/>
+
+  <!-- a couple of hay bales, right below the fence - flattened ellipses
+       (a round bale seen at a slight angle, not a plain circle), with
+       horizontal straw striations and a dashed binding band so they
+       read as bales rather than just "a circle." Kept well above the
+       pumpkins below (a real gap, not just stacked immediately on top
+       of them) and in a visibly different gold-tan from the pumpkins'
+       own orange - a first version had both clusters close enough in
+       both position and color that neither read as anything specific,
+       checked against a real render and described as "all just look
+       like spotlights." -->
+  <g>
+    <g transform="translate(50,682)">
+      <ellipse rx="24" ry="18" fill="#c9a24a" stroke="#7a5a20" stroke-width="2.5"/>
+      <path d="M-18,-7 L18,-7 M-20,0 L20,0 M-18,7 L18,7" stroke="#8a6a2a" stroke-width="1.4" opacity="0.7"/>
+      <ellipse rx="24" ry="18" fill="none" stroke="#5c3f16" stroke-width="2" stroke-dasharray="2,4" opacity="0.8"/>
+    </g>
+    <g transform="translate(248,686) scale(0.85)">
+      <ellipse rx="24" ry="18" fill="#c9a24a" stroke="#7a5a20" stroke-width="2.5"/>
+      <path d="M-18,-7 L18,-7 M-20,0 L20,0 M-18,7 L18,7" stroke="#8a6a2a" stroke-width="1.4" opacity="0.7"/>
+      <ellipse rx="24" ry="18" fill="none" stroke="#5c3f16" stroke-width="2" stroke-dasharray="2,4" opacity="0.8"/>
+    </g>
+  </g>
+
+  <!-- three plain, uncarved pumpkins/gourds - no faces, unlike
+       Halloween's jack-o'-lanterns, since these are Thanksgiving-table
+       decor, not carved lanterns. Wider than tall (a real pumpkin's own
+       proportions, not a generic oval) with visible vertical ridges and
+       a real curved stem - a first version relied on one faint
+       horizontal crease line alone, nowhere near enough on its own to
+       read as "pumpkin" rather than just "circle," the same real
+       legibility problem the hay bales above needed their own second
+       pass for. -->
+  <g>
+    <!-- center pumpkin, plain orange -->
+    <g transform="translate(150,762)">
+      <ellipse rx="36" ry="27" fill="#d97a2e" stroke="#8a4a18" stroke-width="2.5"/>
+      <path d="M-18,-25 Q-22,0 -18,25" stroke="#8a4a18" stroke-width="1.6" fill="none" opacity="0.55"/>
+      <path d="M0,-27 Q-4,0 0,27" stroke="#8a4a18" stroke-width="1.6" fill="none" opacity="0.55"/>
+      <path d="M18,-25 Q22,0 18,25" stroke="#8a4a18" stroke-width="1.6" fill="none" opacity="0.55"/>
+      <path d="M-3,-27 Q-2,-42 7,-40 Q5,-32 3,-26" fill="none" stroke="#4a7d2c" stroke-width="5.5" stroke-linecap="round"/>
+    </g>
+    <!-- left gourd, cream-and-orange striped, same ridge treatment -->
+    <g transform="translate(72,780) scale(0.8)">
+      <ellipse rx="30" ry="24" fill="#f0e4c8" stroke="#b08a4a" stroke-width="2.5"/>
+      <path d="M-15,-22 Q-19,0 -15,22" stroke="#b08a4a" stroke-width="1.6" fill="none" opacity="0.6"/>
+      <path d="M0,-24 Q-3,0 0,24" stroke="#b08a4a" stroke-width="1.6" fill="none" opacity="0.6"/>
+      <path d="M15,-22 Q19,0 15,22" stroke="#b08a4a" stroke-width="1.6" fill="none" opacity="0.6"/>
+      <path d="M-3,-24 Q-2,-38 6,-36 Q4,-29 3,-23" fill="none" stroke="#4a7d2c" stroke-width="5" stroke-linecap="round"/>
+    </g>
+    <!-- right pumpkin, smaller -->
+    <g transform="translate(228,784) scale(0.7)">
+      <ellipse rx="36" ry="27" fill="#c9601f" stroke="#8a4a18" stroke-width="2.5"/>
+      <path d="M-18,-25 Q-22,0 -18,25" stroke="#8a4a18" stroke-width="1.6" fill="none" opacity="0.55"/>
+      <path d="M0,-27 Q-4,0 0,27" stroke="#8a4a18" stroke-width="1.6" fill="none" opacity="0.55"/>
+      <path d="M18,-25 Q22,0 18,25" stroke="#8a4a18" stroke-width="1.6" fill="none" opacity="0.55"/>
+      <path d="M-3,-27 Q-2,-42 7,-40 Q5,-32 3,-26" fill="none" stroke="#4a7d2c" stroke-width="5.5" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <!-- a scatter of falling leaves -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M50,180 Q56,172 50,164 Q44,172 50,180 Z" fill="#d97a2e" transform="rotate(20 50 172)"/>
+    <path d="M250,220 Q256,212 250,204 Q244,212 250,220 Z" fill="#c9401f" transform="rotate(-15 250 212)"/>
+    <path d="M30,330 Q36,322 30,314 Q24,322 30,330 Z" fill="#e0a83a" transform="rotate(35 30 322)"/>
+    <path d="M265,360 Q271,352 265,344 Q259,352 265,360 Z" fill="#d97a2e" transform="rotate(-25 265 352)"/>
+  </g>
+</svg>

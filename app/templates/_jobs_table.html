@@ -101,13 +101,16 @@
                to its color section (#color) - a quick, separate link
                for anyone who only wants that, not the whole settings
                form. Neither is mutually exclusive with View 3D any
-               more, so all shown together where they apply. #}
+               more, so all shown together where they apply - one link
+               per line, since run together with only whitespace between
+               them they read as one confusing blob rather than separate
+               actions. #}
             {% if job.status.value in ('submitted', 'sliced', 'slice_failed', 'queued', 'approved') %}
-              <a href="/jobs/{{ job.id }}/edit">Edit</a>
-              <a href="/jobs/{{ job.id }}/edit#color">Change color</a>
+              <a href="/jobs/{{ job.id }}/edit">Edit</a><br>
+              <a href="/jobs/{{ job.id }}/edit#color">Change color</a><br>
             {% endif %}
             {% if job.stl_path %}
-              <a href="/jobs/{{ job.id }}/preview">View 3D</a>
+              <a href="/jobs/{{ job.id }}/preview">View 3D</a><br>
             {% endif %}
             {% if job.photo_path %}
               <a href="/jobs/{{ job.id }}/photo.jpg">Photo</a>

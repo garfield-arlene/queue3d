@@ -16,11 +16,18 @@ from sqlmodel import Session
 
 from db import engine
 from models import Admin, User
-from themes import DEFAULT_MODE, DEFAULT_THEME, LOGGED_OUT_THEME
+from sysmetrics import svg_polyline_points
+from themes import DEFAULT_MODE, LOGGED_OUT_THEME, effective_theme, is_theme_selectable
 from version import APP_VERSION
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["APP_VERSION"] = APP_VERSION
+# admin_system.html's history charts call this directly per series (one
+# per CPU core, plus memory/swap/network) - a Jinja global rather than
+# precomputed per-route, since it's pure presentation math (values ->
+# SVG points) with nothing route-specific about it. See its own
+# docstring in sysmetrics.py.
+templates.env.globals["svg_polyline_points"] = svg_polyline_points
 
 
 def _signed_in_account(request):
@@ -64,7 +71,19 @@ def _signed_in_account(request):
     prevent in the first place, just reached through a stale session
     instead of a missing one. These three pages are meant to look
     identically plain to every visitor regardless of who they are or
-    were."""
+    were.
+
+    Also where a seasonal theme (themes.SEASONAL_THEMES) that's fallen
+    out of its own date window actually gets reset - the account is
+    reverted back to DEFAULT_THEME here (account.theme cleared to None,
+    the same "None means no preference, follow DEFAULT_THEME" meaning
+    every other clear already has - see db._migrate_to_7_1_0's own use
+    of exactly this), not just quietly excluded from the settings
+    dropdown going forward while still rendering as before. This is the
+    one place both current_theme() and current_mode() already fetch the
+    account from, so it's also the one place a reset only has to be
+    written once, regardless of which of the two happens to run first on
+    a given request."""
     if request.url.path in ("/admin/login", "/login", "/signup"):
         return None
     admin_id = request.session.get("admin_id")
@@ -72,26 +91,36 @@ def _signed_in_account(request):
     is_admin_path = request.url.path.startswith("/admin")
     with Session(engine) as session:
         if is_admin_path and admin_id is not None:
-            return session.get(Admin, admin_id)
-        if not is_admin_path and user_id is not None:
-            return session.get(User, user_id)
+            account = session.get(Admin, admin_id)
+        elif not is_admin_path and user_id is not None:
+            account = session.get(User, user_id)
         # A shared, non-/admin page (e.g. /jobs/{id}/preview, reachable
         # by either role) or a role/path mismatch - fall back to
         # whichever id actually exists rather than assume neither does.
-        if admin_id is not None:
-            return session.get(Admin, admin_id)
-        if user_id is not None:
-            return session.get(User, user_id)
-    return None
+        elif admin_id is not None:
+            account = session.get(Admin, admin_id)
+        elif user_id is not None:
+            account = session.get(User, user_id)
+        else:
+            account = None
+
+        if account is not None and account.theme and not is_theme_selectable(account.theme, request):
+            account.theme = None
+            session.add(account)
+            session.commit()
+
+    return account
 
 
 def current_theme(request) -> str:
     """The signed-in viewer's own theme choice (see themes.py,
     models.User.theme/Admin.theme), themes.DEFAULT_THEME for a signed-in
-    account that's never set one, or themes.LOGGED_OUT_THEME for a page
-    with no signed-in account at all. Registered as a Jinja global rather
-    than something every route has to thread through its own context -
-    see _signed_in_account() above for why.
+    account that's never set one (or whose seasonal pick has since fallen
+    out of season - see effective_theme() and _signed_in_account() above,
+    which actually persists that reset), or themes.LOGGED_OUT_THEME for a
+    page with no signed-in account at all. Registered as a Jinja global
+    rather than something every route has to thread through its own
+    context - see _signed_in_account() above for why.
 
     The logged-out case is deliberately its own fixed constant, not
     DEFAULT_THEME - see LOGGED_OUT_THEME's own comment in themes.py. Real
@@ -108,7 +137,7 @@ def current_theme(request) -> str:
     account = _signed_in_account(request)
     if account is None:
         return LOGGED_OUT_THEME
-    return account.theme or DEFAULT_THEME
+    return effective_theme(account.theme, request)
 
 
 def current_mode(request) -> str:

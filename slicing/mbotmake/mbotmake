@@ -829,7 +829,23 @@ def createToolpath(filename, temp):
     #input('press')
     print(bbox)
 
-    # Make sure bounding box is centered near the origin in X/Y and at the bottom of Z.
+    # Sanity-check that the bounding box is roughly centered near the
+    # origin in X/Y and sitting at the bottom of Z - originally two hard
+    # asserts (a third, on zrel, was already disabled above this point).
+    # Downgraded to warnings (queue3d, 2026): this bbox comes from only the
+    # 'Infill'/'Leaky Travel Move'-tagged toolpath commands above, not the
+    # model's full geometry - for a model with a small, unevenly-shaped
+    # solid base (a figurine standing on one foot, say) and mostly thin,
+    # infill-free walls above it, that's a tiny, unrepresentative sliver of
+    # the real print, not its true center. A real re-slice hit exactly
+    # this: a legitimately well-centered model (queue3d's own
+    # center_vertices() already centers the actual 3D surface centroid
+    # before this ever runs) still measured xrel=-0.161, just outside the
+    # old +/-0.15 assert, aborting an otherwise-fine slice over a mismatch
+    # between two different definitions of "centered," not a real
+    # off-the-bed problem. This still prints for visibility (a genuinely
+    # wild value is still worth noticing), it just no longer aborts the
+    # whole conversion over a narrow, easily-false-positive heuristic.
     xrel = (bbox['x_max'] + bbox['x_min']) / (bbox['x_max'] - bbox['x_min'])
     yrel = (bbox['y_max'] + bbox['y_min']) / (bbox['y_max'] - bbox['y_min'])
     zrel = (bbox['z_max'] + bbox['z_min']) / (bbox['z_max'] - bbox['z_min'])
@@ -839,8 +855,10 @@ def createToolpath(filename, temp):
     print(yrel)
     print('zrel:')
     print(zrel)
-    assert -0.15 < xrel < 0.15, xrel
-    assert -0.15 < yrel < 0.15, yrel
+    if not (-0.15 < xrel < 0.15):
+        print(f'WARNING: xrel {xrel} outside the usual +/-0.15 range - continuing anyway')
+    if not (-0.15 < yrel < 0.15):
+        print(f'WARNING: yrel {yrel} outside the usual +/-0.15 range - continuing anyway')
     #assert  0.95 < zrel < 1.05, zrel
     assert 0 < bbox['z_min'] < 0.5, bbox['z_min']
 

@@ -87,6 +87,19 @@
       const rotateXInput = document.getElementById("rotate-x");
       const rotateYInput = document.getElementById("rotate-y");
       const rotateZInput = document.getElementById("rotate-z");
+      // Tells the server a requested rotation is deliberate even when its
+      // *value* happens to equal the untouched default (x=0/y=0/z=0) -
+      // see jobs._slice_with_rotation_retry's own docstring for the real
+      // incident where inferring "deliberate" from the value alone broke:
+      // Snap to surface can legitimately compute exactly 0/0/0 (e.g.
+      // clicking the face that restores the model's own original,
+      // as-modeled orientation), which is indistinguishable from "never
+      // touched" by value alone. Set true below by every control that
+      // actually changes rotation - never reset back to false client-side,
+      // since once touched this session, it stays deliberate for every
+      // re-slice until the page is reloaded with fresh, real default values.
+      const rotationTouchedInput = document.getElementById("rotation-touched");
+      const markRotationTouched = () => { rotationTouchedInput.value = "1"; };
       const snapBtn = document.getElementById("snap-btn");
       const snapHint = document.getElementById("snap-hint");
       const rotateGizmoBtn = document.getElementById("rotate-gizmo-btn");
@@ -128,6 +141,7 @@
         rotateYInput.value = Math.round(t.rotateY * 100) / 100;
         rotateZInput.value = Math.round(t.rotateZ * 100) / 100;
         scaleInput.value = Math.round(t.scale * 100 * 100) / 100; // percent, 2dp
+        markRotationTouched(); // shared with scale-drag commit - harmless: it's actually the model being edited either way
       }
 
       function setGizmoMode(mode) {
@@ -162,6 +176,12 @@
       // "see it before you commit to it" spirit as the pre-upload preview.
       for (const input of [scaleInput, rotateXInput, rotateYInput, rotateZInput]) {
         input.addEventListener("input", applyPreview);
+      }
+      // Typing directly into a rotation field is just as deliberate as
+      // dragging a handle or snapping to a surface - see
+      // rotationTouchedInput's own comment above.
+      for (const input of [rotateXInput, rotateYInput, rotateZInput]) {
+        input.addEventListener("input", markRotationTouched);
       }
 
       document.getElementById("auto-fit-btn").addEventListener("click", () => {
@@ -203,6 +223,7 @@
         rotateXInput.value = Math.round(snapped.x * 100) / 100;
         rotateYInput.value = Math.round(snapped.y * 100) / 100;
         rotateZInput.value = Math.round(snapped.z * 100) / 100;
+        markRotationTouched();
         applyPreview();
 
         // One snap per click of the button - back to normal orbit/zoom
@@ -273,6 +294,24 @@
     <label>Rotate Z<br><input type="number" id="rotate-z" name="rotate_z" step="0.01" value="{{ job.rotate_z | round(2) }}"></label>
     <button type="button" id="rotate-gizmo-btn">Rotate (drag)</button>
     <button type="button" id="snap-btn">Snap to surface</button>
+    {# Set to "1" by this page's own JS the moment any rotation control is
+       actually used - see rotationTouchedInput's comment in the <script>
+       above for why this can't just be inferred from rotate_x/y/z's
+       value on the server. Stays "0" (the server's own signal to fall
+       back to the older value-only heuristic) for a plain no-JS post. #}
+    <input type="hidden" id="rotation-touched" name="rotation_touched" value="0">
+    {% if job.rotation_manual %}
+      <label><input type="checkbox" name="auto_orient"> Let this app search
+        for a working orientation automatically on this re-slice, instead
+        of keeping the rotation above</label>
+      <p class="muted">
+        This job's rotation is currently locked in as deliberate (it was
+        typed, drag-rotated, or Snap-to-surfaced at some point) - a
+        failed re-slice is never silently swept to a different
+        orientation any more, even after reloading this page. Check the
+        box above to explicitly opt back into automatic search.
+      </p>
+    {% endif %}
     {% if job.status.value in ('queued', 'approved') %}
       <p class="muted">
         Re-slicing an already-queued job temporarily pulls it out of the
@@ -289,5 +328,9 @@
     </form>
   {% endif %}
 
-  <p><a href="/dashboard">&laquo; Back to dashboard</a></p>
+  <p>
+    <a href="/dashboard">&laquo; Back to dashboard</a> &middot;
+    <a href="/help#submitting">Help with supports, color, scale, and rotation</a> &middot;
+    <a href="/help#statuses">What does this status mean?</a>
+  </p>
 {% endblock %}

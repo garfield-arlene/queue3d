@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Help - queue3d{% endblock %}
+{% block nav %}
+  {% if user %}
+    <a href="/dashboard">&laquo; My submissions</a>
+    <a href="/settings">Settings</a>
+    <a href="/feedback">Feedback</a>
+    <form method="post" action="/logout"><button type="submit">Log out</button></form>
+  {% else %}
+    <a href="/login">Log in</a>
+    <a href="/signup">Sign up</a>
+    <a href="/admin/login">Admin log in</a>
+  {% endif %}
+{% endblock %}
+{% block content %}
+  <h2>Help</h2>
+  <p class="muted">
+    Everything below is self-service - if something isn't covered here,
+    that's a gap in this page, not something you need an admin to
+    explain in person. Jump to a section, or just read top to bottom:
+    it follows the order a job actually moves through. Looking for admin
+    help instead? See <a href="/admin/help">the admin help page</a> (only
+    reachable while actually signed in as an admin).
+  </p>
+  <ul>
+    <li><a href="#login">Logging in and signing up</a></li>
+    <li><a href="#submitting">Submitting a print</a></li>
+    <li><a href="#statuses">Job statuses, and what each one means</a></li>
+    <li><a href="#after-submit">Editing, re-slicing, restoring, and reprinting</a></li>
+    <li><a href="#account">Your account settings</a></li>
+  </ul>
+
+  <h3 id="login">Logging in and signing up</h3>
+  <p>
+    Every user account is just a name and a PIN (4 or more digits) that
+    you choose yourself on the <a href="/signup">sign up</a> page -
+    there's no email, and nobody has to approve you first. Pick any
+    name that isn't already taken and a PIN you'll remember; both are
+    on the honor system, so use a PIN nobody else would guess if you'd
+    rather other people not touch your submissions.
+  </p>
+  <p>
+    Signing up also means reading and agreeing to the Acceptable Use
+    Agreement shown on that page, and retyping your name to confirm it -
+    both are required before an account is created. The short version:
+    if you couldn't bring it to school, you can't print it here.
+  </p>
+  <p>
+    Forgot which name you signed up with, or typed your PIN wrong a few
+    times? There's no self-service password reset - ask an admin, who
+    can reset your PIN for you from the Users page. Admin accounts are
+    separate from user accounts and aren't self-signup at all (see the
+    <a href="/admin/login">admin log in</a> page) - they're created by
+    whoever runs the server.
+  </p>
+
+  <h3 id="submitting">Submitting a print</h3>
+  <p>
+    From <a href="/dashboard">My submissions</a>, upload a model
+    (<code>.stl</code>, <code>.obj</code>, <code>.3mf</code>, or a
+    <code>.zip</code> containing several of the first three - each model
+    inside becomes its own job, not one combined plate) and it's sliced
+    automatically. A <code>.3mf</code> containing more than one object is
+    the opposite of a zip: they're combined into a single print at the
+    positions already saved in the file, since a multi-part <code>.3mf</code>
+    (hinges, gears, anything meant to be printed together as one piece)
+    needs those parts to stay exactly where they were placed, not split
+    apart into separate jobs. While
+    it's still a draft - before you submit it into the shared queue -
+    you can change any of these as many times as you like, and each
+    change just re-slices the same upload in place:
+  </p>
+  <ul>
+    <li>
+      <strong>Generate supports</strong> and <strong>support style</strong> -
+      whether the slicer should add supports at all, and if so, which
+      kind (Automatic, Grid, Snug, Organic, or one of the two Tree
+      styles). Leave supports off for anything that doesn't need them;
+      supports use extra filament and take longer to remove.
+    </li>
+    <li>
+      <strong>Color</strong> - pick a specific filament color, or leave
+      it "Any available" if you don't mind which one, so an admin
+      doesn't have to change filament just for your job. This is best
+      effort: the printer can't report what's actually loaded, so it's
+      only as accurate as an admin's last inventory update, and you can
+      change it later even after submitting (see below).
+    </li>
+    <li>
+      <strong>Scale</strong> and <strong>rotate X/Y/Z</strong> - scale
+      keeps the model's proportions; rotation is in degrees on each
+      axis. Both are on the model's edit page, alongside a live 3D
+      preview so you can see the result (and, with supports on, where
+      they'll actually go) before deciding it's ready.
+    </li>
+  </ul>
+  <p>
+    Once it looks right, <strong>Submit</strong> puts it into the
+    shared queue for an admin to review - it's visible to admins as
+    soon as it's submitted, there's no separate pre-review step before
+    that.
+  </p>
+
+  <h3 id="statuses">Job statuses, and what each one means</h3>
+  <p>A job moves through these statuses, in this order:</p>
+  <ul>
+    <li><strong>Submitted</strong> - just uploaded; being sliced right now.</li>
+    <li><strong>Sliced</strong> - a draft, still yours to change and hasn't been submitted into the queue yet.</li>
+    <li><strong>Slice failed</strong> - the slicer couldn't process it (see the technical detail on the job for why). Still a draft - adjust settings and re-slice, or let it expire.</li>
+    <li><strong>Queued</strong> - you've submitted it; waiting for an admin to look at it.</li>
+    <li><strong>Approved</strong> - an admin greenlit it. It's still waiting its turn, since only one job can be on the printer at once - approving doesn't start it printing by itself.</li>
+    <li><strong>Rejected</strong> - an admin declined it, with a note explaining why. This is terminal; see "Restoring a job" below if you want another attempt at it.</li>
+    <li><strong>Printing</strong> - an admin has actually released it to the printer.</li>
+    <li><strong>Done</strong> - finished printing successfully.</li>
+    <li><strong>Failed</strong> - the print itself failed or was cancelled partway through (not the same as "Slice failed" above, which never reached the printer at all).</li>
+    <li><strong>Expired</strong> - a draft (Submitted, Sliced, or Slice failed) that sat too long without ever being submitted, and was automatically cleared out.</li>
+  </ul>
+
+  <h3 id="after-submit">Editing, re-slicing, restoring, and reprinting</h3>
+  <p>
+    <strong>Color</strong> can be changed at any point up through
+    Approved, even after you've submitted - changing it never triggers
+    a re-slice, since color doesn't affect the model itself.
+  </p>
+  <p>
+    <strong>Restore</strong> is available on a job that's Rejected,
+    Done, Failed, or Expired: it copies that job's model into a brand
+    new draft with the same settings it had, re-slices it, and takes
+    you straight to that draft's edit page - the quickest way to try
+    again with a rejected job (after fixing whatever the admin's note
+    called out) or to print a past job again with different settings.
+  </p>
+  <p>
+    <strong>Reprint</strong> is available only on a Done job, and is
+    the opposite of Restore: it re-queues the exact same already-sliced
+    file with no changes and no re-slicing at all - use it when you
+    just want another one of exactly what you already printed.
+  </p>
+
+  <h3 id="account">Your account settings</h3>
+  <p>
+    From <a href="/settings">Settings</a> you can change your theme
+    (the sidebar/page look) and its light/dark mode independently of
+    each other, and change your PIN. None of this affects your jobs.
+  </p>
+
+  <h3 id="feedback">Reporting a problem</h3>
+  <p>
+    If something went wrong - a print came out badly, slicing behaved
+    strangely, or anything else didn't work the way you expected -
+    <a href="/feedback">Feedback</a> is the place to describe it.
+    Include which model/job it was about if there is one and
+    approximately when it happened - both help track down what actually
+    went wrong, but neither is required if you're not sure.
+  </p>
+{% endblock %}

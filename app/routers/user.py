@@ -2,7 +2,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from sqlmodel import Session, select
 
 import storage
@@ -16,6 +16,7 @@ from auth import (
     verify_secret,
 )
 from db import get_session
+from feedback import create_feedback, list_feedback
 from filters import filtered_redirect, job_filter_params, job_filters_from_query_params
 from jobs import (
     JobActionError,
@@ -35,11 +36,11 @@ from jobs import (
     start_reslice,
     submit_draft,
 )
-from mesh import convert_obj_to_stl
+from mesh import convert_3mf_to_stl, convert_obj_to_stl
 from models import DRAFT_STATUSES, Color, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, MAX_ZIP_MODEL_FILES, scratch_stl_path
 from templates_env import templates
-from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
+from themes import DEFAULT_MODE, MODES, effective_theme, is_theme_selectable, is_valid_mode, is_valid_theme, theme_choices
 
 # OrcaSlicer's own support_style values, each confirmed (by directly
 # comparing sliced gcode output, not just guessed) to actually produce
@@ -70,13 +71,27 @@ def signup_form(request: Request):
 def signup(
     request: Request,
     name: str = Form(...),
+    confirm_name: str = Form(...),
     pin: str = Form(...),
+    agree_aup: bool = Form(False),
     session: Session = Depends(get_session),
 ):
+    """agree_aup defaults False (not Form(...)) since an unchecked HTML
+    checkbox sends no field at all - a required Form field there would
+    422 on every unchecked submission instead of the friendly message
+    below. confirm_name is a second, independent typing of the same
+    name, required to match `name` exactly - the Acceptable Use
+    Agreement's own "signature," not a typo-catcher for the Name field
+    itself (which has no such re-entry requirement on its own)."""
     name = name.strip()
+    confirm_name = confirm_name.strip()
     error = None
     if not name:
         error = "Enter your name."
+    elif not agree_aup:
+        error = "You must agree to the Acceptable Use Agreement to sign up."
+    elif confirm_name != name:
+        error = "The name you typed to confirm doesn't match the name you entered above."
     elif len(pin) < 4:
         error = "PIN must be at least 4 digits."
     elif user_by_name(session, name):
@@ -84,7 +99,9 @@ def signup(
 
     if error:
         return templates.TemplateResponse(
-            request, "user_signup.html", {"error": error, "name": name}
+            request,
+            "user_signup.html",
+            {"error": error, "name": name, "confirm_name": confirm_name, "agree_aup": agree_aup},
         )
 
     user = User(name=name, pin_hash=hash_secret(pin))
@@ -145,12 +162,29 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
-def _user_settings_context(user: User, error: str | None = None, saved: bool = False):
+def _user_settings_context(request: Request, user: User, error: str | None = None, saved: bool = False):
+    # effective_theme(), not a plain `user.theme or DEFAULT_THEME` - if
+    # user.theme is a seasonal theme that's since fallen out of its own
+    # window, this already reports DEFAULT_THEME, matching what
+    # current_theme() (templates_env.py, which also persists the same
+    # reset to the account's own stored value) renders on this exact
+    # response - without this, the dropdown would keep showing the old
+    # expired choice as "selected" for one extra page load, since
+    # current_theme()'s own reset happens during Jinja rendering, after
+    # this context dict is already built.
+    selected_theme = effective_theme(user.theme, request)
     return {
         "user": user,
-        "themes": THEMES,
+        # Filtered to what's actually pickable right now (a seasonal
+        # theme outside its own window disappears from the dropdown,
+        # except on 127.0.0.1) - see themes.theme_choices(). selected_theme
+        # is already DEFAULT_THEME by the time it gets here whenever
+        # user.theme itself has expired (see above), so this "always
+        # include the current choice" exemption only ever protects a
+        # still-genuinely-active one.
+        "themes": theme_choices(request, selected_theme),
         "modes": MODES,
-        "selected_theme": user.theme or DEFAULT_THEME,
+        "selected_theme": selected_theme,
         "selected_mode": user.theme_mode or DEFAULT_MODE,
         "error": error,
         "saved": saved,
@@ -162,7 +196,7 @@ def settings_page(
     request: Request,
     user: User = Depends(require_user),
 ):
-    return templates.TemplateResponse(request, "user_settings.html", _user_settings_context(user))
+    return templates.TemplateResponse(request, "user_settings.html", _user_settings_context(request, user))
 
 
 @router.post("/settings")
@@ -176,6 +210,8 @@ def update_settings(
     error = None
     if not is_valid_theme(theme):
         error = "Not a real theme choice."
+    elif not is_theme_selectable(theme, request, user.theme):
+        error = "That theme isn't available right now."
     elif not is_valid_mode(mode):
         error = "Not a real mode choice."
     else:
@@ -184,7 +220,7 @@ def update_settings(
         session.add(user)
         session.commit()
     return templates.TemplateResponse(
-        request, "user_settings.html", _user_settings_context(user, error, error is None)
+        request, "user_settings.html", _user_settings_context(request, user, error, error is None)
     )
 
 
@@ -225,7 +261,80 @@ def update_pin(
         log_event(session, None, f"user:{user.name}", "pin_changed")
         session.commit()
     return templates.TemplateResponse(
-        request, "user_settings.html", _user_settings_context(user, error, error is None)
+        request, "user_settings.html", _user_settings_context(request, user, error, error is None)
+    )
+
+
+def _feedback_context(
+    session: Session,
+    user: User,
+    error: str | None = None,
+    saved: bool = False,
+    description: str = "",
+) -> dict:
+    return {
+        "user": user,
+        # The submitter's own jobs only, not everyone's - a user's own
+        # dashboard is already scoped this way, and the point of this
+        # dropdown (pick the exact job feedback is about, if any) has no
+        # reason to expose anyone else's filenames to do it. Capped at
+        # 100, most recent first - a convenience for finding the right
+        # one quickly, not the only way to describe which job/model this
+        # is about; the description field itself is free text regardless.
+        "jobs": session.exec(
+            select(Job).where(Job.user_id == user.id).order_by(Job.created_at.desc()).limit(100)
+        ).all(),
+        "feedback_list": list_feedback(session, actor=f"user:{user.name}"),
+        "error": error,
+        "saved": saved,
+        # Repopulated into the textarea on a validation error, same as
+        # user_signup.html already does for name/confirm_name - not read
+        # back via request.form in the template, which Starlette only
+        # exposes as an async method with no synchronous Jinja-friendly
+        # equivalent.
+        "description": description,
+    }
+
+
+@router.get("/feedback")
+def feedback_page(
+    request: Request,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    return templates.TemplateResponse(request, "user_feedback.html", _feedback_context(session, user))
+
+
+@router.post("/feedback")
+def submit_feedback(
+    request: Request,
+    description: str = Form(...),
+    job_id: str = Form(""),
+    occurred_at: str = Form(""),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    description = description.strip()
+    error = None
+    job = None
+    if not description:
+        error = "Describe what you were doing and what went wrong before submitting."
+    elif job_id:
+        job = session.get(Job, int(job_id))
+        if job is None or job.user_id != user.id:
+            error = "That's not one of your own submissions."
+    if error is None:
+        create_feedback(
+            session,
+            actor=f"user:{user.name}",
+            description=description,
+            job=job,
+            occurred_at_raw=occurred_at or None,
+        )
+    return templates.TemplateResponse(
+        request,
+        "user_feedback.html",
+        _feedback_context(session, user, error, error is None, description=description if error else ""),
     )
 
 
@@ -354,29 +463,36 @@ def dashboard_jobs_table(
 
 def _stl_bytes_from_upload(filename: str, data: bytes) -> bytes:
     """Validates one uploaded model file and returns real STL bytes ready
-    to write to scratch/ - converting from OBJ first if that's what this
-    is (see mesh.py's own docstring for why that conversion happens here,
-    immediately, rather than teaching anything downstream a second
-    format). Raises ValueError with a user-facing message for anything
-    that shouldn't become a job at all: empty, oversized, or (for OBJ) not
-    actually parseable. Shared by a plain upload and each file pulled out
-    of an uploaded zip - both need the exact same validation+conversion,
-    just applied once vs. in a loop."""
+    to write to scratch/ - converting from OBJ or 3MF first if that's
+    what this is (see mesh.py's own docstring for why that conversion
+    happens here, immediately, rather than teaching anything downstream a
+    second/third format). A multi-object .3mf is flattened into one
+    merged mesh at this same step (see mesh.parse_3mf) - by the time this
+    returns, every caller sees a single-object STL either way, never
+    anything that looks like an assembly. Raises ValueError with a
+    user-facing message for anything that shouldn't become a job at all:
+    empty, oversized, or (for OBJ/3MF) not actually parseable. Shared by
+    a plain upload and each file pulled out of an uploaded zip - both
+    need the exact same validation+conversion, just applied once vs. in a
+    loop."""
     if not data:
         raise ValueError("empty file")
     if len(data) > MAX_UPLOAD_BYTES:
         raise ValueError(f"too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB)")
     ext = Path(filename).suffix.lower()
-    if ext != ".obj":
+    if ext not in (".obj", ".3mf"):
         return data
-    with tempfile.TemporaryDirectory(prefix="queue3d-objconvert-") as tmp:
-        obj_path = Path(tmp) / "in.obj"
+    with tempfile.TemporaryDirectory(prefix="queue3d-modelconvert-") as tmp:
+        in_path = Path(tmp) / f"in{ext}"
         stl_path = Path(tmp) / "out.stl"
-        obj_path.write_bytes(data)
+        in_path.write_bytes(data)
         try:
-            convert_obj_to_stl(obj_path, stl_path)
+            if ext == ".obj":
+                convert_obj_to_stl(in_path, stl_path)
+            else:
+                convert_3mf_to_stl(in_path, stl_path)
         except Exception as e:
-            raise ValueError(f"couldn't read as an OBJ file ({e})")
+            raise ValueError(f"couldn't read as {'an OBJ' if ext == '.obj' else 'a 3MF'} file ({e})")
         return stl_path.read_bytes()
 
 
@@ -461,9 +577,47 @@ def upload(
     if color_name is not None and color_name not in {c.name for c in _enabled_colors(session)}:
         color_name = None
 
-    def fail(message: str):
+    def respond_with_message(message: str, *, is_error: bool):
+        """A real incident, not a hypothetical: the upload form's own JS
+        (user_dashboard.html) sends this via XHR for real upload-byte
+        progress, and XHR follows a same-origin redirect transparently -
+        so redirecting here unconditionally meant that *invisible*,
+        JS-never-sees-it follow-up GET /dashboard was what actually
+        popped (and thus cleared) the one-time flash message this sets,
+        before the JS's own separate, visible `window.location.href`
+        navigation ever got to read it. A real validation failure (a
+        .3mf this app genuinely couldn't parse) looked identical to
+        nothing having happened at all: no error shown, no job created,
+        not even the request ever reaching a place that logs anything -
+        the flash message was real and correctly set, just already
+        consumed by a fetch nobody ever displayed. The exact same thing
+        would silently swallow a *partial* zip success's "these files
+        were skipped" notice too - real jobs still get created there, so
+        it's a smaller loss than a whole upload vanishing, but the same
+        root cause, so the same fix.
+
+        Fixed by not redirecting at all for this specific request shape:
+        the JS marks itself with the `X-Requested-With` header every
+        real browser XHR/fetch library uses for this by convention, and
+        for exactly that case this returns the message directly, as a
+        plain body (400 for a real failure, 200 for a success that still
+        has something worth saying), with nothing to auto-follow - the
+        JS checks `xhr.responseURL` for whether it actually got
+        redirected to `/dashboard` rather than trusting status code
+        alone (200 no longer safely means "just navigate," since this
+        can now also return 200 directly), shows this message either
+        way, then navigates itself once it's had a moment to be read. A
+        plain, JS-disabled `<form method=post>` submission never sends
+        that header, so it keeps the original flash-message-and-redirect
+        behavior, which works correctly there since no invisible
+        in-between fetch is ever involved."""
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return PlainTextResponse(message, status_code=400 if is_error else 200)
         request.session["flash_error"] = message
         return RedirectResponse("/dashboard", status_code=303)
+
+    def fail(message: str):
+        return respond_with_message(message, is_error=True)
 
     data = file.file.read()
 
@@ -479,7 +633,7 @@ def upload(
         except ValueError as e:
             return fail(str(e))
         if not entries:
-            return fail("No .stl or .obj files found in that zip.")
+            return fail("No .stl, .obj, or .3mf files found in that zip.")
         created = 0
         skipped = []
         for entry_name, entry_data in entries:
@@ -495,13 +649,14 @@ def upload(
         if created == 0:
             return fail("Couldn't use any files in that zip: " + "; ".join(skipped))
         if skipped:
-            request.session["flash_error"] = (
-                f"Uploaded {created} model(s) from the zip. Skipped: " + "; ".join(skipped)
+            return respond_with_message(
+                f"Uploaded {created} model(s) from the zip. Skipped: " + "; ".join(skipped),
+                is_error=False,
             )
         return RedirectResponse("/dashboard", status_code=303)
 
-    if ext not in (".stl", ".obj"):
-        return fail("Only .stl, .obj, and .zip files are accepted.")
+    if ext not in (".stl", ".obj", ".3mf"):
+        return fail("Only .stl, .obj, .3mf, and .zip files are accepted.")
 
     try:
         stl_bytes = _stl_bytes_from_upload(filename, data)
@@ -603,6 +758,8 @@ def reslice(
     rotate_x: float = Form(0.0),
     rotate_y: float = Form(0.0),
     rotate_z: float = Form(0.0),
+    rotation_touched: bool = Form(False),
+    auto_orient: bool = Form(False),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
@@ -623,7 +780,21 @@ def reslice(
     scale_percent, not a raw factor, in the form itself - matches what
     the edit page actually shows/lets someone type (see job_edit.html).
     rotate_x/y/z are already in degrees, applied in that order - see
-    models.Job.rotate_x's own docstring for why the order matters."""
+    models.Job.rotate_x's own docstring for why the order matters.
+
+    rotation_touched is job_edit.html's own hidden field, set to true by
+    its JS the moment any rotation control (typed value, drag-rotate, or
+    Snap to surface) is actually used this editing session - one signal
+    among possibly several toward job.rotation_manual (see start_reslice
+    and that column's own docstring), which is what actually persists
+    "deliberate" for the rest of this job's life, not just this one
+    submission - a real incident showed a per-submission-only signal
+    wasn't enough either (see jobs._slice_with_rotation_retry's own
+    docstring). auto_orient is job_edit.html's checkbox for explicitly
+    opting back into automatic search, overriding that persisted flag.
+    Both default to False, matching a plain no-JS form post, which has
+    no way to set either - that case falls back to the older, imperfect
+    value-only heuristic, same as before either of these existed."""
     job = _owned_job(session, user, job_id)
     if support_style not in SUPPORT_STYLES:
         support_style = "default"
@@ -638,6 +809,8 @@ def reslice(
             rotate_x,
             rotate_y,
             rotate_z,
+            rotation_touched,
+            auto_orient,
         )
     except JobActionError as e:
         request.session["flash_error"] = str(e)

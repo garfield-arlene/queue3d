@@ -13,6 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Re
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlmodel import Session, select
 
+import sysmetrics
 from auth import (
     admin_by_username,
     check_lockout,
@@ -26,6 +27,7 @@ from auth import (
 )
 from backup import get_last_successful_backup, is_stale
 from db import get_session
+from feedback import create_feedback, list_feedback
 from filters import (
     apply_user_filters,
     event_filter_params,
@@ -65,7 +67,7 @@ from models import Admin, Color, Job, QUEUE_STATUSES, Settings, TERMINAL_STATUSE
 from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
 from support_bundle import build_support_bundle
 from templates_env import is_valid_timezone, set_display_timezone, templates
-from themes import DEFAULT_MODE, DEFAULT_THEME, MODES, THEMES, is_valid_mode, is_valid_theme
+from themes import DEFAULT_MODE, MODES, effective_theme, is_theme_selectable, is_valid_mode, is_valid_theme, theme_choices
 
 router = APIRouter(prefix="/admin")
 
@@ -163,6 +165,12 @@ def _dashboard_context(session: Session, admin: Admin, action_error: str | None 
         "admin": admin,
         "last_backup": last_backup,
         "backup_stale": is_stale(last_backup),
+        # Live, not cached - the same sysmetrics.low_disk_mounts() call
+        # jobs.start_disk_space_poller() uses for its own once-per-
+        # episode activity-log entry, so a low mountpoint is surfaced
+        # here immediately for whoever's actually looking at the
+        # dashboard right now, not only discoverable in the log later.
+        "low_disk_mounts": sysmetrics.low_disk_mounts(),
         "rows": rows,
         "old_job_count": old_job_count,
         "old_job_threshold_days": threshold_days,
@@ -247,6 +255,70 @@ def printer_info(
     return templates.TemplateResponse(
         request, "admin_printer_info.html", {"admin": admin, "info": info, "error": error}
     )
+
+
+def _system_context(admin: Admin) -> dict:
+    hist = sysmetrics.history()
+    snap = sysmetrics.snapshot()
+    recv_series = [s.net_recv_kBps for s in hist]
+    sent_series = [s.net_sent_kBps for s in hist]
+    disk_root_pct = snap["disk_root"].used / snap["disk_root"].total * 100
+    disk_data_pct = (
+        snap["disk_data"].used / snap["disk_data"].total * 100 if snap["disk_data"] else None
+    )
+    return {
+        "admin": admin,
+        "snapshot": snap,
+        "uptime": format_duration(snap["uptime_s"]),
+        "disk_root_pct": disk_root_pct,
+        "disk_data_pct": disk_data_pct,
+        "disk_mounts": sysmetrics.disk_mounts(),
+        # The most recent sample on its own, for the "top" section's
+        # live bars - separate from the *_series lists below, which are
+        # the full history each chart needs. None for the brief instant
+        # before the sampler's first tick has landed.
+        "latest": hist[-1] if hist else None,
+        # Transposed from "one Sample per tick, cpu_percpu across cores"
+        # into "one series per core, across every tick" - what the
+        # per-core history chart actually needs to draw one polyline per
+        # core. A brand new history (nothing sampled yet on a
+        # just-started server) safely produces an empty list of series,
+        # not an error - the template renders an empty chart area rather
+        # than a stale/fake one.
+        "cpu_series": list(zip(*(s.cpu_percpu for s in hist))) if hist else [],
+        "mem_series": [s.mem_percent for s in hist],
+        "swap_series": [s.swap_percent for s in hist],
+        "net_recv_series": recv_series,
+        "net_sent_series": sent_series,
+        # A sensible floor (64 KB/s) rather than scaling to whatever
+        # tiny amount of traffic happened to occur - otherwise a mostly-
+        # idle network would make ordinary background chatter look like
+        # it's constantly maxing out the chart.
+        "net_max": max([64.0] + recv_series + sent_series),
+    }
+
+
+@router.get("/system")
+def system_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """The full page - see _system_metrics.html for the actual gauges/
+    charts, shared with the self-polling fragment below so the two can
+    never drift apart in what they render."""
+    return templates.TemplateResponse(request, "admin_system.html", _system_context(admin))
+
+
+@router.get("/system/refresh")
+def system_refresh(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """Polled by `_system_metrics.html`'s own `hx-trigger` at the same
+    cadence the background sampler actually produces new data
+    (sysmetrics.SAMPLE_INTERVAL_S) - a faster poll would just re-render
+    the identical numbers for nothing."""
+    return templates.TemplateResponse(request, "_system_metrics.html", _system_context(admin))
 
 
 def _get_job_or_404(session: Session, job_id: int) -> Job:
@@ -925,13 +997,20 @@ def get_settings(session: Session) -> Settings:
     return settings
 
 
-def _admin_settings_context(session: Session, admin: Admin, error: str | None = None, saved: bool = False):
+def _admin_settings_context(
+    request: Request, session: Session, admin: Admin, error: str | None = None, saved: bool = False
+):
+    # See routers/user.py's _user_settings_context for why this is
+    # effective_theme(), not a plain `admin.theme or DEFAULT_THEME`.
+    selected_theme = effective_theme(admin.theme, request)
     return {
         "admin": admin,
         "settings": get_settings(session),
-        "themes": THEMES,
+        # See routers/user.py's _user_settings_context for why this is
+        # theme_choices(), not the raw THEMES dict.
+        "themes": theme_choices(request, selected_theme),
         "modes": MODES,
-        "selected_theme": admin.theme or DEFAULT_THEME,
+        "selected_theme": selected_theme,
         "selected_mode": admin.theme_mode or DEFAULT_MODE,
         # Sorted once per render, not cached - this list only matters
         # while the settings page itself is open, nowhere near often
@@ -943,13 +1022,30 @@ def _admin_settings_context(session: Session, admin: Admin, error: str | None = 
     }
 
 
+@router.get("/help")
+def help_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+):
+    """Admin-only help/how-to, kept as its own route rather than folded
+    into the shared, no-login-required /help page (routers/help.py) -
+    see that module's docstring for the real incident that made "one
+    page, session-detected role" the wrong shape here: require_admin
+    means this can never render for anyone who isn't *currently* a
+    valid, signed-in admin, the same single-role contract every other
+    admin-only page already relies on - no guessing which of two
+    possibly-simultaneous session identities in the same browser this
+    request "really" is."""
+    return templates.TemplateResponse(request, "admin_help.html", {"admin": admin})
+
+
 @router.get("/settings")
 def settings_page(
     request: Request,
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
-    return templates.TemplateResponse(request, "admin_settings.html", _admin_settings_context(session, admin))
+    return templates.TemplateResponse(request, "admin_settings.html", _admin_settings_context(request, session, admin))
 
 
 @router.post("/settings")
@@ -981,7 +1077,7 @@ def update_settings(
         # timestamp shown.
         set_display_timezone(display_timezone)
     return templates.TemplateResponse(
-        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
+        request, "admin_settings.html", _admin_settings_context(request, session, admin, error, error is None)
     )
 
 
@@ -1001,6 +1097,8 @@ def update_admin_theme(
     error = None
     if not is_valid_theme(theme):
         error = "Not a real theme choice."
+    elif not is_theme_selectable(theme, request, admin.theme):
+        error = "That theme isn't available right now."
     elif not is_valid_mode(mode):
         error = "Not a real mode choice."
     else:
@@ -1009,7 +1107,7 @@ def update_admin_theme(
         session.add(admin)
         session.commit()
     return templates.TemplateResponse(
-        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
+        request, "admin_settings.html", _admin_settings_context(request, session, admin, error, error is None)
     )
 
 
@@ -1053,7 +1151,7 @@ def update_admin_password(
         log_event(session, None, _admin_actor(admin), "password_changed")
         session.commit()
     return templates.TemplateResponse(
-        request, "admin_settings.html", _admin_settings_context(session, admin, error, error is None)
+        request, "admin_settings.html", _admin_settings_context(request, session, admin, error, error is None)
     )
 
 
@@ -1183,6 +1281,95 @@ def download_support_bundle(
     background_tasks.add_task(bundle_path.unlink, missing_ok=True)
     filename = f"queue3d-support-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.tar.gz"
     return FileResponse(bundle_path, media_type="application/gzip", filename=filename)
+
+
+# ---- feedback ----
+# See models.Feedback/feedback.py - a free-text support/bug-report
+# channel, submitted by either account type, folded into
+# download_support_bundle above. This admin side additionally shows every
+# submitted report (not just this admin's own), unlike routers/user.py's
+# own /feedback (a user's own history only) - the same "admin sees
+# everyone's, a user sees only their own" split every other listing in
+# this app already follows.
+
+
+def _admin_feedback_context(
+    session: Session,
+    admin: Admin,
+    error: str | None = None,
+    saved: bool = False,
+    description: str = "",
+) -> dict:
+    # Every user's jobs, not just this admin's own (admins don't submit
+    # jobs) - capped at 100, most recent first, same convenience-not-
+    # completeness reasoning as the user-side dropdown. Owner names
+    # joined in separately (Job has no ORM relationship to User in this
+    # app, by design - see models.Job's own snapshot-not-relation
+    # precedent, e.g. reviewed_by_name) rather than looked up per-row.
+    rows = session.exec(
+        select(Job, User.name)
+        .join(User, Job.user_id == User.id)
+        .order_by(Job.created_at.desc())
+        .limit(100)
+    ).all()
+    jobs = [job for job, _owner_name in rows]
+    job_owners = {job.id: owner_name for job, owner_name in rows}
+    return {
+        "admin": admin,
+        "jobs": jobs,
+        "job_owners": job_owners,
+        "feedback_list": list_feedback(session),
+        "error": error,
+        "saved": saved,
+        # See routers/user.py's _feedback_context for why this is passed
+        # explicitly rather than read back via request.form in the
+        # template.
+        "description": description,
+    }
+
+
+@router.get("/feedback")
+def admin_feedback_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    return templates.TemplateResponse(
+        request, "admin_feedback.html", _admin_feedback_context(session, admin)
+    )
+
+
+@router.post("/feedback")
+def admin_submit_feedback(
+    request: Request,
+    description: str = Form(...),
+    job_id: str = Form(""),
+    occurred_at: str = Form(""),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    description = description.strip()
+    error = None
+    job = None
+    if not description:
+        error = "Describe what you were doing and what went wrong before submitting."
+    elif job_id:
+        job = session.get(Job, int(job_id))
+        if job is None:
+            error = "That job no longer exists."
+    if error is None:
+        create_feedback(
+            session,
+            actor=_admin_actor(admin),
+            description=description,
+            job=job,
+            occurred_at_raw=occurred_at or None,
+        )
+    return templates.TemplateResponse(
+        request,
+        "admin_feedback.html",
+        _admin_feedback_context(session, admin, error, error is None, description=description if error else ""),
+    )
 
 
 # ---- colors ----

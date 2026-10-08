@@ -12,11 +12,34 @@
     <img src="/static/bmms-logo.png" alt="Black Mountain Middle School Raiders logo" class="login-logo">
     <h2>Sign up</h2>
     {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <!-- Below the logo, above the form's own Name/PIN fields - see
+         README.md's Accounts to-do item. The checkbox and confirm-name
+         field are the only interactive parts of this agreement, so they
+         live inside the same <form> as everything else (one POST, one
+         validation pass in routers/user.py's signup()) even though this
+         whole block reads, visually, as sitting above the credential
+         fields rather than as part of them. -->
+    <div class="aup">
+      <h3>Acceptable Use Agreement</h3>
+      <p>By creating an account, you agree to the following:</p>
+      <ul>
+        <li>Only submit models for projects appropriate to bring to school.</li>
+        <li>Don't submit excessive, wasteful, or joke jobs that tie up the shared printer or its filament.</li>
+        <li>Follow any color/material instructions from a teacher or admin.</li>
+        <li><strong>No weapons of any kind, real or replica - including guns, knives, and other weapon models.</strong></li>
+        <li><strong>No inappropriate, offensive, or otherwise not-school-appropriate material.</strong></li>
+        <li><strong>Simple rule: if you couldn't bring it to school, you can't print it here.</strong></li>
+      </ul>
+      <p class="muted">Violating this agreement may result in a warning, your account being disabled for a period of time, or your account being deleted.</p>
+    </div>
     <form method="post" action="/signup">
+      <label><input type="checkbox" name="agree_aup" required {% if agree_aup %}checked{% endif %}> I have read and agree to the Acceptable Use Agreement above.</label>
       <label>Name<br><input name="name" value="{{ name or '' }}" required autofocus></label>
+      <label>Retype your name to confirm<br><input name="confirm_name" value="{{ confirm_name or '' }}" required></label>
       <label>Choose a PIN (4+ digits)<br><input name="pin" type="password" inputmode="numeric" minlength="4" required></label>
       <button type="submit">Sign up</button>
     </form>
     <p class="muted">Already signed up? <a href="/login">Log in</a> instead.</p>
+    <p class="muted"><a href="/help#login">Trouble signing up?</a></p>
   </div>
 {% endblock %}

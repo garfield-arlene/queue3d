@@ -1,0 +1,217 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 1000" width="300" height="1000">
+  <!-- Winter theme's sidebar scene (see themes.py/base.html) - a cozy
+       snowy-dusk scene: a pale winter moon, snow-capped evergreens, a
+       log cabin with glowing windows and a smoking chimney, drifting
+       snowflakes. Deliberately generic winter/snow, not Christmas,
+       Hanukkah, or any other specific holiday - the same
+       "school-appropriate for everyone" bar Halloween's ghosts-not-
+       religion and Thanksgiving's harvest-not-Pilgrims choices already
+       follow.
+
+       Portrait, not landscape - same `cover`-crops-a-narrow-sidebar
+       reason theme-halloween-manor.svg's own top comment explains, and
+       every lesson both earlier seasonal scenes needed a second pass to
+       learn, applied from the start instead: the moon kept small and
+       tucked into a top corner clear of the header's own nav column
+       rendered on top of this image; the cabin given a halo behind it
+       plus a lighter fill/outline than the sky immediately behind it,
+       not a near-black silhouette; every window kept clear of every
+       roofline and wall corner; every ground-level decoration (the
+       bushes below) given real, specific shape language rather than a
+       plain circle - see Thanksgiving's own hay-bale/pumpkin fix for
+       what that mistake actually looked like. -->
+  <defs>
+    <linearGradient id="wsky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#dce8f0"/>
+      <stop offset="45%" stop-color="#6f95bd"/>
+      <stop offset="100%" stop-color="#22355a"/>
+    </linearGradient>
+    <radialGradient id="wmoonglow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#eef6ff" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#eef6ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="wcabinhalo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffe9b8" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#ffe9b8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="wwindowglow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffd98a" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#ffd98a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="300" height="1000" fill="url(#wsky)"/>
+
+  <!-- pale winter moon, small and tucked into the top corner -->
+  <circle cx="225" cy="60" r="78" fill="url(#wmoonglow)"/>
+  <circle cx="225" cy="60" r="32" fill="#f7fbff"/>
+  <circle cx="213" cy="48" r="5" fill="#dce8f2" opacity="0.7"/>
+  <circle cx="235" cy="70" r="3.5" fill="#dce8f2" opacity="0.7"/>
+
+  <!-- drifting snowflakes, scattered through the sky - simple 6-point
+       asterisks, unmistakably snowflakes rather than generic stars -->
+  <g stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" opacity="0.85">
+    <g transform="translate(55,90)"><path d="M0,-7 L0,7 M-6,-3.5 L6,3.5 M-6,3.5 L6,-3.5"/></g>
+    <g transform="translate(150,50) scale(0.7)"><path d="M0,-7 L0,7 M-6,-3.5 L6,3.5 M-6,3.5 L6,-3.5"/></g>
+    <g transform="translate(30,180) scale(0.6)"><path d="M0,-7 L0,7 M-6,-3.5 L6,3.5 M-6,3.5 L6,-3.5"/></g>
+    <g transform="translate(265,160) scale(0.8)"><path d="M0,-7 L0,7 M-6,-3.5 L6,3.5 M-6,3.5 L6,-3.5"/></g>
+    <g transform="translate(190,210) scale(0.55)"><path d="M0,-7 L0,7 M-6,-3.5 L6,3.5 M-6,3.5 L6,-3.5"/></g>
+  </g>
+
+  <!-- a pair of snow-capped evergreens flanking the cabin - solid fir
+       silhouettes (three stacked tiers), not bare branch lines like
+       Halloween/Thanksgiving's own flanking trees, with a white
+       snow-dusting along each tier's upper edge -->
+  <g>
+    <g transform="translate(30,540)">
+      <polygon points="0,-140 -26,-96 26,-96" fill="#2e5b3f" stroke="#1c3d28" stroke-width="2"/>
+      <polygon points="0,-100 -30,-52 30,-52" fill="#316246" stroke="#1c3d28" stroke-width="2"/>
+      <polygon points="0,-56 -34,0 34,0" fill="#356b4c" stroke="#1c3d28" stroke-width="2"/>
+      <rect x="-6" y="0" width="12" height="16" fill="#4a3624"/>
+      <path d="M-24,-135 Q0,-128 24,-135 L18,-122 Q0,-129 -18,-122 Z" fill="#f5faff" opacity="0.9"/>
+      <path d="M-28,-95 Q0,-86 28,-95 L22,-80 Q0,-89 -22,-80 Z" fill="#f5faff" opacity="0.9"/>
+      <path d="M-32,-50 Q0,-40 32,-50 L25,-34 Q0,-44 -25,-34 Z" fill="#f5faff" opacity="0.9"/>
+    </g>
+    <g transform="translate(270,555) scale(0.85)">
+      <polygon points="0,-140 -26,-96 26,-96" fill="#2e5b3f" stroke="#1c3d28" stroke-width="2"/>
+      <polygon points="0,-100 -30,-52 30,-52" fill="#316246" stroke="#1c3d28" stroke-width="2"/>
+      <polygon points="0,-56 -34,0 34,0" fill="#356b4c" stroke="#1c3d28" stroke-width="2"/>
+      <rect x="-6" y="0" width="12" height="16" fill="#4a3624"/>
+      <path d="M-24,-135 Q0,-128 24,-135 L18,-122 Q0,-129 -18,-122 Z" fill="#f5faff" opacity="0.9"/>
+      <path d="M-28,-95 Q0,-86 28,-95 L22,-80 Q0,-89 -22,-80 Z" fill="#f5faff" opacity="0.9"/>
+      <path d="M-32,-50 Q0,-40 32,-50 L25,-34 Q0,-44 -25,-34 Z" fill="#f5faff" opacity="0.9"/>
+    </g>
+  </g>
+
+  <!-- the cabin: a warm halo behind it first (a warm glow against a
+       cool sky reads clearly by both lightness and hue, a more robust
+       version of the lighter-fill trick theme-halloween-manor.svg and
+       theme-thanksgiving-harvest.svg both rely on for their own
+       structures), then warm log-cabin browns for every wall/roof
+       shape, outlined for edge definition. -->
+  <circle cx="150" cy="490" r="185" fill="url(#wcabinhalo)"/>
+  <g stroke="#4a3420" stroke-width="2.5">
+    <!-- main cabin body -->
+    <rect x="75" y="440" width="150" height="140" fill="#8a5a34"/>
+    <!-- log courses - a few horizontal lines suggesting stacked logs -->
+    <g stroke="#6b4526" stroke-width="1.3" opacity="0.6">
+      <line x1="76" y1="462" x2="224" y2="462"/>
+      <line x1="76" y1="486" x2="224" y2="486"/>
+      <line x1="76" y1="510" x2="224" y2="510"/>
+      <line x1="76" y1="534" x2="224" y2="534"/>
+      <line x1="76" y1="558" x2="224" y2="558"/>
+    </g>
+    <!-- roof: a simple gable -->
+    <polygon points="55,440 150,375 245,440" fill="#5c3f24" stroke-linejoin="round"/>
+    <!-- chimney -->
+    <rect x="185" y="390" width="22" height="45" fill="#6b6b6b"/>
+  </g>
+  <!-- snow on the roof - a lighter band following the roof's own
+       silhouette near its ridge, tapering toward the eaves, so the roof
+       reads as "snow-capped" rather than needing a caption -->
+  <path d="M150,375 L245,440 L232,440 L150,388 L68,440 L55,440 Z" fill="#f0f6fb" opacity="0.92"/>
+  <!-- a wisp of chimney smoke, drifting -->
+  <path d="M196,388 Q188,372 198,358 Q206,346 198,332" stroke="#e6ecf2" stroke-width="4" fill="none" stroke-linecap="round" opacity="0.6"/>
+
+  <!-- a round loft window, glowing warmly -->
+  <circle cx="150" cy="410" r="15" fill="url(#wwindowglow)"/>
+  <circle cx="150" cy="410" r="9" fill="#ffdb8a"/>
+  <line x1="150" y1="402" x2="150" y2="418" stroke="#4a3420" stroke-width="1.5"/>
+  <line x1="142" y1="410" x2="158" y2="410" stroke="#4a3420" stroke-width="1.5"/>
+
+  <!-- two main-body windows -->
+  <rect x="98" y="480" width="24" height="32" rx="2" fill="url(#wwindowglow)"/>
+  <rect x="103" y="486" width="14" height="20" fill="#ffdb8a"/>
+  <rect x="178" y="480" width="24" height="32" rx="2" fill="url(#wwindowglow)"/>
+  <rect x="183" y="486" width="14" height="20" fill="#ffdb8a"/>
+
+  <!-- a plain plank front door -->
+  <rect x="133" y="535" width="34" height="45" fill="#4a3420" stroke="#2e2013" stroke-width="2"/>
+  <circle cx="160" cy="558" r="2" fill="#ffdb8a"/>
+
+  <!-- a low rail fence, snow-dusted along the top rail -->
+  <g stroke="#4a3420" stroke-width="4" stroke-linecap="round">
+    <line x1="0" y1="640" x2="300" y2="640"/>
+    <line x1="0" y1="654" x2="300" y2="654"/>
+    <line x1="20" y1="620" x2="20" y2="658"/>
+    <line x1="70" y1="620" x2="70" y2="658"/>
+    <line x1="230" y1="620" x2="230" y2="658"/>
+    <line x1="280" y1="620" x2="280" y2="658"/>
+  </g>
+  <g fill="#f5faff" opacity="0.9">
+    <ellipse cx="20" cy="618" rx="6" ry="3"/>
+    <ellipse cx="70" cy="618" rx="6" ry="3"/>
+    <ellipse cx="230" cy="618" rx="6" ry="3"/>
+    <ellipse cx="280" cy="618" rx="6" ry="3"/>
+    <rect x="0" y="637" width="300" height="4" opacity="0.7"/>
+  </g>
+
+  <!-- snow-covered ground -->
+  <rect x="0" y="658" width="300" height="342" fill="#eaf2f8"/>
+
+  <!-- a frozen pond with a few kids ice skating - replaces an earlier
+       pair of snow-dusted shrubs that turned out to be exactly the same
+       "what even is that" problem Thanksgiving's own hay-bale/pumpkin
+       fix already ran into: two plain bumpy blobs, not clearly bushes
+       or anything else at this scale, asked about directly rather than
+       just quietly misread. A pond (a real, distinctly-colored shape,
+       not another patch of the same snow it sits on) with a few small
+       skating figures on it doesn't have that ambiguity - there's no
+       plausible second reading of "small colorful figures gliding on
+       ice with skate trails behind them." Every kid is small, simple,
+       and interchangeable in build (a round head, a puffy coat, thin
+       legs) with only coat/hat color varying between them - the same
+       level of abstraction as Fil (a stick figure) or the turkey/
+       snowman, not an attempt at a realistic or specific-looking
+       person. -->
+  <path d="M50,700 Q30,725 45,750 Q70,772 130,768 Q180,776 220,758 Q255,745 245,715 Q220,692 170,698 Q110,690 50,700 Z" fill="#bfe0ee" stroke="#7ea8c2" stroke-width="2.5"/>
+  <g stroke="#ffffff" stroke-width="1.5" fill="none" opacity="0.6">
+    <path d="M60,715 Q100,708 140,714"/>
+    <path d="M150,745 Q195,738 230,744"/>
+  </g>
+
+  <!-- skater 1 - red coat, mid-stride -->
+  <g transform="translate(85,735)">
+    <path d="M-16,13 Q-5,9 7,13" stroke="#ffffff" stroke-width="1.6" fill="none" opacity="0.85" stroke-dasharray="2,3"/>
+    <line x1="0" y1="0" x2="-7" y2="14" stroke="#2a3a5c" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="0" y1="0" x2="6" y2="12" stroke="#2a3a5c" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="-11" y1="14" x2="-3" y2="14" stroke="#5c4a2a" stroke-width="2.8" stroke-linecap="round"/>
+    <line x1="1" y1="12" x2="9" y2="12" stroke="#5c4a2a" stroke-width="2.8" stroke-linecap="round"/>
+    <ellipse cx="0" cy="-8" rx="9" ry="11" fill="#c0392b" stroke="#7a1f18" stroke-width="1.2"/>
+    <line x1="-8" y1="-10" x2="-17" y2="-3" stroke="#c0392b" stroke-width="3.2" stroke-linecap="round"/>
+    <line x1="8" y1="-10" x2="17" y2="-16" stroke="#c0392b" stroke-width="3.2" stroke-linecap="round"/>
+    <circle cx="0" cy="-22" r="6" fill="#e8c39e"/>
+    <path d="M-6,-25 Q0,-35 6,-25 Z" fill="#7a1f18"/>
+  </g>
+
+  <!-- skater 2 - teal coat, arms out balancing -->
+  <g transform="translate(150,750) scale(1.05)">
+    <path d="M-16,13 Q-5,9 7,13" stroke="#ffffff" stroke-width="1.6" fill="none" opacity="0.85" stroke-dasharray="2,3"/>
+    <line x1="0" y1="0" x2="-6" y2="14" stroke="#2a3a5c" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="0" y1="0" x2="6" y2="14" stroke="#2a3a5c" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="-10" y1="14" x2="-2" y2="14" stroke="#5c4a2a" stroke-width="2.8" stroke-linecap="round"/>
+    <line x1="2" y1="14" x2="10" y2="14" stroke="#5c4a2a" stroke-width="2.8" stroke-linecap="round"/>
+    <ellipse cx="0" cy="-8" rx="9" ry="11" fill="#1a7a7a" stroke="#0d4a4a" stroke-width="1.2"/>
+    <line x1="-8" y1="-10" x2="-19" y2="-9" stroke="#1a7a7a" stroke-width="3.2" stroke-linecap="round"/>
+    <line x1="8" y1="-10" x2="19" y2="-9" stroke="#1a7a7a" stroke-width="3.2" stroke-linecap="round"/>
+    <circle cx="0" cy="-22" r="6" fill="#e8c39e"/>
+    <path d="M-6,-25 Q0,-35 6,-25 Z" fill="#0d4a4a"/>
+  </g>
+
+  <!-- skater 3 - purple coat, smaller/farther back -->
+  <g transform="translate(210,722) scale(0.85)">
+    <path d="M-16,13 Q-5,9 7,13" stroke="#ffffff" stroke-width="1.6" fill="none" opacity="0.85" stroke-dasharray="2,3"/>
+    <line x1="0" y1="0" x2="-6" y2="14" stroke="#2a3a5c" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="0" y1="0" x2="7" y2="13" stroke="#2a3a5c" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="-10" y1="14" x2="-2" y2="14" stroke="#5c4a2a" stroke-width="2.8" stroke-linecap="round"/>
+    <line x1="3" y1="13" x2="11" y2="13" stroke="#5c4a2a" stroke-width="2.8" stroke-linecap="round"/>
+    <ellipse cx="0" cy="-8" rx="9" ry="11" fill="#6a3fa0" stroke="#402060" stroke-width="1.2"/>
+    <line x1="-8" y1="-10" x2="-17" y2="-16" stroke="#6a3fa0" stroke-width="3.2" stroke-linecap="round"/>
+    <line x1="8" y1="-10" x2="17" y2="-4" stroke="#6a3fa0" stroke-width="3.2" stroke-linecap="round"/>
+    <circle cx="0" cy="-22" r="6" fill="#e8c39e"/>
+    <path d="M-6,-25 Q0,-35 6,-25 Z" fill="#402060"/>
+  </g>
+
+  <!-- a low snowdrift along the very bottom, an irregular mound (not a
+       circle either) so the ground doesn't just end abruptly -->
+  <path d="M0,1000 L0,760 Q60,745 120,758 Q180,742 240,756 Q280,748 300,758 L300,1000 Z" fill="#f5faff" opacity="0.5"/>
+</svg>

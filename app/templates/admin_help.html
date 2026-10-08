@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Admin help - queue3d{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <a href="/admin/users">Users</a>
+  <a href="/admin/admins">Admins</a>
+  <a href="/admin/colors">Colors</a>
+  <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
+  <a href="/admin/log">Activity log</a>
+  <a href="/admin/settings">Settings</a>
+  <a href="/admin/system">System</a>
+  <a href="/admin/feedback">Feedback</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Admin help</h2>
+  <p class="muted">
+    Covers what's specific to running the queue as an admin. For the
+    submitting/statuses/account material every user (including you)
+    also has, see <a href="/help">the regular help page</a>.
+  </p>
+  <ul>
+    <li><a href="#admin-queue">Running the queue</a></li>
+    <li><a href="#admin-people">Users, admins, and colors</a></li>
+    <li><a href="#admin-site">Site settings, history, and backups</a></li>
+    <li><a href="#admin-system">The System page</a></li>
+  </ul>
+
+  <h3 id="admin-queue">Running the queue</h3>
+  <p>
+    A submitted job needs an explicit <strong>Approve</strong> (or a
+    <strong>Reject</strong> with a note the submitter will see) before
+    it can print. Approving only marks it greenlit and waiting its
+    turn - only <strong>Release</strong> actually sends an approved
+    job to the printer, and only one job can be on the printer at a
+    time. Once a print finishes on its own, <strong>Mark done</strong>
+    or <strong>Mark failed</strong> (with a reason) records the
+    outcome - though a print finishing, failing, or being cancelled
+    is also noticed automatically as a safety net, in case nobody
+    clicks either button in time.
+  </p>
+  <p>
+    The printer-status banner at the top of the
+    <a href="/admin/dashboard">queue page</a> shows whether the
+    printer is currently paired and reachable, and covers pairing a
+    new printer if it isn't yet.
+  </p>
+
+  <h3 id="admin-people">Users, admins, and colors</h3>
+  <p>
+    <a href="/admin/users">Users</a> lets you reset a forgotten PIN,
+    or disable/enable/delete an account. <a href="/admin/admins">Admins</a>
+    manages admin accounts themselves (there's no self-signup for
+    those - see the regular help page's "Logging in and signing up"
+    section). <a href="/admin/colors">Colors</a> tracks which filament
+    colors are available and roughly how much of each is on hand,
+    which is what populates the color choice users see when
+    submitting.
+  </p>
+
+  <h3 id="admin-site">Site settings, history, and backups</h3>
+  <p>
+    <a href="/admin/settings">Settings</a> covers site-wide options
+    like how long an unsubmitted draft can sit before it expires, the
+    display timezone, and the age threshold for "old" finished jobs.
+    <a href="/admin/jobs/finished">Finished jobs</a> and
+    <a href="/admin/jobs/old">Old jobs</a> are history views (old
+    jobs can be bulk-deleted or requeued from there);
+    <a href="/admin/log">Activity log</a> is a record of who did what.
+    The dashboard's own "Download support bundle" link produces a
+    .tar.gz of the database, activity log, every submitted
+    <a href="/admin/feedback">feedback</a> report, and any model that
+    ever hit a slicing error or was referenced by a feedback report,
+    for troubleshooting without needing internet access. Backup status
+    (when the last one succeeded, and from which drive) is shown right
+    on the dashboard.
+  </p>
+
+  <h3 id="admin-system">The System page</h3>
+  <p>
+    <a href="/admin/system">System</a> shows this Pi's own live CPU,
+    memory, and network activity, refreshing every couple seconds - a
+    per-core CPU breakdown and memory/swap/disk usage at the top, and
+    history graphs of the last few minutes below. Useful for checking
+    whether the Pi itself (not the printer or the network) is the
+    bottleneck during a big multi-model upload or a lot of concurrent
+    slicing, or just for keeping an eye on disk space and CPU
+    temperature over time.
+  </p>
+
+  <h3 id="admin-feedback">Feedback</h3>
+  <p>
+    <a href="/admin/feedback">Feedback</a> lists every problem report or
+    comment submitted by any user or admin, most recent first, and
+    includes the same form for reporting one yourself. Every submitted
+    report is folded into the support bundle automatically (see above) -
+    there's no separate step needed to include it.
+  </p>
+{% endblock %}

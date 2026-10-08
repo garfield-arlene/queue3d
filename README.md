@@ -1,6 +1,6 @@
 # queue3d
 
-Do you have a shared local 3D printer? If so, queue3d lets users upload and
+For a shared local 3D printer, queue3d lets users upload and
 slice their own models and submit them to a queue. An admin reviews each
 submission and releases approved jobs to the printer when ready.
 
@@ -33,19 +33,35 @@ Managing user accounts:
 
 ![Admin user management page, listing users with disable/delete actions](docs/screenshots/admin-users.png)
 
+Reporting a problem, from either account type - folded straight into the
+downloadable support bundle for offline diagnosis:
+
+![Feedback page, showing the report form above a table of past submissions](docs/screenshots/feedback.png)
+
 ### Themes
 
 Every account - user or admin - picks its own theme and light/dark mode
 independently, persisting across logins and devices. The screenshots above
-use the plain "Basic" theme; four more ship alongside it, all sharing the
+use the plain "Basic" theme; seven more ship alongside it, all sharing the
 same sidebar-tabs-and-bordered-sections layout with their own palette (and
-in Fil's case, an original mascot) on top:
+in Fil's/the three seasonal themes' case, an original mascot) on top:
 
 ![Console theme - a neutral gray and indigo sidebar layout](docs/screenshots/console.png)
 
 ![Savanna theme - a desert-sunrise photo behind the sidebar](docs/screenshots/savanna.png)
 
 ![Fil theme - an original filament-wire mascot peeking around the sidebar](docs/screenshots/fil.png)
+
+Three more are seasonal - selectable in the theme picker only during their
+own date window (always selectable regardless of date at `127.0.0.1`, for
+development), reverting any account back to the default once their window
+closes rather than sitting year-round as permanent clutter:
+
+![Halloween theme - a haunted-mansion night scene with a spider hanging from the top of the window](docs/screenshots/halloween.png)
+
+![Thanksgiving theme - a harvest-dusk scene with a barn and a turkey standing at the bottom of the window](docs/screenshots/thanksgiving.png)
+
+![Winter theme - a snowy-dusk scene with a log cabin, a frozen pond, and a snowman standing at the bottom of the window](docs/screenshots/winter.png)
 
 **BMMS** is the odd one out - not a generic option, but built for this
 app's actual deployment site, using the school's own colors and logo. It's
@@ -58,8 +74,9 @@ theme (if any) the person logging in has picked:
 
 ![The login page, showing the school's logo as a large letterhead above the form](docs/screenshots/bmms-login.png)
 
-See `app/README.md`'s "The 'Console'/'Savanna'/'Fil'/'BMMS' theme"
-sections for the full design rationale behind each.
+See `app/README.md`'s "The 'Console'/'Savanna'/'Fil'/'BMMS'/'Halloween'/
+'Thanksgiving'/'Winter' theme" sections for the full design rationale
+behind each.
 
 ## Features
 
@@ -112,7 +129,7 @@ sections for the full design rationale behind each.
   and started directly; no walking a file over on a flash drive. One
   persistent, authenticated connection is held open for the app's whole
   run rather than reconnecting per release - the printer's own pairing
-  tokens are only ever good for one authenticated session, confirmed live
+  tokens are only ever good for one authenticated session, true
   against the real hardware, so reconnecting fresh every time would have
   meant only the first release after any pairing ever actually worked.
 - **One job on the printer at a time**, enforced - releasing a second job
@@ -132,7 +149,7 @@ sections for the full design rationale behind each.
   belongs to which submitter's claim. A failed capture (camera or printer
   unreachable at the moment) never blocks recording the job's own
   outcome - it's logged as a failed-capture detail instead, not an error
-  that stops the done/failed action. **Confirmed working for real**, not
+  that stops the done/failed action. **Working for real**, not
   just in isolated testing - job #15's automatically-detected completion
   produced and saved a real, viewed photo of the finished print on the
   build plate, after several rounds of real-world failures (always the
@@ -143,12 +160,12 @@ sections for the full design rationale behind each.
   a real percent-complete and progress bar for the job that's currently
   printing, polled directly from the printer's own `get_system_information`
   reply (`current_process.progress`) rather than guessed from the
-  original time estimate - confirmed live to track actual print progress
-  (not just elapsed time) and to match what the printer's own screen
+  original time estimate - it tracks actual print progress
+  (not just elapsed time) and matches what the printer's own screen
   shows. Falls back to the estimate-based countdown (see the persistent
   connection above) whenever a live reading isn't available. See
-  `app/README.md`'s "Live print progress" section for how this was
-  confirmed, and `/admin/printer/info` for the raw reply this is read
+  `app/README.md`'s "Live print progress" section for more, and
+  `/admin/printer/info` for the raw reply this is read
   from.
 - **A history-corrected time estimate** - the fallback countdown shown
   whenever a live progress reading isn't available no longer trusts the
@@ -247,12 +264,12 @@ sections for the full design rationale behind each.
   release, or move it back to the queue with a fresh wait clock - or
   delete it outright (one at a time or all at once), which genuinely
   removes the job and its model file with no undo, unlike every other
-  outcome in this app. Deliberately excludes `printing` jobs, confirmed
-  with the user - a print actively running is being acted on, not
+  outcome in this app. Deliberately excludes `printing` jobs - a print
+  actively running is being acted on, not
   sitting in an undecided backlog. The main dashboard flags how many
   are waiting, with a link straight to the backlog view.
-- **Delete your own queued job** - changed your mind about a submission
-  still awaiting a decision? Delete it directly from the dashboard,
+- **Delete your own queued job** - a submission
+  still awaiting a decision can be deleted directly from the dashboard,
   with a clear "this cannot be undone" confirmation first. Genuinely
   removes the job and its model file - the same real, unrecoverable
   delete an admin can do to a stale one (see "Old jobs" above), just
@@ -271,19 +288,25 @@ sections for the full design rationale behind each.
   doesn't need it: it reuses the exact already-sliced file and goes
   straight back into the queue, ready for an admin to release, with no
   re-slicing wait at all.
-- **Upload `.obj` files directly, and `.zip` files of one or more
-  `.stl`/`.obj` models** (a common Thingiverse shape - several separate
-  parts plus a README/photo that's just ignored). Each model in a zip
+- **Upload `.obj` or `.3mf` files directly, and `.zip` files of one or
+  more `.stl`/`.obj`/`.3mf` models** (a common Thingiverse shape -
+  several separate parts plus a README/photo that's just ignored). Each
+  model in a zip
   becomes its own separate job/draft, up to `MAX_ZIP_MODEL_FILES` (25) -
   stated right on the upload form, not just in this README - rather
-  than a combined-plate print, confirmed as the right design with the
-  user since this app's whole pipeline is built around one object per
-  job. An `.obj` upload is converted to a real `.stl` immediately
+  than a combined-plate print - the right design since this app's whole
+  pipeline is built around one object per
+  job. A `.3mf` file is treated the opposite way: any objects it bundles
+  (a multi-part assembly - hinges, gears, anything meant to print as one
+  interlocking piece) are merged into a single job at the positions
+  already saved in the file, not split apart, since those pieces are
+  meant to be printed together, unlike a zip's genuinely separate files.
+  An `.obj`/`.3mf` upload is converted to a real `.stl` immediately
   (losslessly - same geometry, different container) so nothing
   downstream (slicing, the 3D preview, re-slicing) needs to know it was
   ever anything but one; the original filename still displays as
   uploaded. A real multi-part functional-print kit (15 separate model
-  files) confirmed working end-to-end, including every part slicing
+  files) works end-to-end, including every part slicing
   successfully - see `app/README.md`'s "Fixing a real multi-model zip
   upload" for the earlier, narrower cap this exposed and the (wrong)
   concurrency assumption it was based on.
@@ -296,21 +319,25 @@ sections for the full design rationale behind each.
   already-submitted job shows it at whatever scale it was actually
   sliced at too, not just the original file size.
 - **Automatic rotation retry on a slicing failure** - if a model fails to
-  slice at whatever orientation was requested, the app automatically
-  tries a handful of likely rotations (quarter/eighth turns, and
-  standing the model on each of its other faces) before giving up,
-  since real models have repeatedly turned out to need nothing more
-  than a different rotation to slice successfully at all. If one of
-  those works, the job's rotation is updated to match and a clear note
-  says so (not silently applied without explanation); if none do, the
-  job fails as before, with a note that this was already tried so a
-  manual re-attempt at the same rotations won't help.
+  slice at the *default* orientation (never rotated at all), the app
+  automatically tries a handful of likely rotations (quarter/eighth
+  turns, and standing the model on each of its other faces) before
+  giving up, since real models have repeatedly turned out to need
+  nothing more than a different rotation to slice successfully at all.
+  If one of those works, the job's rotation is updated to match and a
+  clear note says so (not silently applied without explanation); if
+  none do, the job fails as before, with a note that this was already
+  tried so a manual re-attempt at the same rotations won't help. A
+  *deliberately* chosen orientation (drag-rotate, typed values, or Snap
+  to surface) is never swept past this way on failure - it's reported
+  as a failure in full, since only the person who chose it can judge
+  whether a different one would actually print better.
 - **Rotate and snap to surface** - free rotation on any axis (three
   degree fields, live preview as you type), plus a "Snap to surface"
   button: click it, then click any face on the model, and it reorients
   to stand on that face - useful both for fit (a diagonal rotation can
-  let an oversized model fit the plate) and for print success. Directly
-  confirmed to fix a real slicing failure that resizing alone never
+  let an oversized model fit the plate) and for print success. Fixes
+  a real slicing failure that resizing alone never
   could: a model whose asymmetric shape failed the printer's own
   bed-centering safety check slices successfully once rotated to a
   sensible printing orientation. Auto-fit accounts for whatever rotation
@@ -326,11 +353,27 @@ sections for the full design rationale behind each.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
+- **Feedback** - a free-text support/bug-report channel for either
+  account type (what were you doing and what went wrong, which model/job
+  it was about if applicable, approximately when), reachable from every
+  page's own nav.
 - **Downloadable support bundle** - an admin can generate a `.tar.gz`
-  on demand (a safe copy of the database, the full activity log, and
-  every model that ever hit a slicing error) for offline bugfixing at
+  on demand (a safe copy of the database, the full activity log, every
+  submitted feedback report, and every model that ever hit a slicing
+  error or was referenced by a feedback report) for offline bugfixing at
   this app's zero-internet-access deployment, with no need for remote
   access to the device itself.
+- **Self-service help pages** - a shared `/help` page (no login required)
+  covering registration/login, submitting a job, job statuses,
+  editing/restoring/reprinting, and account settings, linked from every
+  relevant page; a separate `/admin/help` covers running the queue,
+  managing users/admins/colors, and site settings/history/backups,
+  linked from every admin page.
+- **System performance dashboard** - an admin-only, auto-refreshing
+  view of the Pi's own live CPU, memory, and network activity: an
+  `htop`-style per-core breakdown and memory/swap/disk bars, plus
+  history graphs of the last few minutes, in the style of a desktop
+  system monitor.
 - **Built for offline deployment** - runs entirely on a local network with
   no internet access required; no CDN dependencies.
 - **App version number** shown as a footer on every page, read from
@@ -346,43 +389,25 @@ sections for the full design rationale behind each.
 ## To do
 
 **Upload**
-- **Separately, still open:** the *original* 422 report (a different
-  real multi-model zip, reported before a later, reproducible
-  multi-model zip upload was confirmed working - see Features above)
-  never got a confirmed root cause - that specific file was never
-  available to reproduce against directly, and every synthetic zip
-  built to investigate it tested clean. Whether it was the same
-  too-low-cap issue (plausible - a `ValueError` there produces a clean
-  flash-message redirect, not literally the "422 Unprocessable Content"
-  originally reported, so it may not be) or a genuinely separate
-  request-validation failure is unresolved. Needs either that original
-  file or a browser Network-tab capture of a future failed request to
-  pin down further.
-- A real, independent bug found and fixed while investigating the above,
-  regardless of the 422's root cause: the dashboard's own upload JS
-  (`user_dashboard.html`) unconditionally redirected to `/dashboard` on
-  any completed request, on the (mostly but not always true) assumption
-  that the server always ends up there - true for every error this
-  app's own code controls (`fail()` always redirects with a flash
-  message set), but not for a request that fails validation before the
-  route runs at all, which never redirects anywhere. That's exactly why
-  a failure like this looked like "nothing happened" instead of showing
-  an error. **Done** - the JS now checks the response status and shows
-  its own error message for anything outside 2xx-after-redirect, or a
-  network failure.
-- `.3mf` upload support - not yet built, and a meaningfully bigger lift
-  than `.obj`/`.zip` turned out to be: unlike OBJ (a flat, transform-free
-  mesh format converted to STL in a few dozen lines - see `app/mesh.py`),
-  a real-world `.3mf` can bundle multiple objects with their own
-  placement transforms in one file (the same "one object per job"
-  question `.zip` already answered - each object would become its own
-  job, matching that precedent) and the client-side instant preview
-  would need Three.js's heavier `3MFLoader` (plus its own `fflate`
-  dependency) vendored, not just a small loader file like OBJ's. Worth
-  doing, but as its own follow-up rather than folded into the
-  OBJ/zip work.
+- Done - `.3mf` upload support (`mesh.parse_3mf`). Unlike a `.zip`'s
+  several genuinely separate files, a real-world `.3mf` bundling
+  multiple objects with their own placement transforms is usually one
+  interlocking assembly (hinges, gears, anything meant to print
+  together as a single piece) - so every object referenced from the
+  file's own `<build>` section is merged into one flattened mesh at
+  upload time, at the exact relative positions the file already
+  specifies, and becomes a single job, the same as any other upload -
+  not split into separate jobs the way `.zip` is. Nested `<components>`
+  (grouped/instanced parts some CAD tools export that way) are resolved
+  recursively; an object typed `support`/`solidsupport` is skipped, so a
+  pre-sliced export's own baked-in supports can't double up against this
+  app's own support generation. The client-side instant preview still
+  only understands `.stl` (same as `.obj`/`.zip` already) - a `.3mf`
+  selection shows "Preview available after upload" like those do,
+  rather than vendoring Three.js's heavier `3MFLoader` for a look
+  available moments later anyway once it's actually sliced.
 - Model repair (like PrusaSlicer/OrcaSlicer's "Fix through Netfabb") -
-  confirmed OrcaSlicer's CLI has no repair flag to lean on (that's a
+  OrcaSlicer's CLI has no repair flag to lean on (that's a
   GUI-only feature there), so this would mean a dedicated repair pass
   before slicing - `trimesh` (Python, fill holes/fix normals/fix winding)
   or `admesh` (a small purpose-built STL repair CLI) are the two realistic
@@ -390,7 +415,7 @@ sections for the full design rationale behind each.
 - ~~Centering an uploaded model by its actual geometric centroid, not
   just its bounding-box center - a real asymmetric model was seen to
   fail `mbotmake`'s own bed-centering sanity check this way.~~ **Done,
-  but confirmed only a partial fix** - `slicing/stl_to_3mf.center_vertices`
+  but only a partial fix** - `slicing/stl_to_3mf.center_vertices`
   now uses an area-weighted surface centroid (matched in
   `static/preview.js`, which has to stay in lockstep - see either's own
   comment), a real, measured improvement (moved the actual failing
@@ -407,7 +432,7 @@ sections for the full design rationale behind each.
 - Done - the open question this item raised (does changing something on
   an active `queued`/`approved` job re-slice in place, keeping its
   queue position, or count as a new submission that goes to the end)
-  is resolved: a new submission, per the user - a fresh `queued_at`,
+  is resolved: a new submission - a fresh `queued_at`,
   same as a genuinely new one. The job-edit page itself (not
   `/jobs/{id}/preview`, which stays view-only) is now reachable from a
   queued/approved job's own dashboard row, with full resize/rotate/
@@ -464,19 +489,10 @@ sections for the full design rationale behind each.
   `archive/` instead; this is about visibility into the database-level
   backups themselves (see `backup.py`), for confirming they're actually
   capturing what's expected.
-- Periodic disk-space checks on the relevant volumes - the OS disk and
-  each mounted USB backup flash drive (see `backup.py`'s rotation between
-  two targets) - so running low is surfaced before a backup silently
-  fails or the queue itself can't accept new uploads, not discovered
-  after the fact.
-- A system performance view for admins - CPU and RAM usage, presumably
-  alongside the disk-space check above on the same page, given a Pi is a
-  real resource-constrained target and slicing (OrcaSlicer + mbotmake)
-  is genuinely CPU/memory-heavy.
 
 **Print options**
-- Done - a single color per job (not 1st/2nd/3rd preference, per the
-  user's own later, more specific spec superseding this item's original
+- Done - a single color per job (not 1st/2nd/3rd preference, a more
+  specific spec superseding this item's original
   wording), or "Any available" so an admin doesn't have to change
   filament, chosen from a dropdown of whatever an admin currently has
   enabled - plus a best-effort low-inventory notice, since it turned out
@@ -485,37 +501,46 @@ sections for the full design rationale behind each.
   selection" section.
 
 **Appearance**
-- Done - four themes beyond Default: "Console" (sidebar nav,
+- Done - seven themes beyond Default: "Console" (sidebar nav,
   bordered/titled sections, full browser width), "Savanna" (the same
   layout with a desert-sunrise background photo), "Fil" (the same
   layout again with an original mascot instead of a photo - a Mickey
   Mouse theme was requested and turned down over trademark risk, see
-  `app/README.md`'s "The 'Fil' theme" section for why), and "BMMS"
+  `app/README.md`'s "The 'Fil' theme" section for why), "BMMS"
   (the same layout built for this app's actual deployment site - Black
   Mountain Middle School's own maroon-and-gold colors and Raiders logo,
-  also shown on both login pages regardless of theme). All four ship
-  both a light and dark palette - see `app/README.md`'s "The 'Console'
-  theme," "The 'Savanna' theme," "The 'Fil' theme," and "The 'BMMS'
-  theme" sections. Further themes beyond these remain open; everything
-  must still ship as local static files, no CDN fonts or external image
-  URLs (see "Deployment: zero internet access" - this app runs with
-  none, ever).
+  also shown on both login pages regardless of theme), "Halloween,"
+  "Thanksgiving," and "Winter" (the same layout again, all three
+  seasonal rather than year-round - see the dedicated bullet below). All
+  seven ship both a light and dark palette - see `app/README.md`'s "The
+  'Console' theme," "The 'Savanna' theme," "The 'Fil' theme," "The
+  'BMMS' theme," "The 'Halloween' theme," "The 'Thanksgiving' theme,"
+  and "The 'Winter' theme" sections. Further themes beyond these remain
+  open; everything must still ship as local static files, no CDN fonts
+  or external image URLs (see "Deployment: zero internet access" - this
+  app runs with none, ever).
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
-
-**Help / instructions**
-- A how-to page (or a small set of them, split by what the reader is
-  currently looking at, if that ends up clearer than one long page)
-  walking through everything from registration to submitting a job with
-  every feature along the way - supports, style choices, checking queue
-  position, reading the log, viewing a finished job's photo, all of it.
-  Linked from every page, for every user, not just buried somewhere.
-- A parallel instructions page for admins - reviewing/approving/
-  rejecting/releasing, reading the activity log, the printer status
-  banner and pairing, managing user accounts. Also linked from every
-  admin page. Should cover creating and managing *other admin* accounts
-  once that feature exists (see "Accounts" below - not built yet) - add
-  that section when that feature is actually built, not before.
+- Done, for Halloween, Thanksgiving, and Winter - three seasonal themes
+  (a haunted-mansion night scene with a spider hanging from the top of
+  the window; a harvest-dusk scene with a barn and a turkey standing at
+  the bottom; a snowy-dusk scene with a log cabin and a snowman standing
+  at the bottom), each selectable in the theme picker only during its
+  own date window (September 15 - November 15 for Halloween, October 15
+  - November 30 for Thanksgiving, December 1 - January 15 for Winter -
+  the first window in this app that actually crosses the calendar year
+  boundary) rather than sitting year-round as permanent clutter, except
+  always selectable regardless of the current date when accessing via
+  `127.0.0.1`, so development/testing against any of them doesn't
+  require waiting for the actual season or faking the system clock. An
+  account that picks a seasonal theme actually reverts to Default once
+  its window closes, rather than silently keeping it forever.
+  Deliberately generic seasons, not specific holidays beyond Halloween
+  and Thanksgiving themselves - Winter has no Christmas tree, menorah, or
+  any other single-holiday imagery, the same "school-appropriate for
+  everyone" bar the other two already follow. See `app/README.md`'s "The
+  'Halloween' theme," "The 'Thanksgiving' theme," and "The 'Winter'
+  theme" sections.
 
 **Printer**
 - ~~Correct the fallback time estimate using real completion history~~
@@ -529,7 +554,7 @@ sections for the full design rationale behind each.
   between the physical print actually finishing and someone/something
   noticing.
 - A dedicated camera, independent of the printer's own flaky single-
-  session connection - per the user, after a string of real
+  session connection, motivated by a string of real
   photo-capture failures (all since fixed - see Features above) that
   were always the connection or a related bug, never the core capture
   logic. Photo capture does now work end-to-end for real, but the
@@ -546,7 +571,7 @@ sections for the full design rationale behind each.
   with a small clamp mount (a compact super-clamp + mini ball head, not
   a full articulating arm - the ESP32-CAM is featherweight) gripping an
   edge of the printer itself, Velcro not required. Deliberately not
-  built yet - per the user, waiting until the actual hardware is in hand
+  built yet - waiting until the actual hardware is in hand
   to test against rather than writing capture code blind. Once built:
   a generic "fetch a configured snapshot URL" capture path, swappable
   per printer (setting up cleanly for the already-planned second
@@ -584,10 +609,6 @@ sections for the full design rationale behind each.
   form.
 
 **Accounts**
-- On the registration page, present an "Acceptable Use Agreement" with a
-  checkbox that MUST be checked before the user can register - signup
-  currently only requires a name and PIN, with nothing about acceptable
-  use presented or agreed to at all.
 - Done - any signed-in admin can create another admin from `/admin/admins`
   (a fresh username+password, same as `create_admin.py`'s own design, not
   promoting/converting an existing user's account - those stay two
@@ -617,8 +638,13 @@ sections for the full design rationale behind each.
   it; the activity log's own attribution (`JobEvent.actor`) was already
   immune to this, since it was a plain string snapshot from the start,
   never a live FK. Still open: no permission scoping between admins at
-  all yet - every one has identical, full access, "decided later" per
-  the user.
+  all yet - every one has identical, full access; decided later.
+- A "remember me" option on the login pages that remembers the
+  submitted name/username for next time (never the PIN/password) -
+  a per-account setting (alongside theme/mode on each account's own
+  Settings page) rather than a single site-wide switch, since one
+  person on a shared device may not want their name remembered on it
+  even if others do. Defaults to enabled.
 
 **Deployment**
 - Done, on the real hardware: mDNS hostname, the full `deploy.sh`

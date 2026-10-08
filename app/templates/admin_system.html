@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}System - queue3d{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <a href="/admin/users">Users</a>
+  <a href="/admin/admins">Admins</a>
+  <a href="/admin/colors">Colors</a>
+  <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
+  <a href="/admin/log">Activity log</a>
+  <a href="/admin/settings">Settings</a>
+  <a href="/admin/feedback">Feedback</a>
+  <a href="/admin/help#admin-system">Help</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>System</h2>
+  <p class="muted">
+    Live CPU, memory, and network activity on this Pi, refreshing every
+    couple seconds - the same numbers <code>htop</code>'s own top
+    section and a real-time monitor's history graphs would show,
+    without needing shell access to see them.
+  </p>
+  {% include "_system_metrics.html" %}
+{% endblock %}

@@ -8,6 +8,9 @@
   <a href="/admin/jobs/old">Old jobs</a>
   <a href="/admin/log">Activity log</a>
   <a href="/admin/settings">Settings</a>
+  <a href="/admin/system">System</a>
+  <a href="/admin/feedback">Feedback</a>
+  <a href="/admin/help#admin-queue">Help</a>
   <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
 {% endblock %}
 {% block content %}
@@ -21,6 +24,16 @@
       No successful backup on record yet{% if backup_stale %} - check the backup cron job{% endif %}.
     {% endif %}
   </p>
+
+  {% if low_disk_mounts %}
+    <p class="error">
+      Low disk space:
+      {% for mount in low_disk_mounts %}
+        {{ mount.label }} ({{ "%.0f"|format(mount.percent) }}% used){% if not loop.last %}, {% endif %}
+      {% endfor %}
+      - see <a href="/admin/system">System</a> for details.
+    </p>
+  {% endif %}
 
   <p class="muted">
     <a href="/admin/support-bundle">Download support bundle</a> - a

@@ -29,6 +29,8 @@ independently, say, should work the same as any other combination.
 two separate stored choices into the two separate `data-theme`/
 `data-mode` attributes CSS actually keys off of."""
 
+from datetime import date
+
 DEFAULT_THEME = "bmms"
 DEFAULT_MODE = "light"
 
@@ -115,11 +117,83 @@ THEMES = {
     # DEFAULT_THEME (above) - per the user, ahead of deployment: "select
     # the BMMS theme as default for all users and admins."
     "bmms": "BMMS",
+    # Same shared sidebar/full-width/bordered-section layout, this time
+    # seasonal rather than a permanent option - a haunted-mansion night
+    # scene (app/static/theme-halloween-manor.svg: a full moon, bats, a
+    # picket fence, tombstones, and a row of glowing jack-o'-lanterns)
+    # behind the sidebar, and a spider hanging from the top of the
+    # window on its own strand of web (app/static/theme-halloween-
+    # spider.svg), in the same spot Fil hangs from under that theme.
+    # Friendly, not frightening: no weapons, no blood, nothing sharper
+    # than a jack-o'-lantern's carved smile - every character (the
+    # ghosts, the spider, the pumpkins) has a plain round smiling face,
+    # matching the same "school-appropriate" bar the signup page's own
+    # acceptable-use rule sets for anything a user submits. See
+    # SEASONAL_THEMES below for when it's actually offered, and
+    # app/README.md's "The 'Halloween' theme" section for the full
+    # writeup.
+    "halloween": "Halloween",
+    # Same shared sidebar/full-width/bordered-section layout again,
+    # seasonal like Halloween - a cozy harvest-dusk scene (app/static/
+    # theme-thanksgiving-harvest.svg: a warm harvest sun, a barn, corn
+    # shocks, pumpkins and gourds, a rail fence, drifting leaves) behind
+    # the sidebar, and a turkey standing at the bottom of the window
+    # (app/static/theme-thanksgiving-turkey.svg) - not attached to the
+    # top edge the way Fil/the Halloween spider are: a fist gripping the
+    # edge or a strand of web both read fine for a filament creature or
+    # a spider, but a turkey doesn't have an equivalent (and specifically
+    # dangling by anything read too close to actual Thanksgiving-dinner
+    # imagery to belong in a school app besides) - standing normally at
+    # the bottom, feet on the ground, sidesteps that entirely. Deliberately
+    # just an autumn harvest theme, not depicting Pilgrims, the First
+    # Thanksgiving, or any Native American imagery - the same
+    # "school-appropriate," nothing-that-could-offend bar every other
+    # seasonal theme in this app follows. See SEASONAL_THEMES below for
+    # when it's actually offered, and app/README.md's "The
+    # 'Thanksgiving' theme" section for the full writeup.
+    "thanksgiving": "Thanksgiving",
+    # Same shared sidebar/full-width/bordered-section layout again,
+    # seasonal like Halloween/Thanksgiving - a cozy snowy-dusk scene
+    # (app/static/theme-winter-cabin.svg: a pale winter moon, snow-capped
+    # evergreens, a lodge with glowing windows and a smoking chimney,
+    # drifting snowflakes) behind the sidebar, and a snowman standing at
+    # the bottom of the window, in the same slot the Thanksgiving turkey
+    # stands in - a snowman just stands, the same reasoning that moved
+    # the turkey there in the first place applies from the start here,
+    # no edge-gripping/hanging concept ever considered for this one.
+    # Deliberately a generic winter/snow theme, not Christmas, Hanukkah,
+    # or any other specific holiday - the same "school-appropriate for
+    # everyone" bar Halloween's ghosts-not-religion and Thanksgiving's
+    # harvest-not-Pilgrims choices already follow, applied to winter's
+    # own obvious alternative (a decorated tree, menorah, etc.) that this
+    # deliberately stays clear of. See SEASONAL_THEMES below for when
+    # it's actually offered, and app/README.md's "The 'Winter' theme"
+    # section for the full writeup.
+    "winter": "Winter",
 }
 
 MODES = {
     "light": "Light",
     "dark": "Dark",
+}
+
+# Themes that only make sense for part of the year - id -> ((start_month,
+# start_day), (end_month, end_day)), both ends inclusive, checked against
+# today's date. Halloween's window is deliberately wider than just the
+# few days around October 31st (mid-September through mid-November) so
+# it's not gone again the moment the holiday itself passes. A window may
+# cross the calendar year boundary (end < start, like Winter's own
+# December-into-January span below) - see _in_season()'s own docstring
+# for how that's actually handled. Any theme id not listed here (every
+# non-seasonal one) is available year-round - see is_theme_selectable()
+# below for the actual gating, and its own always-available-on-127.0.0.1
+# exception.
+SEASONAL_THEMES = {
+    "halloween": ((9, 15), (11, 15)),
+    "thanksgiving": ((10, 15), (11, 30)),
+    # Crosses the calendar year boundary - see _in_season()'s own
+    # docstring for why that needed a real fix, not just a new entry.
+    "winter": ((12, 1), (1, 15)),
 }
 
 
@@ -129,3 +203,107 @@ def is_valid_theme(theme_id: str | None) -> bool:
 
 def is_valid_mode(mode_id: str | None) -> bool:
     return mode_id in MODES
+
+
+def _is_dev_loopback(request) -> bool:
+    """Whether this request is hitting the app directly at 127.0.0.1/
+    localhost, as a developer would running `uvicorn` on their own
+    machine - deliberately `request.url.hostname` (built from the `Host`
+    header), not `request.client.host` (the actual TCP peer). The real
+    deployment (see app/README.md's "Deployment: zero internet access"
+    section) always puts nginx in front, proxying to `uvicorn` over
+    127.0.0.1 (`deploy/queue3d.service`/`deploy/nginx-queue3d.conf`) -
+    from uvicorn's own perspective, `request.client.host` is *always*
+    127.0.0.1 there too, for every real visitor on the deployment LAN,
+    since that's nginx's own loopback connection making the request, not
+    theirs. Checked directly against a running server: a request hitting
+    uvicorn straight (as a raw dev session does) reports
+    `url.hostname == "127.0.0.1"`; the exact same request with a
+    `Host: q3d.home.mygarfield.us` header (what nginx's own
+    `proxy_set_header Host $host` forwards, carrying the real visitor's
+    requested host, not nginx's) reports the real hostname instead -
+    `client.host` was "127.0.0.1" in both cases. Using `client.host`
+    here would have made every seasonal theme permanently available in
+    production, defeating the whole feature."""
+    return request.url.hostname in ("127.0.0.1", "localhost", "::1")
+
+
+def _in_season(window: tuple[tuple[int, int], tuple[int, int]]) -> bool:
+    """Whether today falls within window's (month, day) range, inclusive
+    of both ends - compared as plain (month, day) tuples, not real
+    date() objects, which sidesteps two separate problems a first
+    version (before Winter existed to actually need this) didn't have to
+    handle: Winter's own window (December 1 - January 15) crosses the
+    calendar year boundary, which "build both ends in today's own year,
+    then check start <= today <= end" gets backwards - the "end" would
+    land three and a half weeks *before* the "start" in the same
+    calendar year, so nothing in December would ever match at all.
+    Comparing bare (month, day) pairs instead handles a wrapping window
+    with one extra branch below and, as a side effect, can never raise
+    trying to construct a real February 29th in a year that isn't a leap
+    year either, for any future window that happens to touch it."""
+    (start_month, start_day), (end_month, end_day) = window
+    today = date.today()
+    today_md = (today.month, today.day)
+    start_md = (start_month, start_day)
+    end_md = (end_month, end_day)
+    if start_md <= end_md:
+        return start_md <= today_md <= end_md
+    # Wraps across the new year (e.g. Winter's Dec 1 - Jan 15) - "today"
+    # is in season if it's on or after the start (anywhere from
+    # December through year's end) or on or before the end (anywhere
+    # from January 1st up to the cutoff), not both at once.
+    return today_md >= start_md or today_md <= end_md
+
+
+def is_theme_selectable(theme_id: str, request, current: str | None = None) -> bool:
+    """Whether theme_id can be picked right now - every non-seasonal
+    theme always can; a seasonal one (SEASONAL_THEMES above) only during
+    its own date window, or unconditionally for a developer hitting the
+    app directly at 127.0.0.1/localhost (see _is_dev_loopback's own
+    docstring). `current` is the account's *already-saved* theme, always
+    treated as selectable regardless of season/host when passed - without
+    it, a settings form resubmitted after Halloween's window closes
+    (without anyone touching that dropdown) would reject its own
+    currently-shown value as if it were a fresh, disallowed pick.
+
+    Called without `current` (the default), this is also exactly "is the
+    account's own existing pick still active right now" -
+    effective_theme() below uses it that way, deliberately with no
+    exemption for the account's own value: unlike the dropdown-listing
+    case above, keeping an expired seasonal theme selected *is* the
+    thing meant to end once its window (or the 127.0.0.1 exception)
+    closes, not something to protect from rejection."""
+    if theme_id == current:
+        return True
+    if theme_id not in SEASONAL_THEMES:
+        return True
+    return _is_dev_loopback(request) or _in_season(SEASONAL_THEMES[theme_id])
+
+
+def theme_choices(request, current: str | None = None) -> dict[str, str]:
+    """THEMES filtered to what a settings page's theme <select> should
+    actually offer - see is_theme_selectable() above for the rule."""
+    return {tid: name for tid, name in THEMES.items() if is_theme_selectable(tid, request, current)}
+
+
+def effective_theme(theme: str | None, request) -> str:
+    """What an account with this stored theme choice should actually
+    render as right now: the stored value itself, unless it's unset or a
+    seasonal theme that's since fallen out of its own window (and this
+    isn't a 127.0.0.1/localhost dev request - is_theme_selectable's own
+    exception) - DEFAULT_THEME in either of those cases. A seasonal theme
+    doesn't just stop being offered in the settings dropdown once its
+    season ends (theme_choices() already handles that) - it stops being
+    the account's *active* theme at all, reverting to DEFAULT_THEME
+    rather than silently continuing to render something no longer "in
+    season" until someone manually changes it back. Used both by
+    current_theme() (templates_env.py, which also persists this back to
+    the account's own stored value - see _signed_in_account()) and by
+    the settings pages' own selected_theme (routers/user.py,
+    routers/admin.py), so a settings page's dropdown reflects the same
+    reset on the very same render that triggers it, not one request
+    later."""
+    if theme and is_theme_selectable(theme, request):
+        return theme
+    return DEFAULT_THEME

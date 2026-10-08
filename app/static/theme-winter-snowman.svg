@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 150" width="120" height="150">
+  <!-- Winter theme's own mascot (see themes.py/base.html) - standing at
+       the bottom of the window, same slot/reasoning as the Thanksgiving
+       turkey (theme-thanksgiving-turkey.svg): a snowman just stands,
+       the same "give it its own natural pose instead of forcing the
+       Fil/spider top-edge-grip pattern onto something that doesn't fit
+       it" lesson that fix already established, applied here from the
+       start rather than found as a bug afterward.
+
+       Fill is white, which already reads fine against dark mode's own
+       near-black content background on its own - the opposite problem
+       from the turkey (a medium-toned fill needing a light backing
+       stroke for dark mode): here it's the OUTLINE that needs the
+       "sticker" double-stroke treatment, since a dark line thin enough
+       to read crisply against a light background all but disappears
+       against a near-black one. A medium slate-blue backing stroke
+       (readable against both extremes, the same "stay mid-toned, avoid
+       either extreme" principle the turkey's own fill color uses) under
+       a thinner dark navy line on top handles both. -->
+
+  <!-- arms - twigs, same double-stroke treatment as the outline -->
+  <g stroke-linecap="round" fill="none">
+    <g stroke="#7a94b0" stroke-width="5.5">
+      <path d="M35,95 Q15,85 6,68"/>
+      <path d="M85,95 Q105,85 114,68"/>
+    </g>
+    <g stroke="#4a3420" stroke-width="2.6">
+      <path d="M35,95 Q15,85 6,68"/>
+      <path d="M85,95 Q105,85 114,68"/>
+    </g>
+  </g>
+
+  <!-- bottom snowball -->
+  <circle cx="60" cy="120" r="30" fill="#f5faff" stroke="#7a94b0" stroke-width="3.5"/>
+  <circle cx="60" cy="120" r="30" fill="none" stroke="#2a3a5c" stroke-width="1.6"/>
+
+  <!-- middle snowball -->
+  <circle cx="60" cy="82" r="23" fill="#f5faff" stroke="#7a94b0" stroke-width="3.5"/>
+  <circle cx="60" cy="82" r="23" fill="none" stroke="#2a3a5c" stroke-width="1.6"/>
+  <!-- coal buttons -->
+  <circle cx="60" cy="74" r="2.6" fill="#2a3a5c"/>
+  <circle cx="60" cy="84" r="2.6" fill="#2a3a5c"/>
+  <circle cx="60" cy="94" r="2.6" fill="#2a3a5c"/>
+
+  <!-- scarf, draped over the join between the middle ball and the head -->
+  <path d="M40,60 Q60,70 80,60 L80,68 Q60,78 40,68 Z" fill="#c0392b" stroke="#7a1f18" stroke-width="2"/>
+  <path d="M72,64 L78,86 L68,84 Z" fill="#c0392b" stroke="#7a1f18" stroke-width="2"/>
+
+  <!-- head -->
+  <circle cx="60" cy="42" r="18" fill="#f5faff" stroke="#7a94b0" stroke-width="3.5"/>
+  <circle cx="60" cy="42" r="18" fill="none" stroke="#2a3a5c" stroke-width="1.6"/>
+
+  <!-- knit beanie with a pom-pom - generic winter wear, not any
+       specific holiday's hat shape -->
+  <path d="M44,32 Q46,14 60,13 Q74,14 76,32 Q60,26 44,32 Z" fill="#c0392b" stroke="#7a1f18" stroke-width="2"/>
+  <rect x="43" y="29" width="34" height="6" rx="3" fill="#a8291c" stroke="#7a1f18" stroke-width="1.5"/>
+  <circle cx="60" cy="10" r="5" fill="#f5faff" stroke="#7a94b0" stroke-width="2"/>
+
+  <!-- googly eyes -->
+  <circle cx="53" cy="40" r="5.5" fill="#ffffff" stroke="#7a94b0" stroke-width="1"/>
+  <circle cx="67" cy="40" r="5.5" fill="#ffffff" stroke="#7a94b0" stroke-width="1"/>
+  <circle cx="52" cy="41" r="2.4" fill="#2a3a5c"/>
+  <circle cx="66" cy="41" r="2.4" fill="#2a3a5c"/>
+
+  <!-- carrot nose -->
+  <path d="M60,45 L74,48 L60,51 Z" fill="#f0a830" stroke="#a86f18" stroke-width="1.2"/>
+
+  <!-- a scribbled, friendly mouth -->
+  <path d="M52,54 Q56,57 60,55 Q64,57 68,54" stroke="#2a3a5c" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,119 @@
+{# The actual System dashboard content - included by admin_system.html
+   for the initial render, and re-rendered standalone by GET
+   /admin/system/refresh for htmx polling. Always polls (unlike
+   _printer_status.html/_print_progress.html's self-terminating
+   pattern) - there's no "finished" state for a live system dashboard,
+   it just keeps going for as long as the page is open. hx-swap is
+   outerHTML so the freshly-swapped-in root still carries hx-get/
+   hx-trigger itself, keeping the polling alive indefinitely rather
+   than stopping after one refresh. #}
+{% macro bar(label, pct) %}
+  {% set css = "crit" if pct >= 90 else ("warn" if pct >= 75 else "") %}
+  <div class="sysbar">
+    <span class="sysbar-label">{{ label }}</span>
+    <span class="sysbar-track"><span class="sysbar-fill {{ css }}" style="width: {{ "%.0f"|format(pct) }}%"></span></span>
+    <span class="sysbar-pct">{{ "%.0f"|format(pct) }}%</span>
+  </div>
+{% endmacro %}
+<div id="system-metrics" hx-get="/admin/system/refresh" hx-trigger="every 2s" hx-swap="outerHTML">
+  <h3>Live status</h3>
+  <div class="sys-top">
+    <div class="sys-cores">
+      {% if latest %}
+        {% for pct in latest.cpu_percpu %}
+          {{ bar(loop.index, pct) }}
+        {% endfor %}
+      {% else %}
+        <p class="muted">Gathering data...</p>
+      {% endif %}
+    </div>
+    <div class="sys-stats">
+      <dl>
+        <dt>Load average</dt>
+        <dd>{{ "%.2f"|format(snapshot.load1) }}, {{ "%.2f"|format(snapshot.load5) }}, {{ "%.2f"|format(snapshot.load15) }}</dd>
+        <dt>Tasks</dt>
+        <dd>{{ snapshot.running_procs }} running, {{ snapshot.total_procs }} total</dd>
+        <dt>Uptime</dt>
+        <dd>{{ uptime }}</dd>
+        <dt>CPU cores</dt>
+        <dd>{{ snapshot.cpu_count }}</dd>
+        {% if snapshot.temperature_c is not none %}
+          <dt>Temperature</dt>
+          <dd{% if snapshot.temperature_c >= 80 %} class="error"{% endif %}>{{ "%.1f"|format(snapshot.temperature_c) }}&deg;C</dd>
+        {% endif %}
+      </dl>
+    </div>
+  </div>
+  <div class="sys-mem">
+    {% if latest %}
+      {{ bar("Mem", latest.mem_percent) }}
+      {% if snapshot.has_swap %}{{ bar("Swap", latest.swap_percent) }}{% endif %}
+    {% endif %}
+    {{ bar("Disk", disk_root_pct) }}
+    {% if disk_data_pct is not none %}{{ bar("Data", disk_data_pct) }}{% endif %}
+  </div>
+  <p class="muted">
+    Disk: {{ snapshot.disk_root.used | filesizeformat }} of {{ snapshot.disk_root.total | filesizeformat }} used (OS drive)
+    {% if disk_data_pct is not none %}
+      &middot; {{ snapshot.disk_data.used | filesizeformat }} of {{ snapshot.disk_data.total | filesizeformat }} used ({{ snapshot.data_dir }})
+    {% endif %}
+  </p>
+
+  <h3>Disk space</h3>
+  <div class="sys-mem">
+    {% for mount in disk_mounts %}
+      {% if mount.usage %}{{ bar(mount.label, mount.percent) }}{% endif %}
+    {% endfor %}
+  </div>
+  <p class="muted">
+    {% for mount in disk_mounts %}
+      {% if mount.usage %}
+        {{ mount.label }}: {{ mount.usage.used | filesizeformat }} of {{ mount.usage.total | filesizeformat }} used ({{ mount.path }})
+      {% else %}
+        {{ mount.label }}: not available right now ({{ mount.path }})
+      {% endif %}
+      {%- if not loop.last %} &middot; {% endif %}
+    {% endfor %}
+  </p>
+
+  <h3>History</h3>
+  <div class="syscharts">
+    <div class="syschart">
+      <h4>CPU <span class="syschart-scale">(per core, 0-100%)</span></h4>
+      <svg class="syschart-svg" viewBox="0 0 600 100" preserveAspectRatio="none">
+        {% for series in cpu_series %}
+          <polyline points="{{ svg_polyline_points(series, 100) }}" style="stroke: var(--chart-{{ (loop.index0 % 8) + 1 }})"></polyline>
+        {% endfor %}
+      </svg>
+      <div class="syschart-legend">
+        {% for series in cpu_series %}
+          <span style="color: var(--chart-{{ (loop.index0 % 8) + 1 }})">Core {{ loop.index }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="syschart">
+      <h4>Memory &amp; swap <span class="syschart-scale">(0-100%)</span></h4>
+      <svg class="syschart-svg" viewBox="0 0 600 100" preserveAspectRatio="none">
+        <polyline points="{{ svg_polyline_points(mem_series, 100) }}" style="stroke: var(--chart-1)"></polyline>
+        {% if snapshot.has_swap %}
+          <polyline points="{{ svg_polyline_points(swap_series, 100) }}" style="stroke: var(--chart-2)"></polyline>
+        {% endif %}
+      </svg>
+      <div class="syschart-legend">
+        <span style="color: var(--chart-1)">Memory</span>
+        {% if snapshot.has_swap %}<span style="color: var(--chart-2)">Swap</span>{% endif %}
+      </div>
+    </div>
+    <div class="syschart">
+      <h4>Network <span class="syschart-scale">(0-{{ net_max | round(0, "ceil") | int }} KB/s)</span></h4>
+      <svg class="syschart-svg" viewBox="0 0 600 100" preserveAspectRatio="none">
+        <polyline points="{{ svg_polyline_points(net_recv_series, net_max) }}" style="stroke: var(--chart-1)"></polyline>
+        <polyline points="{{ svg_polyline_points(net_sent_series, net_max) }}" style="stroke: var(--chart-2)"></polyline>
+      </svg>
+      <div class="syschart-legend">
+        <span style="color: var(--chart-1)">Received</span>
+        <span style="color: var(--chart-2)">Sent</span>
+      </div>
+    </div>
+  </div>
+</div>

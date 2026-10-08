@@ -6,10 +6,11 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from auth import AuthRedirect, get_session_secret_key
 from db import engine, init_db
-from jobs import start_auto_finish_poller
+from jobs import start_auto_finish_poller, start_disk_space_poller
 from models import Settings
 from printer import close_connection
-from routers import admin, jobs, user
+from sysmetrics import start_metrics_sampler
+from routers import admin, help, jobs, user
 from templates_env import set_display_timezone
 
 # docs_url/redoc_url disabled: FastAPI's built-in interactive docs load
@@ -70,6 +71,19 @@ def on_startup():
     # Mark done/Mark failed buttons are unchanged - this is a safety net
     # on top of them, not a replacement.
     start_auto_finish_poller()
+    # Samples CPU/memory/network every couple seconds for the admin-only
+    # /admin/system dashboard's history graphs - started here rather than
+    # lazily on that page's first visit, so the graphs already have real
+    # recent history the moment an admin opens it instead of starting
+    # from blank.
+    start_metrics_sampler()
+    # Logs a "system" activity-log event, once per low-space episode per
+    # mountpoint, if the OS drive, data drive, or either backup drive
+    # crosses 90% used - see jobs.start_disk_space_poller's own
+    # docstring. Closes README.md's Backups & recovery to-do item: low
+    # disk space should be surfaced before a backup silently fails or
+    # the queue can't accept new uploads, not discovered after the fact.
+    start_disk_space_poller()
 
 
 @app.on_event("shutdown")
@@ -89,3 +103,4 @@ def root():
 app.include_router(user.router)
 app.include_router(admin.router)
 app.include_router(jobs.router)
+app.include_router(help.router)
