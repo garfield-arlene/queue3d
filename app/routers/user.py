@@ -16,6 +16,7 @@ from auth import (
     verify_secret,
 )
 from db import get_session
+from feedback import create_feedback, list_feedback
 from filters import filtered_redirect, job_filter_params, job_filters_from_query_params
 from jobs import (
     JobActionError,
@@ -261,6 +262,79 @@ def update_pin(
         session.commit()
     return templates.TemplateResponse(
         request, "user_settings.html", _user_settings_context(request, user, error, error is None)
+    )
+
+
+def _feedback_context(
+    session: Session,
+    user: User,
+    error: str | None = None,
+    saved: bool = False,
+    description: str = "",
+) -> dict:
+    return {
+        "user": user,
+        # The submitter's own jobs only, not everyone's - a user's own
+        # dashboard is already scoped this way, and the point of this
+        # dropdown (pick the exact job feedback is about, if any) has no
+        # reason to expose anyone else's filenames to do it. Capped at
+        # 100, most recent first - a convenience for finding the right
+        # one quickly, not the only way to describe which job/model this
+        # is about; the description field itself is free text regardless.
+        "jobs": session.exec(
+            select(Job).where(Job.user_id == user.id).order_by(Job.created_at.desc()).limit(100)
+        ).all(),
+        "feedback_list": list_feedback(session, actor=f"user:{user.name}"),
+        "error": error,
+        "saved": saved,
+        # Repopulated into the textarea on a validation error, same as
+        # user_signup.html already does for name/confirm_name - not read
+        # back via request.form in the template, which Starlette only
+        # exposes as an async method with no synchronous Jinja-friendly
+        # equivalent.
+        "description": description,
+    }
+
+
+@router.get("/feedback")
+def feedback_page(
+    request: Request,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    return templates.TemplateResponse(request, "user_feedback.html", _feedback_context(session, user))
+
+
+@router.post("/feedback")
+def submit_feedback(
+    request: Request,
+    description: str = Form(...),
+    job_id: str = Form(""),
+    occurred_at: str = Form(""),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    description = description.strip()
+    error = None
+    job = None
+    if not description:
+        error = "Describe what you were doing and what went wrong before submitting."
+    elif job_id:
+        job = session.get(Job, int(job_id))
+        if job is None or job.user_id != user.id:
+            error = "That's not one of your own submissions."
+    if error is None:
+        create_feedback(
+            session,
+            actor=f"user:{user.name}",
+            description=description,
+            job=job,
+            occurred_at_raw=occurred_at or None,
+        )
+    return templates.TemplateResponse(
+        request,
+        "user_feedback.html",
+        _feedback_context(session, user, error, error is None, description=description if error else ""),
     )
 
 

@@ -345,6 +345,22 @@
     form { display: grid; gap: 0.75rem; max-width: 320px; }
     label { font-size: 0.9rem; opacity: 0.8; }
     input { font-size: 1rem; padding: 0.5rem; }
+    /* First real use: the feedback form's own description field (see
+       user_feedback.html/admin_feedback.html) - a "decent size text
+       field," per the user, not the single-line <input>s every other
+       form in this app has used until now. font-family: inherit since
+       a bare <textarea> defaults to monospace in most browsers, unlike
+       every other text control here; resize: vertical so a viewer who
+       wants more room than the default rows="8" can just drag for it,
+       capped to vertical-only so it can't blow out a narrow sidebar
+       theme's own content width. */
+    textarea { font-size: 1rem; padding: 0.5rem; font-family: inherit; width: 100%; box-sizing: border-box; resize: vertical; }
+    /* Overrides the generic `form` rule's 320px max-width for the same
+       reason form.filters already does (see that rule's own comment) -
+       a textarea plus a job-picker <select> with long filenames in it
+       needs more than a single-field-per-row credential form's width to
+       read comfortably. */
+    form.feedback { max-width: 560px; }
     button { font-size: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
     .error { color: var(--error); }
     .muted { opacity: 0.7; font-size: 0.9rem; }

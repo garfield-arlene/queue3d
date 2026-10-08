@@ -4588,6 +4588,69 @@ bump a dependency (the pip ones in `app/requirements.txt`, and the GitHub
 Actions themselves, e.g. `actions/checkout`) on a weekly schedule, before
 a scan even has to catch one.
 
+## Feedback and the support bundle
+
+**Why this exists:** a free-text support/bug-report channel, from either
+account type, reachable from every page's own nav (`/feedback` for a
+user, `/admin/feedback` for an admin - two separate routes/templates,
+not one shared route detecting role from the session, the same reasoning
+`routers/help.py`'s own docstring already explains at length for this
+app). A "decent size" `<textarea>` (this app's first - every other free-
+text field until now has been a single-line `<input>`) for what happened,
+an optional dropdown of the submitter's own recent jobs ("if applicable"
+- plenty of real feedback, a login problem or a UI complaint, has no
+specific job behind it at all) for precisely which model/job it's about,
+and an optional `<input type="datetime-local">` for approximately when.
+Every submission also writes a matching activity-log entry
+(`action="feedback_submitted"`) - the same "all actions should be
+captured" reasoning every other account/job action already logs one for.
+
+**Folded straight into the downloadable support bundle - the real
+motivation for building this at all.** This deployment has zero internet
+access (see "Deployment: zero internet access" above), so there's never
+been a way to relay a live issue back for help the normal way; an admin
+generating a `.tar.gz` on the spot and handing it off physically has been
+the only channel, and diagnosing a real bug has repeatedly depended on
+having the actual model file in hand (the fighter jet, Flexi_Seal, and
+Christmas tree investigations, among others - see support_bundle.py's
+own docstring). Feedback closes the other half of that gap: now the
+*context* around a problem (what the submitter was doing, roughly when,
+in their own words) travels in the same bundle as the file, instead of
+being a separate conversation an admin has to remember and reconstruct
+by hand later. `support_bundle.build_support_bundle` adds one new
+`feedback.txt` (every report, most recent first, in one block each -
+kept separate from `activity_log.txt` rather than folded into its
+one-line-per-event format, since a report's own description can run to
+many lines) and extends the existing `models/` folder to include the
+model file for any job a feedback report references, not just one that
+recorded its own slice error - a report can be about anything, not only
+a failed slice. The two inclusion reasons are merged into one set before
+writing the tarball, so a job matching both (a real, common case:
+someone reports exactly the failure the error column already recorded)
+never ends up duplicated. Verified directly: a job with no slice error
+at all, referenced only by a feedback report, showed up in the
+downloaded bundle's `models/` folder alongside every job that qualified
+the older way.
+
+**`job_id` is a real FK, but `job_filename` is also snapshotted alongside
+it at submission time** - the same "stay readable even if the thing it
+points at is ever gone" reasoning `Job.reviewed_by_name` already
+established for a reviewing admin's own username. A user submitting
+feedback can only reference one of their *own* jobs (checked server-side,
+not just hidden from the dropdown - confirmed live: referencing another
+account's job id directly is rejected outright); an admin can reference
+any job, since admins already have full visibility across every user's
+submissions.
+
+**Schema 8.2.0 - a purely new table (`models.Feedback`), no existing one
+touched**, so unlike most entries in `db.py`'s `MIGRATIONS` dict this one
+needed no migration function at all - `create_all()` already creates any
+missing table from scratch, the same reasoning schema 6.2.0's own
+migration function never had to cover the new `Color` table it shipped
+alongside. `VERSION` still bumped regardless - a schema change (a new
+table counts) always needs one, whether or not it happens to need a real
+`ALTER TABLE` too.
+
 ## Layout
 
 - `main.py` - app setup: session middleware, static files, the
@@ -4652,6 +4715,10 @@ a scan even has to catch one.
 - `routers/jobs.py` - serves a job's model/supports and the 3D preview
   page, usable by either the job's owner or any admin (not role-specific
   like the two routers above).
+- `feedback.py` - the shared feedback logic (`create_feedback`,
+  `list_feedback`, the datetime-local parser) used by both routers'
+  `/feedback` and `/admin/feedback` routes - see "Feedback and the
+  support bundle" above.
 - `create_admin.py` - CLI to provision an admin account.
 - `templates/`, `static/htmx.min.js`, `static/vendor/three/` - htmx and
   Three.js are both vendored locally rather than loaded from a CDN, since

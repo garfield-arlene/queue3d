@@ -27,6 +27,7 @@ from auth import (
 )
 from backup import get_last_successful_backup, is_stale
 from db import get_session
+from feedback import create_feedback, list_feedback
 from filters import (
     apply_user_filters,
     event_filter_params,
@@ -1280,6 +1281,95 @@ def download_support_bundle(
     background_tasks.add_task(bundle_path.unlink, missing_ok=True)
     filename = f"queue3d-support-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.tar.gz"
     return FileResponse(bundle_path, media_type="application/gzip", filename=filename)
+
+
+# ---- feedback ----
+# See models.Feedback/feedback.py - a free-text support/bug-report
+# channel, submitted by either account type, folded into
+# download_support_bundle above. This admin side additionally shows every
+# submitted report (not just this admin's own), unlike routers/user.py's
+# own /feedback (a user's own history only) - the same "admin sees
+# everyone's, a user sees only their own" split every other listing in
+# this app already follows.
+
+
+def _admin_feedback_context(
+    session: Session,
+    admin: Admin,
+    error: str | None = None,
+    saved: bool = False,
+    description: str = "",
+) -> dict:
+    # Every user's jobs, not just this admin's own (admins don't submit
+    # jobs) - capped at 100, most recent first, same convenience-not-
+    # completeness reasoning as the user-side dropdown. Owner names
+    # joined in separately (Job has no ORM relationship to User in this
+    # app, by design - see models.Job's own snapshot-not-relation
+    # precedent, e.g. reviewed_by_name) rather than looked up per-row.
+    rows = session.exec(
+        select(Job, User.name)
+        .join(User, Job.user_id == User.id)
+        .order_by(Job.created_at.desc())
+        .limit(100)
+    ).all()
+    jobs = [job for job, _owner_name in rows]
+    job_owners = {job.id: owner_name for job, owner_name in rows}
+    return {
+        "admin": admin,
+        "jobs": jobs,
+        "job_owners": job_owners,
+        "feedback_list": list_feedback(session),
+        "error": error,
+        "saved": saved,
+        # See routers/user.py's _feedback_context for why this is passed
+        # explicitly rather than read back via request.form in the
+        # template.
+        "description": description,
+    }
+
+
+@router.get("/feedback")
+def admin_feedback_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    return templates.TemplateResponse(
+        request, "admin_feedback.html", _admin_feedback_context(session, admin)
+    )
+
+
+@router.post("/feedback")
+def admin_submit_feedback(
+    request: Request,
+    description: str = Form(...),
+    job_id: str = Form(""),
+    occurred_at: str = Form(""),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    description = description.strip()
+    error = None
+    job = None
+    if not description:
+        error = "Describe what you were doing and what went wrong before submitting."
+    elif job_id:
+        job = session.get(Job, int(job_id))
+        if job is None:
+            error = "That job no longer exists."
+    if error is None:
+        create_feedback(
+            session,
+            actor=_admin_actor(admin),
+            description=description,
+            job=job,
+            occurred_at_raw=occurred_at or None,
+        )
+    return templates.TemplateResponse(
+        request,
+        "admin_feedback.html",
+        _admin_feedback_context(session, admin, error, error is None, description=description if error else ""),
+    )
 
 
 # ---- colors ----
