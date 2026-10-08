@@ -4,6 +4,7 @@
   {% if user %}
     <a href="/dashboard">&laquo; My submissions</a>
     <a href="/settings">Settings</a>
+    <a href="/feedback">Feedback</a>
     <form method="post" action="/logout"><button type="submit">Log out</button></form>
   {% else %}
     <a href="/login">Log in</a>
@@ -141,5 +142,15 @@
     From <a href="/settings">Settings</a> you can change your theme
     (the sidebar/page look) and its light/dark mode independently of
     each other, and change your PIN. None of this affects your jobs.
+  </p>
+
+  <h3 id="feedback">Reporting a problem</h3>
+  <p>
+    If something went wrong - a print came out badly, slicing behaved
+    strangely, or anything else didn't work the way you expected -
+    <a href="/feedback">Feedback</a> is the place to describe it.
+    Include which model/job it was about if there is one and
+    approximately when it happened - both help track down what actually
+    went wrong, but neither is required if you're not sure.
   </p>
 {% endblock %}

@@ -18,13 +18,31 @@ from-scratch STL parser - both formats here are small and well enough
 specified to parse directly (3MF's own XML via the standard library's
 `xml.etree.ElementTree`, its container via `zipfile` - both already
 stdlib, nothing new to vendor or stage for offline install), not worth a
-new pip dependency for.
+new pip dependency for parsing itself.
+
+One dependency *is* worth it, though: the actual XML parse call
+(`_3mfPackage.objects_in` below) runs on a user-uploaded, untrusted
+`.3mf`'s own XML content, and plain `xml.etree.ElementTree.fromstring`
+is documented as vulnerable to entity-expansion ("billion laughs")
+denial of service regardless - a crafted part could exhaust memory on
+upload (classic external-entity file disclosure doesn't apply here;
+stock ElementTree never fetches external entities to begin with, but
+expat still expands entities defined *within* the same document by
+default, which is the actual residual risk). `defusedxml.ElementTree.
+fromstring` is the same expat-backed parser, just with exactly that
+expansion disabled - fetched the same offline-installable way as every
+other pip dependency here (see deploy/fetch_bundle_assets.sh/
+remote_install.sh's pre-staged-wheels flow), not a runtime network
+fetch, so it costs nothing deployment-constraint-wise despite being new.
 """
 
 import struct
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+
+import defusedxml.ElementTree as DET
+from defusedxml.common import DefusedXmlException
 
 
 def parse_obj(path: Path) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
@@ -234,8 +252,12 @@ def parse_3mf(path: Path) -> tuple[list[tuple[float, float, float]], list[tuple[
                 if normalized not in self.names:
                     raise ValueError(f"referenced part {part_path!r} not found in this .3mf file")
                 try:
-                    root = ET.fromstring(self.zf.read(normalized))
-                except ET.ParseError as e:
+                    # defusedxml, not plain ET.fromstring - see this
+                    # module's own docstring for why: this is parsing a
+                    # user-uploaded file's own XML content, not
+                    # something this app wrote itself.
+                    root = DET.fromstring(self.zf.read(normalized))
+                except (ET.ParseError, DefusedXmlException) as e:
                     raise ValueError(f"couldn't parse {part_path!r} ({e})")
                 self._roots[normalized] = root
                 objs: dict[str, ET.Element] = {}

@@ -33,19 +33,35 @@ Managing user accounts:
 
 ![Admin user management page, listing users with disable/delete actions](docs/screenshots/admin-users.png)
 
+Reporting a problem, from either account type - folded straight into the
+downloadable support bundle for offline diagnosis:
+
+![Feedback page, showing the report form above a table of past submissions](docs/screenshots/feedback.png)
+
 ### Themes
 
 Every account - user or admin - picks its own theme and light/dark mode
 independently, persisting across logins and devices. The screenshots above
-use the plain "Basic" theme; four more ship alongside it, all sharing the
+use the plain "Basic" theme; seven more ship alongside it, all sharing the
 same sidebar-tabs-and-bordered-sections layout with their own palette (and
-in Fil's case, an original mascot) on top:
+in Fil's/the three seasonal themes' case, an original mascot) on top:
 
 ![Console theme - a neutral gray and indigo sidebar layout](docs/screenshots/console.png)
 
 ![Savanna theme - a desert-sunrise photo behind the sidebar](docs/screenshots/savanna.png)
 
 ![Fil theme - an original filament-wire mascot peeking around the sidebar](docs/screenshots/fil.png)
+
+Three more are seasonal - selectable in the theme picker only during their
+own date window (always selectable regardless of date at `127.0.0.1`, for
+development), reverting any account back to the default once their window
+closes rather than sitting year-round as permanent clutter:
+
+![Halloween theme - a haunted-mansion night scene with a spider hanging from the top of the window](docs/screenshots/halloween.png)
+
+![Thanksgiving theme - a harvest-dusk scene with a barn and a turkey standing at the bottom of the window](docs/screenshots/thanksgiving.png)
+
+![Winter theme - a snowy-dusk scene with a log cabin, a frozen pond, and a snowman standing at the bottom of the window](docs/screenshots/winter.png)
 
 **BMMS** is the odd one out - not a generic option, but built for this
 app's actual deployment site, using the school's own colors and logo. It's
@@ -58,8 +74,9 @@ theme (if any) the person logging in has picked:
 
 ![The login page, showing the school's logo as a large letterhead above the form](docs/screenshots/bmms-login.png)
 
-See `app/README.md`'s "The 'Console'/'Savanna'/'Fil'/'BMMS' theme"
-sections for the full design rationale behind each.
+See `app/README.md`'s "The 'Console'/'Savanna'/'Fil'/'BMMS'/'Halloween'/
+'Thanksgiving'/'Winter' theme" sections for the full design rationale
+behind each.
 
 ## Features
 
@@ -336,9 +353,14 @@ sections for the full design rationale behind each.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, with a
   dashboard indicator if a backup hasn't run recently.
+- **Feedback** - a free-text support/bug-report channel for either
+  account type (what were you doing and what went wrong, which model/job
+  it was about if applicable, approximately when), reachable from every
+  page's own nav.
 - **Downloadable support bundle** - an admin can generate a `.tar.gz`
-  on demand (a safe copy of the database, the full activity log, and
-  every model that ever hit a slicing error) for offline bugfixing at
+  on demand (a safe copy of the database, the full activity log, every
+  submitted feedback report, and every model that ever hit a slicing
+  error or was referenced by a feedback report) for offline bugfixing at
   this app's zero-internet-access deployment, with no need for remote
   access to the device itself.
 - **Self-service help pages** - a shared `/help` page (no login required)

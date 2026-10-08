@@ -419,6 +419,15 @@ def _migrate_to_8_1_0(conn):
 #
 # Adding a future migration: bump app/VERSION, write a new function next
 # to _migrate_to_2_1_0, and add it here keyed by that same new version.
+#
+# Not every version bump needs an entry here at all - schema 8.2.0 (the
+# new Feedback table, models.py) is a purely new table, no existing one
+# touched, so create_all() below already handles it for free the same
+# way it already does for a brand new database; same reasoning 6.2.0's
+# own migration function only covers Job's new columns, never the new
+# Color table that shipped in that same version. VERSION still bumps
+# regardless, per the user - a schema change (a new table counts) always
+# needs one, whether or not it happens to need an ALTER TABLE too.
 MIGRATIONS = {
     "2.1.0": _migrate_to_2_1_0,
     "2.4.0": _migrate_to_2_4_0,

@@ -410,3 +410,48 @@ class Job(SQLModel, table=True):
     # slicing succeeds, same timing as duration_estimate_s above. None
     # until sliced at least once.
     filament_grams: float | None = Field(default=None)
+
+
+class Feedback(SQLModel, table=True):
+    """A free-text support/bug-report channel, from either account type -
+    see feedback.py, routers/user.py's own /feedback and
+    routers/admin.py's /admin/feedback. Per the user: "add a support/
+    feedback section where a user or admin can submit feedback... [with]
+    a decent size text field to describe what they were doing and what
+    went wrong... what model they were working on if applicable... what
+    approximate date/time did it occur." Every row here also gets folded
+    straight into the downloadable support bundle (see
+    support_bundle.build_support_bundle) - "the username, feedback,
+    date/time submitted, and any relevant files and logs" travels with
+    the same offline diagnostic package an admin would otherwise have to
+    reconstruct by hand, since the real deployment has zero internet
+    access to relay a live report back any other way (see project memory
+    queue3d-deployment-network).
+
+    `actor` follows the exact same "user:<name>" / "admin:<username>"
+    plain-label convention JobEvent.actor already uses - two separate
+    account tables, simpler than a polymorphic FK for something only
+    ever displayed, never joined against.
+
+    `job_id` is a real FK, but nullable - "if applicable," a lot of real
+    feedback (a login problem, a UI complaint, the printer itself) won't
+    be about any one specific job at all. `job_filename` is *also*
+    snapshotted alongside it at submission time regardless - the same
+    "stay readable even if the thing it points at is ever gone" reasoning
+    Job.reviewed_by_name already established for a reviewing admin's own
+    username.
+
+    `occurred_at` is deliberately separate from `submitted_at` - a report
+    filed today about something that happened yesterday needs both: when
+    it's being read (submitted_at, always recorded, exact) and when the
+    actual problem happened (occurred_at, self-reported, approximate,
+    and nullable - plenty of real feedback won't have a precisely-
+    rememberable moment behind it at all)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    submitted_at: datetime = Field(default_factory=utcnow, index=True)
+    actor: str
+    description: str
+    job_id: int | None = Field(default=None, foreign_key="job.id")
+    job_filename: str | None = Field(default=None)
+    occurred_at: datetime | None = Field(default=None)

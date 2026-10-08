@@ -10,6 +10,7 @@
   <a href="/admin/log">Activity log</a>
   <a href="/admin/settings">Settings</a>
   <a href="/admin/system">System</a>
+  <a href="/admin/feedback">Feedback</a>
   <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
 {% endblock %}
 {% block content %}
@@ -68,10 +69,12 @@
     jobs can be bulk-deleted or requeued from there);
     <a href="/admin/log">Activity log</a> is a record of who did what.
     The dashboard's own "Download support bundle" link produces a
-    .tar.gz of the database, activity log, and any model that ever
-    hit a slicing error, for troubleshooting without needing internet
-    access. Backup status (when the last one succeeded, and from
-    which drive) is shown right on the dashboard.
+    .tar.gz of the database, activity log, every submitted
+    <a href="/admin/feedback">feedback</a> report, and any model that
+    ever hit a slicing error or was referenced by a feedback report,
+    for troubleshooting without needing internet access. Backup status
+    (when the last one succeeded, and from which drive) is shown right
+    on the dashboard.
   </p>
 
   <h3 id="admin-system">The System page</h3>
@@ -84,5 +87,14 @@
     bottleneck during a big multi-model upload or a lot of concurrent
     slicing, or just for keeping an eye on disk space and CPU
     temperature over time.
+  </p>
+
+  <h3 id="admin-feedback">Feedback</h3>
+  <p>
+    <a href="/admin/feedback">Feedback</a> lists every problem report or
+    comment submitted by any user or admin, most recent first, and
+    includes the same form for reporting one yourself. Every submitted
+    report is folded into the support bundle automatically (see above) -
+    there's no separate step needed to include it.
   </p>
 {% endblock %}

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Feedback - queue3d admin{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <a href="/admin/users">Users</a>
+  <a href="/admin/admins">Admins</a>
+  <a href="/admin/colors">Colors</a>
+  <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
+  <a href="/admin/log">Activity log</a>
+  <a href="/admin/settings">Settings</a>
+  <a href="/admin/system">System</a>
+  <a href="/admin/help#admin-feedback">Help</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Feedback</h2>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  {% if saved %}<p class="muted">Thanks - your feedback has been submitted.</p>{% endif %}
+
+  <h3>Report a problem or share feedback</h3>
+  <form method="post" action="/admin/feedback" class="feedback">
+    <label>What were you doing, and what went wrong?<br>
+      <textarea name="description" rows="8" required placeholder="Describe what you were trying to do and what actually happened...">{{ description }}</textarea>
+    </label>
+    <label>Which model/job was this about, if applicable?<br>
+      <select name="job_id">
+        <option value="">&mdash; not related to a specific job &mdash;</option>
+        {% for job in jobs %}
+          <option value="{{ job.id }}">{{ job.original_filename }} ({{ job_owners[job.id] }}, {{ job.status.value }}, {{ job.created_at | local_time('%Y-%m-%d') }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Approximately when did this happen?<br>
+      <input type="datetime-local" name="occurred_at">
+    </label>
+    <p class="muted">Both are optional, but help narrow down what to look for.</p>
+    <button type="submit">Submit feedback</button>
+  </form>
+
+  <h3>All submitted feedback</h3>
+  {% if feedback_list %}
+    <table>
+      <tr><th>Submitted</th><th>By</th><th>Model/job</th><th>Occurred</th><th>What happened</th></tr>
+      {% for fb in feedback_list %}
+        <tr>
+          <td>{{ fb.submitted_at | local_time }}</td>
+          <td>{{ fb.actor }}</td>
+          <td>{{ fb.job_filename or "—" }}</td>
+          <td>{{ (fb.occurred_at | local_time) or "—" }}</td>
+          <td>
+            <details class="tech-detail">
+              <summary>{{ fb.description[:60] }}{% if fb.description|length > 60 %}&hellip;{% endif %}</summary>
+              <pre>{{ fb.description }}</pre>
+            </details>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">No feedback submitted yet.</p>
+  {% endif %}
+{% endblock %}
