@@ -491,7 +491,11 @@ behind each.
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
 
-**Printer**
+**Printer** (the printer itself just shipped out to the real deployment
+site; on-site visits continue roughly every two weeks, same cadence as
+the backup drives - a quick, one-off check against the real hardware
+can happen on one of those. Bringing the printer home for extended,
+iterative hands-on work waits for winter break in December)
 - ~~Correct the fallback time estimate using real completion history~~
   **Done** - see Features below ("A history-corrected time estimate")
   and `app/README.md`'s "Live print progress" section. What's still
