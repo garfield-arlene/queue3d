@@ -746,6 +746,68 @@ available after upload" rather than vendoring Three.js's heavier
 moments later anyway, once the real, post-slice preview (always from
 the server's own converted `.stl`) is ready.
 
+### Automatic mesh repair
+
+`mesh_repair.repair_stl_bytes` runs once, centrally, in
+`routers/user.py`'s `_stl_bytes_from_upload` - the single chokepoint
+every upload already passes through (a direct `.stl`, a converted
+`.obj`/`.3mf`, or each file pulled out of a `.zip`), so a broken mesh
+gets one real chance to be fixed before it ever reaches the slicer.
+OrcaSlicer's CLI has no repair flag of its own (that's a GUI-only
+feature there, the "Fix through Netfabb" menu item) - without this, a
+broken upload's only outcome was a `slice_failed` job with no real path
+forward beyond re-exporting the model somewhere else first.
+
+Two tiers, cheapest first: `trimesh`'s own normal/winding fix plus
+small-hole fill (pure numpy/scipy/networkx) handles the common case - a
+few flipped faces, one or two small gaps. `pymeshfix` (a dedicated,
+compiled hole-filling algorithm) picks up anything trimesh's lighter
+repair couldn't close - larger or messier holes, the kind a genuinely
+bad scan or export actually produces. Never touches an already-correct
+mesh (checked directly, not assumed - an identical mesh in produces
+byte-identical output), and never raises or returns something worse
+than what came in: if both tiers fail to produce a valid, watertight
+result, the original bytes ship unchanged rather than whatever broken
+intermediate state the attempt left behind.
+
+**Two real bugs caught while building this, not anticipated in the
+original design:**
+
+Loading the uploaded STL bytes with `process=False` (trimesh's flag to
+skip its own cleanup pass) made `is_watertight` read `False` for
+essentially *every* mesh, regardless of whether the geometry was
+actually fine - confirmed directly against an already-good test cube,
+which came back reporting itself broken with volume `0`. The reason:
+STL as a format never shares vertex indices between triangles - every
+triangle stores its own independent copy of each vertex, even along a
+shared edge - so without trimesh's merge-duplicate-vertices step on
+load, adjacent triangles never register as actually connected.
+`process=True` (the default, not `False`) is required for a correct
+read, not just a style preference.
+
+Separately: a mesh that comes back watertight and the right shape can
+still have every normal pointing inward (a negative signed volume) -
+fatal for 3D printing specifically, since a slicer determines inside
+vs. outside from that same sign, so an inverted mesh can silently slice
+as a shell with material on the wrong side rather than failing loudly
+the way a non-watertight mesh does. Reproduced directly: repairing a
+deliberately broken sphere (a multi-triangle hole, several faces'
+winding flipped) via `pymeshfix` landed on a result that was watertight
+and the exact right volume *magnitude* - just negative. `fix_normals()`
+on a still-broken mesh doesn't reliably land on a globally outward-
+facing result once it's patched up, so this needed its own explicit
+check (`mesh.volume < 0` -> `mesh.invert()`), applied both after the
+repair tiers and as a cheap standalone check for a mesh that was
+already watertight but inverted to begin with - a real case some CAD/
+export tools produce on their own, with no hole to repair at all.
+
+**Verified live, not just in isolation:** a deliberately broken sphere
+(the same hole-plus-flipped-faces case above) was confirmed to fail
+OrcaSlicer directly first - `exit 156`, "didn't produce gcode" - before
+this existed, ruling out "OrcaSlicer would have tolerated it anyway."
+Uploaded through the real running app afterward, the same file came
+back `status='sliced', slice_error=None`.
+
 ### Restoring an archived job, and one-click reprint
 
 **Why this exists:** a `rejected`/`failed`/`done`/`expired` job had

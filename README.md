@@ -358,6 +358,17 @@ behind each.
   of filling the frame on its own, and a model that's actually too
   big for the bed visibly overflows that view instead of just
   re-filling the frame to look "normal-sized" like every other model.
+- **Automatic mesh repair** - every upload gets checked for a watertight,
+  correctly-oriented mesh before it ever reaches the slicer (which has
+  no repair flag of its own), and repaired automatically if it isn't -
+  a lightweight pass for common issues (flipped faces, small gaps),
+  escalating to a dedicated hole-filling algorithm for larger or messier
+  ones. Already-good geometry is left completely untouched. See
+  `app/README.md`'s "Automatic mesh repair" section for two real bugs
+  caught while building this (a false "not watertight" reading from a
+  missed STL-loading step, and a repaired mesh that could come back
+  with every normal silently pointing inward) and the live verification
+  that a mesh failing OrcaSlicer directly now slices successfully.
 - **Automatic rotation retry on a slicing failure** - if a model fails to
   slice at the *default* orientation (never rotated at all), the app
   automatically tries a handful of likely rotations (quarter/eighth
@@ -437,12 +448,6 @@ behind each.
 ## To do
 
 **Upload**
-- Model repair (like PrusaSlicer/OrcaSlicer's "Fix through Netfabb") -
-  OrcaSlicer's CLI has no repair flag to lean on (that's a
-  GUI-only feature there), so this would mean a dedicated repair pass
-  before slicing - `trimesh` (Python, fill holes/fix normals/fix winding)
-  or `admesh` (a small purpose-built STL repair CLI) are the two realistic
-  options to build it on.
 - ~~Centering an uploaded model by its actual geometric centroid, not
   just its bounding-box center - a real asymmetric model was seen to
   fail `mbotmake`'s own bed-centering sanity check this way.~~ **Done,
