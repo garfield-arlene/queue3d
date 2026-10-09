@@ -113,6 +113,11 @@ behind each.
 - **Choice of support style** - Automatic, Grid, Snug, Organic, or one of
   two tree-support variants, matching the shapes PrusaSlicer users would
   recognize by the same names.
+- **A single filament color per job**, or "Any available," chosen from
+  a dropdown of whatever an admin currently has enabled - plus a
+  best-effort low-inventory notice, read straight out of the job's own
+  sliced file rather than estimated. See `app/README.md`'s "Filament
+  color selection" section.
 - **One shared queue** - submissions land directly in it; there's no
   separate pre-review step before something counts as queued.
 - **Admin review** - approve, or reject with a required note explaining
@@ -124,7 +129,11 @@ behind each.
   (with the note), release, and outcome, across every job, most recent
   first, at a glance - plus each job's own history on its own page
   (`/admin/jobs/{id}/log`, linked from the queue, the finished-jobs list,
-  and the global log).
+  and the global log). Filters (substring, color, status, estimated
+  print time, date range, and submitter where relevant) are available
+  on the global log and on every other job/user listing in the app
+  besides. See `app/README.md`'s "Filters, on every job/log/user
+  listing" section.
 - **Release to the printer over the network** - an approved job is sent
   and started directly; no walking a file over on a flash drive. One
   persistent, authenticated connection is held open for the app's whole
@@ -201,6 +210,21 @@ behind each.
   modes. See `app/README.md`'s "The 'Console' theme,"
   "The 'Savanna' theme," "The 'Fil' theme," and "The 'BMMS' theme"
   sections.
+- **"Halloween," "Thanksgiving," and "Winter" seasonal themes** - the
+  same sidebar layout again, each selectable in the theme picker only
+  during its own date window (September 15 - November 15 for Halloween,
+  October 15 - November 30 for Thanksgiving, December 1 - January 15
+  for Winter) rather than sitting year-round as permanent clutter,
+  except always selectable regardless of the current date when
+  accessing via `127.0.0.1` so development/testing doesn't require
+  waiting for the actual season. An account that picks a seasonal theme
+  reverts to the default once its window closes, rather than silently
+  keeping it forever. Deliberately generic seasons, not specific
+  holidays beyond Halloween and Thanksgiving themselves - Winter has no
+  Christmas tree, menorah, or other single-holiday imagery, the same
+  "school-appropriate for everyone" bar the other two follow. See
+  `app/README.md`'s "The 'Halloween' theme," "The 'Thanksgiving'
+  theme," and "The 'Winter' theme" sections.
 - **Automatic completion detection** - a background poller notices a
   print finishing, failing, or being cancelled on its own (via the same
   printer status read as the live progress bar above) and records the
@@ -301,8 +325,12 @@ behind each.
   interlocking piece) are merged into a single job at the positions
   already saved in the file, not split apart, since those pieces are
   meant to be printed together, unlike a zip's genuinely separate files.
-  An `.obj`/`.3mf` upload is converted to a real `.stl` immediately
-  (losslessly - same geometry, different container) so nothing
+  Nested `<components>` (grouped/instanced parts some CAD tools export
+  that way) are resolved recursively; an object typed
+  `support`/`solidsupport` is skipped, so a pre-sliced export's own
+  baked-in supports can't double up against this app's own support
+  generation. An `.obj`/`.3mf` upload is converted to a real `.stl`
+  immediately (losslessly - same geometry, different container) so nothing
   downstream (slicing, the 3D preview, re-slicing) needs to know it was
   ever anything but one; the original filename still displays as
   uploaded. A real multi-part functional-print kit (15 separate model
@@ -310,12 +338,19 @@ behind each.
   successfully - see `app/README.md`'s "Fixing a real multi-model zip
   upload" for the earlier, narrower cap this exposed and the (wrong)
   concurrency assumption it was based on.
-- **Resize and auto-fit on the job edit page** - a draft's own edit page
-  has a scale control (always uniform - proportions can never distort)
-  with a live, before-you-commit 3D preview as you change it, and a
-  one-click "Auto-resize to fit build plate" button for a model that's
-  too large, computing exactly the shrink needed rather than making the
-  user guess a percentage by hand. The read-only "View 3D" page for an
+- **Resize and auto-fit on the job edit page** - a scale control (always
+  uniform - proportions can never distort) with a live, before-you-commit
+  3D preview as you change it, and a one-click "Auto-resize to fit build
+  plate" button for a model that's too large, computing exactly the
+  shrink needed rather than making the user guess a percentage by hand.
+  Full editing, not just color, is reachable from a queued/approved
+  job's own dashboard row too, not just a draft's - changing anything on
+  one re-slices it as a fresh submission (a new `queued_at`, same as a
+  genuinely new upload), landing at the end of the queue rather than
+  re-slicing in place at its old position. See `app/README.md`'s "Full
+  editing for a queued/approved job" section for the real safety
+  question this raised (an admin must never be able to release a file
+  mid-re-slice) and how it's handled. The read-only "View 3D" page for an
   already-submitted job shows it at whatever scale it was actually
   sliced at too, not just the original file size.
 - **Automatic rotation retry on a slicing failure** - if a model fails to
@@ -397,23 +432,6 @@ behind each.
 ## To do
 
 **Upload**
-- Done - `.3mf` upload support (`mesh.parse_3mf`). Unlike a `.zip`'s
-  several genuinely separate files, a real-world `.3mf` bundling
-  multiple objects with their own placement transforms is usually one
-  interlocking assembly (hinges, gears, anything meant to print
-  together as a single piece) - so every object referenced from the
-  file's own `<build>` section is merged into one flattened mesh at
-  upload time, at the exact relative positions the file already
-  specifies, and becomes a single job, the same as any other upload -
-  not split into separate jobs the way `.zip` is. Nested `<components>`
-  (grouped/instanced parts some CAD tools export that way) are resolved
-  recursively; an object typed `support`/`solidsupport` is skipped, so a
-  pre-sliced export's own baked-in supports can't double up against this
-  app's own support generation. The client-side instant preview still
-  only understands `.stl` (same as `.obj`/`.zip` already) - a `.3mf`
-  selection shows "Preview available after upload" like those do,
-  rather than vendoring Three.js's heavier `3MFLoader` for a look
-  available moments later anyway once it's actually sliced.
 - Model repair (like PrusaSlicer/OrcaSlicer's "Fix through Netfabb") -
   OrcaSlicer's CLI has no repair flag to lean on (that's a
   GUI-only feature there), so this would mean a dedicated repair pass
@@ -437,67 +455,18 @@ behind each.
   section for the full numbers.
 
 **Job review & feedback**
-- Done - the open question this item raised (does changing something on
-  an active `queued`/`approved` job re-slice in place, keeping its
-  queue position, or count as a new submission that goes to the end)
-  is resolved: a new submission - a fresh `queued_at`,
-  same as a genuinely new one. The job-edit page itself (not
-  `/jobs/{id}/preview`, which stays view-only) is now reachable from a
-  queued/approved job's own dashboard row, with full resize/rotate/
-  support editing identical to a draft's - see `app/README.md`'s "Full
-  editing for a queued/approved job" section for the real safety
-  question this raised (an admin must never be able to release a file
-  mid-re-slice) and how it's handled.
-- **Real bug found using auto-fit on an actual model (an F-35 fighter
-  jet STL): "Auto-resize to fit build plate" could compute a scale that
-  still didn't actually fit.** Root cause: auto-fit and the "too large"
-  warning both measured the model's raw bounding-box span against the
-  bed, assuming it would be centered by that same bounding box - but the
-  model is actually centered on its area-weighted surface centroid (see
-  the Flexi_Seal fix above), which for a strongly lopsided shape can sit
-  nowhere near the bounding-box middle. This exact jet model, shrunk to
-  fit its own total span, still hung ~29mm off one edge of the bed once
-  centered on its real centroid. **Fixed** - both checks now measure the
-  actual centroid-relative distance to each side independently, which
-  is what genuinely determines whether it fits; unchanged for any
-  roughly-symmetric model, where the two calculations agree anyway.
-  Verified against the real file: auto-fit dropped from a wrong 9.74% to
-  a correct 7.50%, and OrcaSlicer's own placement check accepted the
-  result (previously refused with "no object is fully inside the print
-  volume").
 - The 3D preview's camera always frames around the *model's own* size
-  and position, not the bed's fixed physical dimensions - correctly
-  identified by the user right after the auto-fit fix above: "The
-  preview always shows the model in the center. If it's off center,
-  that's not displayed visually." The numeric fit-check is now correct
-  (see above) and shows as a red model + text warning, but a viewer
-  only glancing at the picture rather than reading that line could
-  still miss an overhang, since every model - fitting or not - gets
-  framed to look similarly "centered in the picture." Would need the
-  camera (or at least the bed-plate rendering) to hold a consistent
-  scale/position across every model rather than re-framing per-model -
-  a real design change to the preview, not a quick follow-up.
-
-**Audit log**
-- The core log is built (`models.JobEvent`; `/admin/log` - one global,
-  most-recent-first table across every job, which is the actual "admin
-  log view"; `/admin/jobs/{id}/log` for one job's own history) - see
-  Features below.
-- Done - filters for the global log (`/admin/log`, by actor/action/date
-  range/filename or detail substring), and for every other job/user
-  listing in the app besides (substring, color, status, est. print time,
-  date range, and submitter where relevant) - see app/README.md's
-  "Filters, on every job/log/user listing" for the full design.
-
-**Print options**
-- Done - a single color per job (not 1st/2nd/3rd preference, a more
-  specific spec superseding this item's original
-  wording), or "Any available" so an admin doesn't have to change
-  filament, chosen from a dropdown of whatever an admin currently has
-  enabled - plus a best-effort low-inventory notice, since it turned out
-  possible to read a job's actual filament use straight out of the real
-  sliced file. Full account in `app/README.md`'s "Filament color
-  selection" section.
+  and position, not the bed's fixed physical dimensions. The numeric
+  fit-check itself is correct (auto-fit and the "too large" warning both
+  measure the actual centroid-relative distance to each side - see
+  Features' "Resize and auto-fit" bullet) and shows as a red model + text
+  warning, but a viewer only glancing at the picture rather than reading
+  that line could still miss an overhang, since every model - fitting or
+  not - gets framed to look similarly "centered in the picture." Would
+  need the camera (or at least the bed-plate rendering) to hold a
+  consistent scale/position across every model rather than re-framing
+  per-model - a real design change to the preview, not a quick
+  follow-up.
 
 **Appearance**
 - Done - seven themes beyond Default: "Console" (sidebar nav,
@@ -510,7 +479,8 @@ behind each.
   Mountain Middle School's own maroon-and-gold colors and Raiders logo,
   also shown on both login pages regardless of theme), "Halloween,"
   "Thanksgiving," and "Winter" (the same layout again, all three
-  seasonal rather than year-round - see the dedicated bullet below). All
+  seasonal rather than year-round - see Features' own bullet for the
+  seasonal date windows and reversion behavior). All
   seven ship both a light and dark palette - see `app/README.md`'s "The
   'Console' theme," "The 'Savanna' theme," "The 'Fil' theme," "The
   'BMMS' theme," "The 'Halloween' theme," "The 'Thanksgiving' theme,"
@@ -520,26 +490,6 @@ behind each.
   app runs with none, ever).
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
-- Done, for Halloween, Thanksgiving, and Winter - three seasonal themes
-  (a haunted-mansion night scene with a spider hanging from the top of
-  the window; a harvest-dusk scene with a barn and a turkey standing at
-  the bottom; a snowy-dusk scene with a log cabin and a snowman standing
-  at the bottom), each selectable in the theme picker only during its
-  own date window (September 15 - November 15 for Halloween, October 15
-  - November 30 for Thanksgiving, December 1 - January 15 for Winter -
-  the first window in this app that actually crosses the calendar year
-  boundary) rather than sitting year-round as permanent clutter, except
-  always selectable regardless of the current date when accessing via
-  `127.0.0.1`, so development/testing against any of them doesn't
-  require waiting for the actual season or faking the system clock. An
-  account that picks a seasonal theme actually reverts to Default once
-  its window closes, rather than silently keeping it forever.
-  Deliberately generic seasons, not specific holidays beyond Halloween
-  and Thanksgiving themselves - Winter has no Christmas tree, menorah, or
-  any other single-holiday imagery, the same "school-appropriate for
-  everyone" bar the other two already follow. See `app/README.md`'s "The
-  'Halloween' theme," "The 'Thanksgiving' theme," and "The 'Winter'
-  theme" sections.
 
 **Printer**
 - ~~Correct the fallback time estimate using real completion history~~
