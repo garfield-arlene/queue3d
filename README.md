@@ -352,7 +352,12 @@ behind each.
   question this raised (an admin must never be able to release a file
   mid-re-slice) and how it's handled. The read-only "View 3D" page for an
   already-submitted job shows it at whatever scale it was actually
-  sliced at too, not just the original file size.
+  sliced at too, not just the original file size. The camera frames
+  against the bed's own fixed scale, not just the model's - a tiny
+  model reads as small against a consistently bed-scaled view instead
+  of filling the frame on its own, and a model that's actually too
+  big for the bed visibly overflows that view instead of just
+  re-filling the frame to look "normal-sized" like every other model.
 - **Automatic rotation retry on a slicing failure** - if a model fails to
   slice at the *default* orientation (never rotated at all), the app
   automatically tries a handful of likely rotations (quarter/eighth
@@ -453,20 +458,6 @@ behind each.
   check first for a mesh converted from an arbitrary uploaded OBJ, not
   yet attempted. See `app/README.md`'s "A real stuck-slicing incident"
   section for the full numbers.
-
-**Job review & feedback**
-- The 3D preview's camera always frames around the *model's own* size
-  and position, not the bed's fixed physical dimensions. The numeric
-  fit-check itself is correct (auto-fit and the "too large" warning both
-  measure the actual centroid-relative distance to each side - see
-  Features' "Resize and auto-fit" bullet) and shows as a red model + text
-  warning, but a viewer only glancing at the picture rather than reading
-  that line could still miss an overhang, since every model - fitting or
-  not - gets framed to look similarly "centered in the picture." Would
-  need the camera (or at least the bed-plate rendering) to hold a
-  consistent scale/position across every model rather than re-framing
-  per-model - a real design change to the preview, not a quick
-  follow-up.
 
 **Appearance**
 - Done - seven themes beyond Default: "Console" (sidebar nav,
