@@ -18,6 +18,11 @@ const BED_WIDTH_MM = 295;
 const BED_DEPTH_MM = 195;
 const BED_HEIGHT_MM = 165;
 
+// The camera-framing floor in renderGeometry() below, matching the
+// bed's own largest dimension rather than an arbitrary small constant -
+// see that function's own comment for why.
+const BED_RADIUS_MM = Math.max(BED_WIDTH_MM, BED_DEPTH_MM, BED_HEIGHT_MM);
+
 const loader = new STLLoader();
 let scene, camera, renderer, controls, container, infoEl;
 let currentMesh = null;
@@ -260,15 +265,32 @@ function renderGeometry(geometry) {
     currentMesh = new THREE.Mesh(geometry, material);
     scene.add(currentMesh);
 
-    // Frame the camera around the model - distance scales with its size so
-    // a tiny calibration cube and a bed-filling model both start visible.
-    // near/far scale too: a fixed far plane would clip (render nothing for)
-    // a model large enough to need a camera distance beyond it - a real
-    // risk here specifically, since "too large for the build plate" is
-    // often a units mistake (e.g. meters exported as if mm) rather than a
-    // merely-somewhat-oversized model, and can be 1000x larger than expected.
-    const radius = Math.max(size.x, size.y, size.z, 20);
-    camera.near = Math.max(radius / 1000, 0.01);
+    // Frame the camera around the model AND the bed together, holding a
+    // floor tied to the bed's own fixed size (BED_RADIUS_MM) rather than
+    // a small, model-size-only minimum. The real bug this fixes: every
+    // model used to get framed to fill the view similarly regardless of
+    // its actual size relative to the bed - a genuinely tiny model and a
+    // genuinely oversized one both just "filled the frame" and looked
+    // similarly normal-sized, with only the separate text warning (see
+    // infoEl below) saying otherwise. A model actually bigger than the
+    // bed now visibly overflows this bed-anchored view instead of simply
+    // re-filling the frame to match it; a tiny one now visibly reads as
+    // small against a consistently bed-scaled view instead of filling
+    // the frame on its own. near/far scale with it too: a fixed far
+    // plane would clip (render nothing for) a model large enough to need
+    // a camera distance beyond it - a real risk here specifically, since
+    // "too large for the build plate" is often a units mistake (e.g.
+    // meters exported as if mm) rather than a merely-somewhat-oversized
+    // model, and can be 1000x larger than expected.
+    const modelSpan = Math.max(size.x, size.y, size.z, 1);
+    const radius = Math.max(modelSpan, BED_RADIUS_MM);
+    // near scales with the model's own span, not the bed-anchored radius
+    // below - otherwise a small model's minDistance (also model-span-
+    // based, a few lines down) could end up closer than near itself,
+    // clipping the model out of view the moment someone actually zoomed
+    // in close on it. far still uses the bed-anchored radius - that
+    // direction has no equivalent clipping risk, only wasted depth range.
+    camera.near = Math.max(modelSpan / 1000, 0.01);
     camera.far = radius * 20;
     camera.updateProjectionMatrix();
     camera.position.set(radius * 1.4, -radius * 1.6, radius * 1.3);
@@ -278,11 +300,13 @@ function renderGeometry(geometry) {
     // scrolling the camera distance past near or far above, at which
     // point the model just clips out of view entirely: turning still
     // worked (orbit doesn't change distance), but zooming either
-    // direction far enough made the model disappear completely. Bounds
-    // tied to the same radius near/far are scaled from, comfortably
-    // inside both (well past near, well short of far) so the zoom range
-    // itself can never reach the clipping planes that broke this.
-    controls.minDistance = radius * 0.1;
+    // direction far enough made the model disappear completely. Minimum
+    // distance is tied to the model's own span, not the bed-anchored
+    // radius above - a small model should still be zoomable in close for
+    // inspection, not stuck behind the bed-scale framing floor; maximum
+    // distance uses the bed-anchored radius, since zooming out further
+    // than that is harmless either way. Both comfortably inside near/far.
+    controls.minDistance = modelSpan * 0.1;
     controls.maxDistance = radius * 15;
     controls.update();
 
