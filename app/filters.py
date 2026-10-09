@@ -73,7 +73,11 @@ def local_date_bounds(date_from: str | None, date_to: str | None) -> tuple[datet
     someone picking an end date actually means - "through the end of
     that day," not "up to its literal midnight." Either side is `None`
     if blank or unparseable - "no bound on that side," not an error;
-    a filter form is expected to be used partially."""
+    a filter form is expected to be used partially.
+
+    Returns aware UTC datetimes, not naive - sqlmodel>=0.0.45 rejects a
+    naive datetime as a query parameter against its now tz-aware columns
+    (see models.utcnow/the Job.created_at etc. Field definitions)."""
     tz = templates_env.get_display_timezone()
 
     def parse(s: str | None) -> date | None:
@@ -87,12 +91,12 @@ def local_date_bounds(date_from: str | None, date_to: str | None) -> tuple[datet
     start = None
     d_from = parse(date_from)
     if d_from is not None:
-        start = datetime.combine(d_from, time.min, tzinfo=tz).astimezone(_utc.utc).replace(tzinfo=None)
+        start = datetime.combine(d_from, time.min, tzinfo=tz).astimezone(_utc.utc)
 
     end = None
     d_to = parse(date_to)
     if d_to is not None:
-        end = (datetime.combine(d_to, time.min, tzinfo=tz) + timedelta(days=1)).astimezone(_utc.utc).replace(tzinfo=None)
+        end = (datetime.combine(d_to, time.min, tzinfo=tz) + timedelta(days=1)).astimezone(_utc.utc)
 
     return start, end
 
@@ -291,7 +295,7 @@ def apply_user_filters(users: list[User], *, q=None, status=None, date_from=None
             continue
         if status == "disabled" and not user.disabled:
             continue
-        created = user.created_at.replace(tzinfo=None) if user.created_at.tzinfo else user.created_at
+        created = user.created_at if user.created_at.tzinfo else user.created_at.replace(tzinfo=_utc.utc)
         if start is not None and created < start:
             continue
         if end is not None and created >= end:

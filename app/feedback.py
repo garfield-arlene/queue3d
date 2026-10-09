@@ -24,7 +24,9 @@ def parse_occurred_at(s: str | None) -> datetime | None:
     filters.local_date_bounds already does for a bare date, just with an
     explicit time component instead of defaulting to midnight. None if
     blank/unparseable - "approximately when did this happen" is an
-    optional prompt, not a required field."""
+    optional prompt, not a required field. Returns an aware UTC datetime
+    - sqlmodel>=0.0.45 rejects a naive datetime written to its now
+    tz-aware Feedback.occurred_at column."""
     if not s:
         return None
     try:
@@ -32,7 +34,7 @@ def parse_occurred_at(s: str | None) -> datetime | None:
     except ValueError:
         return None
     tz = templates_env.get_display_timezone()
-    return naive.replace(tzinfo=tz).astimezone(_utc.utc).replace(tzinfo=None)
+    return naive.replace(tzinfo=tz).astimezone(_utc.utc)
 
 
 def create_feedback(
