@@ -210,6 +210,21 @@ swapping drives):
 QUEUE3D_BACKUP_DIR_A=/mnt/queue3d-backup-a QUEUE3D_BACKUP_DIR_B=/mnt/queue3d-backup-b python3 backup.py
 ```
 
+Each database backup is a dated snapshot (`queue3d-YYYY-MM-DD.db`), kept
+for `backup.RETENTION_DAYS` (21 days) and pruned automatically after
+that - not a single fixed filename overwritten every run. That first
+version only ever gave two total recoverable backups across both drives
+(today's and yesterday's); per the person running this deployment,
+directly: the site is only visited roughly every two weeks, and "today's
+and yesterday's" leaves nothing to recover from if a problem isn't
+caught on the very next visit. Each drive still only gets written every
+other day (day-parity rotation, unchanged), so in practice each one
+holds about 10-11 of its own dated snapshots, the two combining to the
+full three-week window. The `archive/` mirror has no history of its
+own - it's always just a current copy, since archived job files are
+effectively append-only and there's nothing meaningful to roll back to
+there the way there is for the database.
+
 The real deployment runs this via a systemd timer
 (`deploy/queue3d-backup.service`/`.timer`, installed by
 `deploy/remote_install.sh`), not cron - `OnCalendar=*-*-* 03:00:00` with
@@ -222,9 +237,22 @@ not what you want on the real Pi.
 The admin dashboard shows the most recent successful backup's timestamp,
 flagged if it's more than 36 hours old (`backup.STALE_AFTER_HOURS`) - since
 there's no internet for an alert email, this is the glance-and-verify
-signal for whoever checks in. The System page's own "Disk space" section
+signal for whoever checks in. `/admin/backups` has the full picture: a
+live, on-disk stat of every retained snapshot per drive plus the archive
+mirror's current contents (`backup.manifest()`), and the full attempt
+history, success or failure (`backup.get_backup_history()`) - the
+dashboard's own single timestamp is a summary of that, not the whole
+story. The System page's own "Disk space" section
 (`sysmetrics.disk_mounts()`) separately shows live usage for both backup
 drives, reading the exact same two env vars.
+
+`restore_backup.py` is the other direction - a manual, interactive
+disaster-recovery script for putting a chosen snapshot back as the live
+database (and its drive's archive mirror back as the live archive/
+directory), for when the live data itself is gone or corrupted. Never
+run automatically (unlike `backup.py`, no systemd timer for it) - see
+`deploy/README.md`'s "Disaster recovery: restoring from backup" section
+for the real procedure, including stopping the service first.
 
 **A real deployment bug, not a hypothetical: those two env vars were only
 ever set on `queue3d-backup.service` (the unit that actually writes

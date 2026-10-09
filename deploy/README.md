@@ -551,6 +551,56 @@ data the new code already wrote. The last 5 pre-upgrade backups are kept
 automatically (oldest pruned first) so this option stays available
 without accumulating unboundedly on the Pi's limited storage.
 
+## Disaster recovery: restoring from backup
+
+The rollback above is for a *failed upgrade* - a different scenario
+from the one this section covers: the live data itself is gone or
+corrupted (a dead SD card, a failed drive, anything that leaves
+`/mnt/queue3d-data` empty or unusable), and you need to restore from
+one of the two backup USB drives (`backup.py`'s own rotating,
+~3-week-deep dated snapshots - see `app/README.md`'s "Backups"
+section). If the Pi itself is dead, redo steps 1-6 above on fresh
+hardware first (a normal install, same as the very first deploy) - once
+the app is installed and the drives are mounted, the steps below are
+identical either way.
+
+Check `/admin/backups` first if the app is still reachable at all - it
+shows exactly what each drive actually has before you commit to a
+date. If the app itself is down, `restore_backup.py`'s own interactive
+mode lists the same information.
+
+```bash
+sudo systemctl stop queue3d
+ssh <hostname-or-ip>.local
+cd /opt/queue3d/app
+sudo -u queue3d .venv/bin/python3 restore_backup.py
+```
+
+Run with no arguments for the guided flow: it lists every snapshot on
+both drives, asks which drive and which date (blank picks that drive's
+newest), shows exactly what it's about to overwrite, and requires
+typing `restore` to actually proceed - nothing is touched before that.
+Non-interactively (for scripting): `restore_backup.py --drive a --date
+2026-10-07 --yes`, or `--latest` instead of `--date` for that drive's
+newest.
+
+The current database is copied aside first automatically (to
+`queue3d.db.before-restore`, right next to the live one) in case the
+restore itself turns out to be the wrong call - that safety copy is
+overwritten by name on every run, so it only ever protects against
+undoing the single most recent restore, not a deeper history.
+
+```bash
+sudo chown -R queue3d:queue3d /mnt/queue3d-data
+sudo systemctl start queue3d
+sudo systemctl status queue3d
+```
+
+Same inherent tradeoff as the upgrade rollback above: restoring to a
+given snapshot loses anything submitted or changed after that
+snapshot's own date - up to about two days, given the day-parity
+rotation between drives, not "since the last upgrade" this time.
+
 ## What's NOT handled here yet
 
 - **Printer pairing** (`QUEUE3D_PRINTER_HOST`/`QUEUE3D_PRINTER_PORT`

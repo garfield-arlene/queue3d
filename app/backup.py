@@ -9,6 +9,20 @@ unattended - a scheme requiring a physical drive swap couldn't reliably
 keep pace with that. Both backup targets just stay plugged in; this
 script decides which one to write to each run.
 
+Each database backup is a dated snapshot (queue3d-YYYY-MM-DD.db), kept
+for RETENTION_DAYS and pruned after that - not a single fixed filename
+overwritten in place every run. That first version only ever gave two
+total recoverable backups across both drives (today's and yesterday's),
+which is nowhere near enough slack for a real deployment: per the
+person running this one, directly, the site is visited roughly every
+two weeks, and "something gets totally borked" needing to be caught on
+the very next visit, or the one after, is a real scenario a 1-day-deep
+backup can't help with at all. The archive/ mirror below stays a single
+current copy, not dated snapshots of its own - archived job files are
+effectively append-only (storage.py never edits a finished job's own
+files in place), so there's nothing meaningful to roll back to there
+the way there is for the database's own point-in-time state.
+
 Run manually to test, or see deploy/queue3d-backup.service/.timer for how
 the real deployment actually runs this (a systemd timer, daily at 3am,
 `Persistent=true` so a Pi that's off at that moment catches up on next
@@ -36,7 +50,7 @@ import os
 import shutil
 import sqlite3
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlmodel import Session, select
@@ -49,6 +63,12 @@ from storage import ARCHIVE_DIR
 # Backups run daily; this gives slack for cron timing/a slow run without
 # nagging over nothing.
 STALE_AFTER_HOURS = 36
+
+# How many days of dated database snapshots each drive keeps before
+# prune_old_backups deletes them - three weeks, a week of margin past
+# the real ~2-week on-site visit cadence this is actually sized for
+# (see this module's own docstring), not an arbitrary round number.
+RETENTION_DAYS = 21
 
 
 def get_last_successful_backup(session: Session) -> BackupRecord | None:
@@ -97,37 +117,57 @@ def manifest() -> list[dict]:
     live off disk - not what the history log above *claims* happened.
     The other half of the same README to-do item: a log entry says a
     backup succeeded, but the only way to really confirm that is to look
-    at the file it was supposed to produce.
+    at the files it was supposed to produce.
 
-    Each rotating target only ever holds the ONE most recent backup
-    written there - backup_database/backup_archive overwrite in place
-    every run, they don't accumulate - so this is a live snapshot of
-    that one file/directory per target, not a history of its own.
+    `db_snapshots` is every dated database backup currently retained at
+    that target (see backup_database/prune_old_backups/RETENTION_DAYS),
+    most recent first - this target's own real, current recovery depth,
+    not a single overwritten file. The archive/ mirror has no history of
+    its own (see this module's docstring for why), so it's still a
+    single current snapshot.
 
     Same reasoning as sysmetrics.disk_mounts(): a target that doesn't
     exist yet (nothing's ever backed up there, or - on the real
-    deployment - that drive is unplugged right now) reports
-    db_exists=False rather than raising."""
+    deployment - that drive is unplugged right now) reports an empty
+    db_snapshots list rather than raising."""
     result = []
     for label, target_dir in backup_targets().items():
         entry = {
             "label": label,
             "path": str(target_dir),
-            "db_exists": False,
-            "db_size": None,
-            "db_mtime": None,
+            "db_snapshots": [],
+            "db_total_size": 0,
             "archive_exists": False,
             "archive_file_count": None,
             "archive_size": None,
             "archive_mtime": None,
         }
         try:
-            stat = (target_dir / DB_PATH.name).stat()
-            entry["db_exists"] = True
-            entry["db_size"] = stat.st_size
-            entry["db_mtime"] = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+            snapshot_paths = sorted(target_dir.glob("queue3d-*.db"), reverse=True)
         except OSError:
-            pass
+            snapshot_paths = []
+        for path in snapshot_paths:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            # The date embedded in the filename, not file mtime - same
+            # reasoning as prune_old_backups: mtime is what a cloned/
+            # restored backup drive would reset, not what actually
+            # determines how old a given snapshot really is. A name that
+            # doesn't parse (shouldn't happen - this app is the only
+            # thing that ever writes here) is skipped rather than shown
+            # with a made-up date.
+            try:
+                snapshot_date = date.fromisoformat(path.stem.removeprefix("queue3d-"))
+            except ValueError:
+                continue
+            entry["db_snapshots"].append({
+                "name": path.name,
+                "size": size,
+                "date": snapshot_date,
+            })
+            entry["db_total_size"] += size
 
         archive_dir = target_dir / "archive"
         if archive_dir.is_dir():
@@ -164,12 +204,24 @@ def pick_target(today: date | None = None) -> tuple[str, Path]:
     return label, targets[label]
 
 
-def backup_database(dest_dir: Path):
+def _db_snapshot_name(d: date) -> str:
+    return f"queue3d-{d.isoformat()}.db"
+
+
+def backup_database(dest_dir: Path, today: date | None = None) -> Path:
     """Safe, consistent copy of the live SQLite DB using its own online
     backup API - NOT a raw file copy, which could grab a half-written page
-    if the app happens to be mid-write."""
+    if the app happens to be mid-write.
+
+    Writes a dated snapshot (queue3d-YYYY-MM-DD.db), never overwriting a
+    previous day's - see prune_old_backups for how old ones eventually
+    get cleaned up, and this module's own docstring for why a single
+    fixed filename per drive isn't enough. `today` is a parameter (like
+    pick_target's own), not always date.today() internally, so a caller
+    can pin it for a deterministic, reproducible snapshot name in tests."""
+    today = today or date.today()
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / DB_PATH.name
+    dest_path = dest_dir / _db_snapshot_name(today)
     source = sqlite3.connect(str(DB_PATH))
     try:
         dest = sqlite3.connect(str(dest_path))
@@ -180,6 +232,29 @@ def backup_database(dest_dir: Path):
     finally:
         source.close()
     return dest_path
+
+
+def prune_old_backups(dest_dir: Path, today: date | None = None, retention_days: int = RETENTION_DAYS) -> None:
+    """Deletes dated database snapshots in dest_dir older than
+    retention_days, keyed off the date embedded in each snapshot's own
+    filename - not file mtime, which copying a drive's contents
+    elsewhere (e.g. for the support bundle, or just cloning a USB stick)
+    could reset without actually changing how old the backup itself is.
+    A filename that doesn't parse as one of ours is left alone rather
+    than risking deleting something that isn't actually a backup
+    snapshot at all."""
+    today = today or date.today()
+    cutoff = today - timedelta(days=retention_days)
+    for path in dest_dir.glob("queue3d-*.db"):
+        try:
+            snapshot_date = date.fromisoformat(path.stem.removeprefix("queue3d-"))
+        except ValueError:
+            continue
+        if snapshot_date < cutoff:
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
 
 def backup_archive(dest_dir: Path):
@@ -197,7 +272,8 @@ def backup_archive(dest_dir: Path):
 
 def run_backup() -> BackupRecord:
     init_db()
-    label, target_dir = pick_target()
+    today = date.today()
+    label, target_dir = pick_target(today)
     started_at = datetime.now(timezone.utc)
     try:
         # Only enforced when this specific target came from an explicit
@@ -220,7 +296,8 @@ def run_backup() -> BackupRecord:
                 "mounted filesystem right now - refusing to write a backup "
                 "onto local disk instead of the real external drive."
             )
-        db_dest = backup_database(target_dir)
+        db_dest = backup_database(target_dir, today)
+        prune_old_backups(target_dir, today)
         archive_dest = backup_archive(target_dir)
         detail = f"db -> {db_dest}"
         if archive_dest:

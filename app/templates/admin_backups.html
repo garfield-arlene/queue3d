@@ -28,12 +28,14 @@
   <h3>Right now</h3>
   <p class="muted">
     Live, stat'd off disk this instant - not from the history log below.
-    Each drive only ever holds its one most recent backup; the daily
-    run overwrites the previous one in place rather than keeping every
-    day's copy separately.
+    Each drive keeps its own dated database snapshot from every day it
+    was backed up to, going back up to three weeks (alternating drives
+    daily, so each drive's own snapshots are roughly every other day);
+    older ones are cleaned up automatically. The archive mirror has no
+    history of its own - just the current contents, kept in sync.
   </p>
   <table>
-    <tr><th>Drive</th><th>Database file</th><th>Archive</th></tr>
+    <tr><th>Drive</th><th>Database snapshots</th><th>Archive</th></tr>
     {% for entry in manifest %}
       <tr>
         <td>
@@ -41,9 +43,22 @@
           <div class="muted">{{ entry.path }}</div>
         </td>
         <td>
-          {% if entry.db_exists %}
-            {{ entry.db_size | filesizeformat }}
-            <div class="muted">as of {{ entry.db_mtime | local_time('%Y-%m-%d %H:%M:%S %Z') }}</div>
+          {% if entry.db_snapshots %}
+            {{ entry.db_snapshots|length }} snapshot{{ "s" if entry.db_snapshots|length != 1 else "" }},
+            {{ entry.db_total_size | filesizeformat }} total
+            <div class="muted">
+              newest {{ entry.db_snapshots[0].date }}
+              {% if entry.db_snapshots|length > 1 %}
+                &middot; oldest {{ entry.db_snapshots[-1].date }}
+              {% endif %}
+            </div>
+            {% if entry.db_snapshots|length > 1 %}
+              <details class="tech-detail">
+                <summary>Show each snapshot</summary>
+                <pre>{% for snap in entry.db_snapshots %}{{ snap.name }} - {{ snap.size | filesizeformat }}
+{% endfor %}</pre>
+              </details>
+            {% endif %}
           {% else %}
             <span class="error">Not found</span>
           {% endif %}

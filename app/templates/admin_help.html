@@ -96,11 +96,12 @@
   <p>
     <a href="/admin/backups">Backups</a> shows two things, separately:
     a live check of what's actually sitting on each backup drive right
-    now (file size, when it was last written), and the full history of
-    every backup attempt ever logged, success or failure. The dashboard
-    only ever shows the single most recent successful one - this page
-    is for actually confirming backups are capturing what's expected,
-    not just trusting that one timestamp.
+    now - every retained dated database snapshot (about three weeks'
+    worth per drive) and the current archive mirror - and the full
+    history of every backup attempt ever logged, success or failure.
+    The dashboard only ever shows the single most recent successful
+    one - this page is for actually confirming backups are capturing
+    what's expected, not just trusting that one timestamp.
   </p>
 
   <h3 id="admin-feedback">Feedback</h3>

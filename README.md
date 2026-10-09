@@ -482,13 +482,29 @@ behind each.
   "Filters, on every job/log/user listing" for the full design.
 
 **Backups & recovery**
-- Let admins see a list of backups taken and a manifest of what's actually
-  in each one. Presentation undecided (a subpage, a pop-up list, something
-  else). Restoring an individual model doesn't need this - see "restore an
-  archived model" under Job review & feedback, which works directly off
-  `archive/` instead; this is about visibility into the database-level
-  backups themselves (see `backup.py`), for confirming they're actually
-  capturing what's expected.
+- Done - admins can see a list of backups taken and a manifest of what's
+  actually in each one, at `/admin/backups`: a live, on-disk stat of every
+  retained database snapshot and the archive mirror per drive, plus the
+  full attempt history (success or failure), not just the dashboard's
+  single most-recent timestamp. Restoring an individual model doesn't need
+  this - see "restore an archived model" under Job review & feedback, which
+  works directly off `archive/` instead; this is about visibility into the
+  database-level backups themselves (see `app/README.md`'s "Backups"
+  section), for confirming they're actually capturing what's expected.
+- Done, too - real retention depth, not just two total recoverable
+  backups. Each drive now keeps ~3 weeks of dated database snapshots
+  (pruned automatically past that), not a single filename overwritten
+  every run - a real design gap, not a hypothetical: this deployment is
+  only visited roughly every two weeks, and the original scheme left
+  nothing recoverable if a problem wasn't caught on the very next visit.
+  See `app/README.md`'s "Backups" section for the full account.
+- Done, too - an actual way to restore from one of those backups
+  (`restore_backup.py`), not just create/store/see them. A guided,
+  interactive disaster-recovery script, never run automatically: picks
+  a drive and date (or that drive's newest), shows exactly what it's
+  about to overwrite, and requires typing a confirmation phrase before
+  touching anything. See `deploy/README.md`'s "Disaster recovery:
+  restoring from backup" section for the real procedure.
 
 **Print options**
 - Done - a single color per job (not 1st/2nd/3rd preference, a more
