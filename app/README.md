@@ -200,29 +200,52 @@ archive/ directory (once it exists) to one of two rotating targets, chosen
 automatically by day parity. See the module docstring for the full
 reasoning - short version: submissions can happen anytime the location is
 open, not just when an admin is physically there, so backups run
-unattended on a daily cron rather than being tied to a visit.
+unattended on a schedule rather than being tied to a visit.
 
 Point it at the two backup USB mounts on the real Pi (both should stay
 permanently plugged in - the rotation is decided in software, not by
 swapping drives):
 
 ```bash
-QUEUE3D_BACKUP_DIR_A=/mnt/backup-a QUEUE3D_BACKUP_DIR_B=/mnt/backup-b python3 backup.py
+QUEUE3D_BACKUP_DIR_A=/mnt/queue3d-backup-a QUEUE3D_BACKUP_DIR_B=/mnt/queue3d-backup-b python3 backup.py
 ```
 
-Wire it into cron for real deployment, e.g. daily at 3am:
-
-```
-0 3 * * * cd /path/to/app && QUEUE3D_BACKUP_DIR_A=/mnt/backup-a QUEUE3D_BACKUP_DIR_B=/mnt/backup-b .venv/bin/python3 backup.py
-```
-
-Without those env vars it defaults to `data/backups/{a,b}` under this app
-directory - fine for local testing, not what you want on the real Pi.
+The real deployment runs this via a systemd timer
+(`deploy/queue3d-backup.service`/`.timer`, installed by
+`deploy/remote_install.sh`), not cron - `OnCalendar=*-*-* 03:00:00` with
+`Persistent=true`, so a Pi that happens to be off at 3am catches up on
+next boot instead of silently skipping to the next day. The service unit
+itself sets both env vars above; without them, `backup.py` defaults to
+`data/backups/{a,b}` under this app directory - fine for local testing,
+not what you want on the real Pi.
 
 The admin dashboard shows the most recent successful backup's timestamp,
 flagged if it's more than 36 hours old (`backup.STALE_AFTER_HOURS`) - since
 there's no internet for an alert email, this is the glance-and-verify
-signal for whoever checks in.
+signal for whoever checks in. The System page's own "Disk space" section
+(`sysmetrics.disk_mounts()`) separately shows live usage for both backup
+drives, reading the exact same two env vars.
+
+**A real deployment bug, not a hypothetical: those two env vars were only
+ever set on `queue3d-backup.service` (the unit that actually writes
+backups), never on `queue3d.service` (the main app, which is what the
+System page's own process actually runs as).** Reported directly from the
+real deployment: both USB backup drives physically present and mounted,
+every scheduled backup succeeding, yet the dashboard's own "Disk space"
+section showed both as "not available." Root cause: `queue3d.service`'s
+environment never had `QUEUE3D_BACKUP_DIR_A`/`QUEUE3D_BACKUP_DIR_B` at
+all, so `backup_targets()` (app/backup.py) silently fell back to this
+app's own `data/backups/{a,b}` - a path that's never actually created on
+the real deployment (nothing ever writes a backup there), so
+`shutil.disk_usage()` on it raises `FileNotFoundError`, which
+`disk_mounts()` correctly reports as "not available" - just for
+completely the wrong directory, with no connection to whether the real
+USB drives were actually fine. Fixed by adding the same two `Environment=`
+lines `queue3d-backup.service` already had to `queue3d.service` as well -
+the dashboard only ever needs read access for `shutil.disk_usage()`
+(`backup.py`'s own `ReadWritePaths` already covers the one process that
+actually writes there), so no sandboxing permissions needed to change,
+just the missing environment.
 
 ## The job queue
 

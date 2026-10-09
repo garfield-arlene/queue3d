@@ -4,12 +4,17 @@ one of two rotating backup targets, picked automatically by day parity.
 
 Why day-parity rotation onto two always-mounted drives, rather than a
 manually-swapped drive: users can submit anytime the location is open
-(self-service, see project memory queue3d-purpose), so backups run on a
-daily cron, unattended - a scheme requiring a physical drive swap couldn't
-reliably keep pace with that. Both backup targets just stay plugged in;
-this script decides which one to write to each run.
+(self-service, see project memory queue3d-purpose), so backups run daily,
+unattended - a scheme requiring a physical drive swap couldn't reliably
+keep pace with that. Both backup targets just stay plugged in; this
+script decides which one to write to each run.
 
-Run manually to test, or wire into cron for real deployment:
+Run manually to test, or see deploy/queue3d-backup.service/.timer for how
+the real deployment actually runs this (a systemd timer, daily at 3am,
+`Persistent=true` so a Pi that's off at that moment catches up on next
+boot - not cron, despite this module predating that unit and still
+showing a crontab-style example below for anyone wiring it in by hand
+instead):
     0 3 * * * /path/to/.venv/bin/python3 /path/to/app/backup.py
 
 Backup target paths come from env vars so the same script works in local
@@ -18,7 +23,13 @@ two USB backup mounts):
     QUEUE3D_BACKUP_DIR_A, QUEUE3D_BACKUP_DIR_B
 Defaults to data/backups/{a,b} under this app directory if unset, which is
 fine for local testing but NOT what you want on the real Pi - point these
-at the two backup USB mounts there.
+at the two backup USB mounts there (/mnt/queue3d-backup-a,
+/mnt/queue3d-backup-b - see deploy/README.md). A real incident, not a
+hypothetical: deploy/queue3d.service (the main app, not this script's own
+queue3d-backup.service) went without these for a while, which starved
+only the System page's own live "Disk space" view of them (this script's
+own scheduled runs were never affected, already having their own correct
+copies) - see app/README.md's "Backups" section for the full account.
 """
 
 import os

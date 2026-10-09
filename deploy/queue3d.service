@@ -18,6 +18,21 @@ RequiresMountsFor=/mnt/queue3d-data
 [Service]
 Type=simple
 Environment=QUEUE3D_DATA_DIR=/mnt/queue3d-data
+# Read-only, from this unit's own point of view - it only ever calls
+# shutil.disk_usage() on these (sysmetrics.disk_mounts(), the System
+# page's own "Disk space" section and the periodic low-space alerts),
+# never writes to them; the actual backup *writes* happen in the
+# separate queue3d-backup.service, which already sets these same two
+# vars for that reason. A real gap, not a hypothetical: without these,
+# this unit's own environment has no idea where the real backup drives
+# are mounted at all, so backup_targets() (app/backup.py) silently fell
+# back to a local, never-created directory under the app's own
+# WorkingDirectory - shutil.disk_usage() on that raises FileNotFoundError,
+# which disk_mounts() reports as "not available," regardless of whether
+# the real USB drives are actually present and mounted (they were, every
+# time this was reported - this unit just never looked at them).
+Environment=QUEUE3D_BACKUP_DIR_A=/mnt/queue3d-backup-a
+Environment=QUEUE3D_BACKUP_DIR_B=/mnt/queue3d-backup-b
 # A dedicated, unprivileged, no-login system account - not the admin's own
 # personal login. Per the deployment requirement that only one person logs
 # into the Pi at all: this account exists so the *service* has its own
