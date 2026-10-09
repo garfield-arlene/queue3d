@@ -1195,6 +1195,51 @@ on its base" case, but general-purpose: some rotation
 can resolve this class of failure when
 no amount of resizing or recentering-only ever could.
 
+**Third occurrence, much later: the "next concrete step" above actually
+built properly, with a real precondition check this time - and tested
+against the exact same `Flexi_Seal.stl` that made the earlier attempt
+worse.** `slicing/stl_to_3mf.py` gained `volume_centroid_xy()` (the
+signed-tetrahedron-decomposition formula) and `_is_watertight_consistent()`
+- a real edge-pairing check (every directed edge appears exactly once,
+with its exact reverse appearing exactly once elsewhere), not the
+"99.98% manifold... a small, real but minor defect, not a disqualifying
+one" judgment call the earlier attempt made. `center_vertices()` now
+tries the volume centroid first, falling back to the existing
+area-weighted surface centroid when the precondition isn't met.
+`app/static/preview.js` got the identical logic (`isWatertightConsistent()`/
+`volumeCentroidXY()`/`centroidXY()`) to stay in lockstep - verified by
+temporarily logging both implementations' output side by side in a real
+browser against the same uploaded model and confirming an exact
+floating-point match, on both a mesh where volume centroid applies and
+one where it falls back.
+
+Re-ran `Flexi_Seal.stl` itself through this new code, the actual
+question this needed answering: `_is_watertight_consistent()` correctly
+reports it as **not** meeting the precondition (the same real defect the
+earlier attempt chose to tolerate), so `volume_centroid_xy()` returns
+`None` and centering falls back to the unchanged, already-shipped
+surface centroid - confirmed by diffing the real pipeline's output
+against an unmodified checkout on the identical file: `xrel`, `yrel`,
+and `zrel` came out byte-for-byte identical (`0.18787388116763368`,
+`0.02045185087603743`, `1.0210084033613445`) either way. This specific
+regression can't recur - not because volume centroid is now smarter
+about it, but because the stricter precondition correctly declines to
+touch this mesh at all, same as it would have declined the first time
+if it had checked this rigorously then. The two repo test models
+(`testcube.stl`, `overhang_test.stl`) are both genuinely watertight and
+do take the new volume-centroid path, re-sliced successfully through
+the real pipeline with no regression.
+
+**Still true, and not something this closes:** the actual reason
+`Flexi_Seal.stl`-class models fail isn't centroid choice at all -
+`mbotmake`'s check measures where *infill* ends up post-slicing, which
+no pre-slicing centroid (surface or volume) can determine. Rotation
+remains the real fix for that failure class, exactly as the second
+occurrence above already concluded; this work only makes the centroid
+calculation itself more physically accurate where it's actually safe to
+use, and now provably can't make an already-marginal mesh worse by
+guessing wrong about its watertightness.
+
 ### What release does
 
 `jobs.release()` enforces the one-job-at-a-time rule, then calls
