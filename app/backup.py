@@ -65,6 +65,24 @@ def is_stale(record: BackupRecord | None) -> bool:
     age = datetime.now(timezone.utc) - record.started_at.replace(tzinfo=timezone.utc)
     return age.total_seconds() > STALE_AFTER_HOURS * 3600
 
+
+# How many past BackupRecord rows the admin-facing history page shows -
+# at one row/day (see pick_target's own day-parity rotation), this is
+# comfortably more than a school year, so in practice it's "all of
+# them" rather than a real cap.
+HISTORY_LIMIT = 400
+
+
+def get_backup_history(session: Session, limit: int = HISTORY_LIMIT) -> list[BackupRecord]:
+    """Every attempt (success or failure), most recent first - the full
+    log behind get_last_successful_backup's single most-recent summary.
+    See README.md's Backups & recovery to-do item this exists to close:
+    an admin should be able to see the actual history, not just trust a
+    single "last backup" timestamp on the dashboard."""
+    return session.exec(
+        select(BackupRecord).order_by(BackupRecord.started_at.desc()).limit(limit)
+    ).all()
+
 APP_DIR = Path(__file__).resolve().parent
 
 
@@ -72,6 +90,68 @@ def backup_targets():
     a = Path(os.environ.get("QUEUE3D_BACKUP_DIR_A", APP_DIR / "data" / "backups" / "a"))
     b = Path(os.environ.get("QUEUE3D_BACKUP_DIR_B", APP_DIR / "data" / "backups" / "b"))
     return {"a": a, "b": b}
+
+
+def manifest() -> list[dict]:
+    """What's actually sitting at each backup target right now, stat'd
+    live off disk - not what the history log above *claims* happened.
+    The other half of the same README to-do item: a log entry says a
+    backup succeeded, but the only way to really confirm that is to look
+    at the file it was supposed to produce.
+
+    Each rotating target only ever holds the ONE most recent backup
+    written there - backup_database/backup_archive overwrite in place
+    every run, they don't accumulate - so this is a live snapshot of
+    that one file/directory per target, not a history of its own.
+
+    Same reasoning as sysmetrics.disk_mounts(): a target that doesn't
+    exist yet (nothing's ever backed up there, or - on the real
+    deployment - that drive is unplugged right now) reports
+    db_exists=False rather than raising."""
+    result = []
+    for label, target_dir in backup_targets().items():
+        entry = {
+            "label": label,
+            "path": str(target_dir),
+            "db_exists": False,
+            "db_size": None,
+            "db_mtime": None,
+            "archive_exists": False,
+            "archive_file_count": None,
+            "archive_size": None,
+            "archive_mtime": None,
+        }
+        try:
+            stat = (target_dir / DB_PATH.name).stat()
+            entry["db_exists"] = True
+            entry["db_size"] = stat.st_size
+            entry["db_mtime"] = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+        except OSError:
+            pass
+
+        archive_dir = target_dir / "archive"
+        if archive_dir.is_dir():
+            entry["archive_exists"] = True
+            count = 0
+            total_size = 0
+            newest_mtime = 0.0
+            for path in archive_dir.rglob("*"):
+                if not path.is_file():
+                    continue
+                try:
+                    st = path.stat()
+                except OSError:
+                    continue
+                count += 1
+                total_size += st.st_size
+                newest_mtime = max(newest_mtime, st.st_mtime)
+            entry["archive_file_count"] = count
+            entry["archive_size"] = total_size
+            entry["archive_mtime"] = (
+                datetime.fromtimestamp(newest_mtime, tz=timezone.utc) if count else None
+            )
+        result.append(entry)
+    return result
 
 
 def pick_target(today: date | None = None) -> tuple[str, Path]:

@@ -10,6 +10,7 @@
   <a href="/admin/log">Activity log</a>
   <a href="/admin/settings">Settings</a>
   <a href="/admin/system">System</a>
+  <a href="/admin/backups">Backups</a>
   <a href="/admin/feedback">Feedback</a>
   <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
 {% endblock %}
@@ -25,6 +26,7 @@
     <li><a href="#admin-people">Users, admins, and colors</a></li>
     <li><a href="#admin-site">Site settings, history, and backups</a></li>
     <li><a href="#admin-system">The System page</a></li>
+    <li><a href="#admin-backups">Backups</a></li>
   </ul>
 
   <h3 id="admin-queue">Running the queue</h3>
@@ -74,7 +76,8 @@
     ever hit a slicing error or was referenced by a feedback report,
     for troubleshooting without needing internet access. Backup status
     (when the last one succeeded, and from which drive) is shown right
-    on the dashboard.
+    on the dashboard; <a href="/admin/backups">Backups</a> has the full
+    picture - see below.
   </p>
 
   <h3 id="admin-system">The System page</h3>
@@ -87,6 +90,17 @@
     bottleneck during a big multi-model upload or a lot of concurrent
     slicing, or just for keeping an eye on disk space and CPU
     temperature over time.
+  </p>
+
+  <h3 id="admin-backups">Backups</h3>
+  <p>
+    <a href="/admin/backups">Backups</a> shows two things, separately:
+    a live check of what's actually sitting on each backup drive right
+    now (file size, when it was last written), and the full history of
+    every backup attempt ever logged, success or failure. The dashboard
+    only ever shows the single most recent successful one - this page
+    is for actually confirming backups are capturing what's expected,
+    not just trusting that one timestamp.
   </p>
 
   <h3 id="admin-feedback">Feedback</h3>

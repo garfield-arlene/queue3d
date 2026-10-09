@@ -25,7 +25,8 @@ from auth import (
     require_admin,
     verify_secret,
 )
-from backup import get_last_successful_backup, is_stale
+from backup import get_backup_history, get_last_successful_backup, is_stale
+from backup import manifest as backup_manifest
 from db import get_session
 from feedback import create_feedback, list_feedback
 from filters import (
@@ -319,6 +320,31 @@ def system_refresh(
     (sysmetrics.SAMPLE_INTERVAL_S) - a faster poll would just re-render
     the identical numbers for nothing."""
     return templates.TemplateResponse(request, "_system_metrics.html", _system_context(admin))
+
+
+@router.get("/backups")
+def backups_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """See README.md's Backups & recovery to-do item: an admin-visible
+    way to confirm backups are actually capturing what's expected,
+    rather than trusting the dashboard's single "last backup" timestamp
+    alone. Two halves - `records` is the full attempt history
+    (backup.get_backup_history); `manifest` is a live stat of what's
+    actually sitting at each target right now (backup.manifest) - a log
+    entry claiming success and the real file on disk are two different
+    things to check."""
+    return templates.TemplateResponse(
+        request,
+        "admin_backups.html",
+        {
+            "admin": admin,
+            "records": get_backup_history(session),
+            "manifest": backup_manifest(),
+        },
+    )
 
 
 def _get_job_or_404(session: Session, job_id: int) -> Job:

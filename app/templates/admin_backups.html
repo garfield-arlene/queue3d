@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Backups - queue3d{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <a href="/admin/users">Users</a>
+  <a href="/admin/admins">Admins</a>
+  <a href="/admin/colors">Colors</a>
+  <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
+  <a href="/admin/log">Activity log</a>
+  <a href="/admin/settings">Settings</a>
+  <a href="/admin/system">System</a>
+  <a href="/admin/feedback">Feedback</a>
+  <a href="/admin/help#admin-backups">Help</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Backups</h2>
+  <p class="muted">
+    Two things worth checking separately: whether a backup attempt
+    actually happened (the history below), and whether the file it was
+    supposed to produce is really sitting there right now (the manifest
+    above it) - a logged "success" and a real, current file on disk are
+    two different claims, and this page shows both rather than asking
+    you to trust one on faith.
+  </p>
+
+  <h3>Right now</h3>
+  <p class="muted">
+    Live, stat'd off disk this instant - not from the history log below.
+    Each drive only ever holds its one most recent backup; the daily
+    run overwrites the previous one in place rather than keeping every
+    day's copy separately.
+  </p>
+  <table>
+    <tr><th>Drive</th><th>Database file</th><th>Archive</th></tr>
+    {% for entry in manifest %}
+      <tr>
+        <td>
+          Backup drive {{ entry.label | upper }}
+          <div class="muted">{{ entry.path }}</div>
+        </td>
+        <td>
+          {% if entry.db_exists %}
+            {{ entry.db_size | filesizeformat }}
+            <div class="muted">as of {{ entry.db_mtime | local_time('%Y-%m-%d %H:%M:%S %Z') }}</div>
+          {% else %}
+            <span class="error">Not found</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if entry.archive_exists and entry.archive_file_count %}
+            {{ entry.archive_file_count }} file{{ "s" if entry.archive_file_count != 1 else "" }},
+            {{ entry.archive_size | filesizeformat }}
+            <div class="muted">newest {{ entry.archive_mtime | local_time('%Y-%m-%d %H:%M:%S %Z') }}</div>
+          {% elif entry.archive_exists %}
+            <span class="muted">Empty (nothing archived yet)</span>
+          {% else %}
+            <span class="muted">Not found</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+
+  <h3>History</h3>
+  <p class="muted">
+    Every attempt, success or failure, most recent first.
+    {% if records|length >= 400 %}Showing the most recent 400 attempts.{% endif %}
+  </p>
+  {% if not records %}
+    <p class="muted">No backups have run yet.</p>
+  {% else %}
+    <table>
+      <tr><th>Started</th><th>Target</th><th>Result</th><th>Detail</th></tr>
+      {% for record in records %}
+        <tr>
+          <td class="muted">{{ record.started_at | local_time('%Y-%m-%d %H:%M:%S %Z') }}</td>
+          <td>Drive {{ record.target_label | upper }}</td>
+          <td>
+            {% if record.success %}
+              Succeeded
+            {% else %}
+              <span class="error">Failed</span>
+            {% endif %}
+          </td>
+          <td class="muted">{{ record.detail }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+{% endblock %}
