@@ -207,6 +207,23 @@ def dashboard(
     )
 
 
+@router.get("/dashboard/jobs-table")
+def dashboard_jobs_table(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+    filters: dict = Depends(job_filter_params),
+):
+    """Just the queue table, for the htmx polling in
+    templates/_admin_jobs_table.html to re-fetch while a job is still
+    printing - see that template for why polling stops on its own once
+    none are. Mirrors routers/user.py's identical dashboard_jobs_table,
+    same reasoning: takes the same filter query params as /dashboard so
+    a filtered view doesn't silently revert to unfiltered every poll."""
+    context = _dashboard_context(session, admin, filters=filters)
+    return templates.TemplateResponse(request, "_admin_jobs_table.html", context)
+
+
 @router.get("/printer-status")
 def printer_status_fragment(
     request: Request,
