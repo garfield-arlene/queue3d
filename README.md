@@ -501,8 +501,15 @@ behind each.
   themes beyond these remain open; everything must still ship as local
   static files, no CDN fonts or external image URLs (see "Deployment:
   zero internet access" - this app runs with none, ever).
-- A logo for the app, shown on every page next to the "queue3d" title in
-  the header (`templates/base.html`).
+- Done - a logo for the app, shown next to the "queue3d" title in the
+  header on every page, every theme. An original isometric cube with a
+  couple of print-layer lines etched into its two front faces - the
+  printed object itself, not a reference to anything queue-related,
+  since the wordmark right next to it already covers that. Inline SVG
+  rather than a static file like every other theme icon here, so it can
+  use `currentColor` and pick up whatever color the surrounding header
+  text already resolves to in each theme and mode, with no per-theme
+  override needed anywhere.
 
 **Printer** (hardware-dependent items on hold - the printer itself just
 shipped out to the real deployment site; `simulator/` stands in well

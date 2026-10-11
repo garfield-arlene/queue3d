@@ -378,6 +378,15 @@
     header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2rem; }
     header a { text-decoration: none; }
     h1 { font-size: 1.25rem; }
+    /* The app logo + "queue3d" title as one unit (see the <svg> markup's
+       own comment below for why the logo itself is inline rather than a
+       static file like every other theme icon here). One plain,
+       un-themed rule, not folded into the big per-theme sidebar-layout
+       selector list the way most header styling here is - this group
+       needs the exact same row layout in every theme, sidebar or not,
+       so there's nothing left for a per-theme override to actually do. */
+    .brand { display: flex; align-items: center; gap: 0.4rem; }
+    .app-logo { flex: 0 0 auto; width: 1.4rem; height: 1.4rem; }
     form { display: grid; gap: 0.75rem; max-width: 320px; }
     label { font-size: 0.9rem; opacity: 0.8; }
     input { font-size: 1rem; padding: 0.5rem; }
@@ -1128,8 +1137,11 @@
     }
 
     /* BMMS-specific: the school's own logo (app/static/bmms-logo.png),
-       shown near the "queue3d" title in the sidebar header - always in
-       the markup (see the <body> below), hidden by default the same way
+       shown above the "queue3d" title (and its own app-wide logo, see
+       .brand/.app-logo above) in the sidebar header - a second,
+       deployment-specific logo, not a replacement for the app's own.
+       Always in the markup (see the <body> below), hidden by default
+       the same way
        Fil's mascot images are, so nothing but CSS has to know which
        theme is active. align-self overrides the header's own
        align-items: stretch (every other header child is meant to fill
@@ -1224,7 +1236,39 @@
   <img src="/static/theme-winter-snowman.svg" alt="" aria-hidden="true" class="winter-snowman" title="Stay cozy!">
   <header>
     <img src="/static/bmms-logo.png" alt="Black Mountain Middle School Raiders logo" class="bmms-logo">
-    <h1>queue3d</h1>
+    <div class="brand">
+      <!-- The app's own logo - an isometric cube with a couple of print-
+           layer lines etched into its two front faces, standing for the
+           3D-printed object itself rather than anything queue-related
+           (the "queue3d" wordmark right next to it already says that
+           part). Inline SVG, not a static file loaded via <img src=...>
+           like every other theme icon in this app - deliberately, so
+           its `stroke="currentColor"` can actually inherit whatever
+           color the surrounding header text already resolves to in each
+           theme/mode (an <img>-embedded SVG is its own opaque document
+           and can't see the host page's CSS at all, so currentColor
+           inside one always resolves to plain black, never the theme's
+           real text color). That one property is what lets this same
+           markup show up correctly across all nine themes and both
+           modes with no per-theme color override anywhere, unlike every
+           other piece of theme art here. Pure line art (fill="none"),
+           not the filled/shaded look a real isometric icon would use,
+           for the same reason: a translucent fill reads differently
+           depending on what's behind it, which varies by theme, while a
+           single-color outline never has that problem. -->
+      <svg class="app-logo" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polygon points="50,6 92,29 50,52 8,29"/>
+        <polygon points="8,29 50,52 50,96 8,73"/>
+        <polygon points="50,52 92,29 92,73 50,96"/>
+        <g stroke-width="3">
+          <line x1="8" y1="43.5" x2="50" y2="66.5"/>
+          <line x1="8" y1="58" x2="50" y2="81"/>
+          <line x1="50" y1="66.5" x2="92" y2="43.5"/>
+          <line x1="50" y1="81" x2="92" y2="58"/>
+        </g>
+      </svg>
+      <h1>queue3d</h1>
+    </div>
     {% block nav %}{% endblock %}
   </header>
   <main>
