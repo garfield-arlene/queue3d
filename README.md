@@ -478,8 +478,9 @@ behind each.
 - A logo for the app, shown on every page next to the "queue3d" title in
   the header (`templates/base.html`).
 
-**Printer** (on hold for now - the printer itself just shipped out to
-the real deployment site)
+**Printer** (hardware-dependent items on hold - the printer itself just
+shipped out to the real deployment site; `simulator/` stands in well
+enough for everything else to keep moving without it)
 - ~~Correct the fallback time estimate using real completion history~~
   **Done** - see Features below ("A history-corrected time estimate")
   and `app/README.md`'s "Live print progress" section. What's still

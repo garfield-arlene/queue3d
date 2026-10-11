@@ -39,7 +39,9 @@ By default it listens on `0.0.0.0:9999` for the JSON-RPC socket (matches
 the real printer) and `0.0.0.0:80` for `/auth` (also matches the real
 printer - `pair_printer.py`'s HTTP calls hardcode port 80, same as the
 real client always has, so testing an unmodified pairing flow needs this
-on port 80, which needs root):
+on port 80, which needs root). The launcher notices this itself and
+offers to re-run with `sudo` right then, before ever hitting a
+permission error - say yes, or just start it with `sudo` yourself:
 
 ```bash
 sudo ./run_simulator.sh
@@ -47,11 +49,13 @@ sudo ./run_simulator.sh
 
 (Running `printer_simulator.py` directly, without the launcher, still
 works exactly as before, if you'd rather - see Options below for its
-full command-line flags either way.)
+full command-line flags either way. Binding port 80 without root fails
+with a clear message either way, not a raw traceback.)
 
-Then, same as against real hardware: set the printer's address on
-`/admin/settings` to this machine's own LAN address (port 9999, unless
-`--rpc-port` was changed), and run `pair_printer.py` once.
+Once it's up, it prints exactly what to put on `/admin/settings` -
+including the machine's real LAN IP, auto-detected (not the `0.0.0.0`
+it's actually bound to, which isn't a usable address to type in).
+Set that, then run `pair_printer.py` once.
 
 ## Options
 
@@ -94,7 +98,8 @@ upload with real CRC32 validation against what was actually received,
 live `current_process` progress through `final_heating` -> `printing` ->
 a terminal outcome (`complete`/`cancelled`/`error`, chosen by
 `--fail-at`), and a one-frame-per-second camera stream of a real,
-decodable (if not very interesting) JPEG.
+decodable JPEG clearly labeled "SIMULATED PHOTO" (`fake_frame.jpg`),
+so it's unmistakable as fake wherever a job's "Photo" link shows it.
 
 Not simulated: anything about the physical machine itself (temperature,
 filament, actual G-code execution), any RPC method the app doesn't

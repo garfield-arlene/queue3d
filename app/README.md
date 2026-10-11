@@ -1263,14 +1263,9 @@ redeploy the same way the rest of the app's own data does; see
 "Persistent printer connection" right below for why, and what that
 does and doesn't fix.
 
-Not yet built: live print progress/status polling (the printer's own
-`get_system_information` exists in the protocol but isn't wired up - see
-`printer.py`'s `_dispatch` for where unsolicited status notifications
-would need to be consumed) and detecting completion automatically -
-`mark_done`/`mark_failed` are still a manual admin action for now.
-
-**A countdown from the original estimate, in place of that missing live
-status - explicitly not a substitute for it.** While a job
+**A countdown from the original estimate, alongside the live progress
+built below - a fallback for whenever a live reading isn't
+available, not a substitute for it.** While a job
 is `printing`, both dashboards show a live "~N min remaining" (or "~N
 min over the estimate" once it runs past zero, rather than freezing at
 0:00 or hiding - the estimate is already known to run off in practice,
@@ -1285,17 +1280,21 @@ spans live inside `_jobs_table.html`, which htmx replaces wholesale on
 its own polling cycle, and a `<script>` tag doesn't re-run just because
 it got swapped back in.
 
-**Worth remembering:** `released_at`
-comes back from SQLite as a tzinfo-*naive* datetime, even though it's
-always written as UTC (`datetime.now(timezone.utc)`) - same gotcha
-`event.at.strftime(... 'UTC')` already works around elsewhere in this
-app. A plain `{{ eta.isoformat() }}` in the template would silently omit
-the UTC offset, and a browser's `new Date(...)` parses an offset-less
-ISO string as *local* time, which would put every countdown off by
-however many hours from UTC, on every viewer's own clock, in a way that
-would never show up testing from a system already set to UTC. A passing render test
-alone (attribute present, page loads) would not have caught this, and it
-was not caught by simply trying it against the real printer once.
+**A real bug, found by testing, not assumed:** `released_at` does *not*
+reliably come back tzinfo-*naive* from SQLite, despite an earlier
+version of this code (and this very paragraph) assuming it always
+would. It's always written as UTC (`datetime.now(timezone.utc)`), but
+whether it comes back naive or aware on a later read turned out to
+depend on exactly how/when it's fetched - `.isoformat()` on an aware
+value already appends its own `+00:00`, and the template appends a
+literal `"Z"` on top of that for the browser's `Date()` to parse,
+producing an invalid double-marked string (`...+00:00Z`) that silently
+parsed as `Invalid Date` - surfacing as a literal "~NaNm over the
+estimate" once an admin actually watched a live countdown tick.
+`printing_eta()` now strips tzinfo unconditionally before doing the
+arithmetic, the same defensive pattern `local_time()` already uses
+elsewhere in this app for this identical ambiguity, rather than
+trusting which way a given read happens to come back.
 
 ### Live print progress
 
