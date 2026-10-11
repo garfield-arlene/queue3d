@@ -463,24 +463,63 @@ class _MakerBotClient:
 # ---- one-time pairing (see pair_printer.py) ----
 
 
-def _auth_get(host, **params):
+def _auth_get(host, retry_timeout=0, retry_interval=3, on_retrying=None, **params):
+    """retry_timeout=0 (default) fails immediately on any connection-
+    level problem, same as this always did. A positive retry_timeout
+    instead tolerates the printer's HTTP /auth service not being up
+    yet - a real, confirmed condition (see this module's docstring and
+    project memory queue3d-app-progress), not a hypothetical: its
+    JSON-RPC port (9999) has been observed answering before its HTTP
+    one does, by close to a minute in one case, with /auth returning a
+    plain 503 the whole time it's still coming up. Retries on any
+    URLError - a connection refused/timeout (nothing listening yet) or
+    an HTTPError like that 503 (listening, but not ready) both mean
+    "try again shortly," not "pairing actually failed." Only ever used
+    for pair()'s very first call (see there) - every later call in the
+    same flow already proved the service reachable moments ago, so
+    retrying those too would just mask a real failure for longer."""
     qs = urllib.parse.urlencode(params)
     url = f"http://{host}/auth?{qs}"
-    try:
-        # host is the printer's own LAN address (the admin-configured
-        # Settings.printer_host, or its default - see this module's
-        # docstring/README), never web request input, so this isn't the
-        # SSRF-style risk bandit's urlopen check generically flags.
-        with urllib.request.urlopen(url, timeout=10) as resp:  # nosec B310
-            return json.load(resp)
-    except urllib.error.URLError as e:
-        raise PrinterError(f"Couldn't reach {url}: {e}") from e
+    deadline = time.time() + retry_timeout
+    attempt = 0
+    while True:
+        try:
+            # host is the printer's own LAN address (the admin-configured
+            # Settings.printer_host, or its default - see this module's
+            # docstring/README), never web request input, so this isn't the
+            # SSRF-style risk bandit's urlopen check generically flags.
+            with urllib.request.urlopen(url, timeout=10) as resp:  # nosec B310
+                return json.load(resp)
+        except urllib.error.URLError as e:
+            attempt += 1
+            if time.time() >= deadline:
+                raise PrinterError(f"Couldn't reach {url}: {e}") from e
+            if on_retrying and attempt == 1:
+                on_retrying()
+            time.sleep(retry_interval)
 
 
-def pair(host, on_waiting=None, poll_interval=2, timeout=120) -> str:
+def pair(host, on_waiting=None, on_connecting=None, poll_interval=2, timeout=120, connect_retry_timeout=90) -> str:
     """Run the pairing flow, returning a permanent access_token. Requires
-    someone at the printer to physically press its dial to accept."""
-    resp = _auth_get(host, response_type="code", client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
+    someone at the printer to physically press its dial to accept.
+
+    connect_retry_timeout: how long to keep retrying the very first
+    request if the printer's HTTP pairing service isn't up yet (see
+    _auth_get's own docstring for the real, confirmed condition this
+    covers - roughly a minute observed in practice, so 90s leaves real
+    margin without hanging drastically past a dead printer that's
+    genuinely unreachable for an unrelated reason). on_connecting fires
+    once, the first time a retry is actually needed - distinct from
+    on_waiting below, which is for the already-different "now waiting
+    on a human to press the dial" phase."""
+    resp = _auth_get(
+        host,
+        retry_timeout=connect_retry_timeout,
+        on_retrying=on_connecting,
+        response_type="code",
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+    )
     answer_code = resp["answer_code"]
 
     if on_waiting:
@@ -725,7 +764,7 @@ def connection_status() -> str:
 # self-terminating pattern as _jobs_table.html's slicing-progress
 # polling) until it's done.
 _pairing_lock = threading.Lock()
-_pairing_state: dict = {"in_progress": False, "error": None, "just_succeeded": False}
+_pairing_state: dict = {"in_progress": False, "error": None, "just_succeeded": False, "phase": None}
 
 
 def start_pairing() -> bool:
@@ -739,6 +778,15 @@ def start_pairing() -> bool:
         _pairing_state["in_progress"] = True
         _pairing_state["error"] = None
         _pairing_state["just_succeeded"] = False
+        _pairing_state["phase"] = None
+
+    def on_connecting():
+        with _pairing_lock:
+            _pairing_state["phase"] = "connecting"
+
+    def on_waiting():
+        with _pairing_lock:
+            _pairing_state["phase"] = "waiting_for_dial_press"
 
     def run():
         try:
@@ -755,7 +803,7 @@ def start_pairing() -> bool:
                     "No printer configured - set the printer's IP address "
                     "on the admin settings page (/admin/settings)."
                 )
-            token = pair(host)
+            token = pair(host, on_waiting=on_waiting, on_connecting=on_connecting)
             save_access_token(token)
             with _connection._lock:
                 _connection._last_error = "unknown"  # untested-but-fresh, not a known failure
@@ -780,11 +828,18 @@ def start_pairing() -> bool:
 
 
 def pairing_status() -> dict:
-    """{"in_progress": bool, "error": str | None, "just_succeeded": bool} -
-    error and just_succeeded are only ever set from the *previous*
-    completed attempt (both cleared the moment a new one starts), so a
-    failed attempt's message - or a successful one's - stays visible on
-    the dashboard until either it changes or someone tries again."""
+    """{"in_progress": bool, "error": str | None, "just_succeeded": bool,
+    "phase": str | None} - error and just_succeeded are only ever set
+    from the *previous* completed attempt (both cleared the moment a
+    new one starts), so a failed attempt's message - or a successful
+    one's - stays visible on the dashboard until either it changes or
+    someone tries again. phase is None until the first thing worth
+    distinguishing actually happens: "connecting" once a retry against
+    the printer's not-yet-up HTTP service is actually underway (see
+    pair()'s on_connecting - most attempts never see this at all, since
+    most of the time the service is already up), then
+    "waiting_for_dial_press" once a pairing code was obtained and it's
+    down to a human at the printer."""
     with _pairing_lock:
         return dict(_pairing_state)
 

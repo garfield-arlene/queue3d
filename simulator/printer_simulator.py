@@ -473,6 +473,16 @@ class AuthHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
+        if time.monotonic() < self.server.ready_at:
+            # Simulates the real, confirmed startup condition this
+            # endpoint exists to test against (see printer.py's
+            # _auth_get docstring): the printer's JSON-RPC port has
+            # been observed answering before its HTTP one does, with
+            # /auth returning exactly this - a plain 503 - the whole
+            # time it's still coming up.
+            self.send_response(503)
+            self.end_headers()
+            return
         qs = parse_qs(parsed.query)
         response_type = (qs.get("response_type") or [""])[0]
 
@@ -505,7 +515,8 @@ class AuthHandler(BaseHTTPRequestHandler):
 class AuthServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, addr, pairing: _PairingState, tokens: _TokenState):
+    def __init__(self, addr, pairing: _PairingState, tokens: _TokenState, startup_delay: float = 0):
+        self.ready_at = time.monotonic() + startup_delay
         super().__init__(addr, AuthHandler)
         self.pairing = pairing
         self.tokens = tokens
@@ -554,6 +565,7 @@ def main():
     parser.add_argument("--reject-pairing", action="store_true", help="always reject pairing instead of accepting it, to test that path")
     parser.add_argument("--fail-at", choices=["none", "error", "cancelled"], default="none", help="simulated outcome once print-duration elapses (default: none - completes successfully)")
     parser.add_argument("--reject-upload", action="store_true", help="always fail put_term, to test the app's upload-failure handling")
+    parser.add_argument("--auth-startup-delay", type=float, default=0, help="seconds /auth returns 503 before coming up, simulating the real printer's slow-HTTP-service-after-power-on condition (default: 0 - up immediately)")
     parser.add_argument("--machine-name", default="Simulated Replicator+", help="name reported by handshake")
     args = parser.parse_args()
 
@@ -573,7 +585,7 @@ def main():
 
     try:
         rpc_server = RPCServer((args.host, args.rpc_port), tokens, print_state, handshake_info, args.reject_upload)
-        auth_server = AuthServer((args.host, args.http_port), pairing, tokens)
+        auth_server = AuthServer((args.host, args.http_port), pairing, tokens, startup_delay=args.auth_startup_delay)
     except PermissionError:
         # The real failure mode found by testing: binding port 80 (the
         # default --http-port, matching the real printer) without root
@@ -612,6 +624,8 @@ def main():
     print(f"  JSON-RPC: {args.host}:{args.rpc_port}")
     print(f"  /auth:    {args.host}:{args.http_port}")
     print(f"  print duration: {args.print_duration:.0f}s, fail-at: {args.fail_at}, pairing-delay: {args.pairing_delay:.0f}s" + (" (rejecting)" if args.reject_pairing else ""))
+    if args.auth_startup_delay > 0:
+        print(f"  /auth will return 503 for the first {args.auth_startup_delay:.0f}s (simulating a slow printer boot)")
     print(f"Set {display_host}:{args.rpc_port} as the printer's address on /admin/settings, then run pair_printer.py. Ctrl-C to stop.")
 
     rpc_thread.start()

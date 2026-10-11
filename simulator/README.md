@@ -73,6 +73,12 @@ Set that, then run `pair_printer.py` once.
   failure detection the same way a real cancel/error would.
 - `--reject-upload` - always fail `put_term`, to test the app's
   upload-failure handling without a real CRC mismatch.
+- `--auth-startup-delay SECONDS` - `/auth` returns a plain 503 for this
+  long before coming up, simulating the real printer's confirmed
+  slow-HTTP-service-after-power-on condition (default 0 - up
+  immediately). Exercises `printer.pair()`'s own retry-through-it logic
+  (`connect_retry_timeout`) - see `app/printer.py`'s `_auth_get`
+  docstring.
 - `--rpc-port`, `--http-port`, `--host`, `--machine-name` - see
   `--help`.
 

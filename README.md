@@ -148,7 +148,11 @@ behind each.
   dashboard shows its connection state plainly, and a "Pair printer"
   button starts pairing right from there (with on-screen instructions to
   go press the printer's dial) instead of needing server/CLI access to
-  run `pair_printer.py` by hand.
+  run `pair_printer.py` by hand. Retries automatically, with its own
+  distinct on-screen message, if the printer's HTTP pairing service
+  isn't up yet - a real, confirmed condition right after power-on (see
+  below) that used to mean "try again in a minute," now handled without
+  a second attempt.
 - **A build-plate photo on every finished job** - marking a job done or
   failed automatically captures a photo from the printer's onboard camera
   (over the same persistent JSON-RPC connection) and links it from the
@@ -527,13 +531,14 @@ enough for everything else to keep moving without it)
   within one continuous run any more; and the printer's HTTP pairing
   service has been observed to take roughly a minute to come up after its
   network/JSON-RPC service already answers, so pairing immediately after
-  power-on can still fail on timing alone. Once during the investigation,
-  a pairing request was also accepted server-side (got as far as "waiting
-  for the dial press") but nothing ever rendered on the printer's screen
-  to press - resolved on its own on a later attempt, cause not confirmed,
-  possibly a UI-state issue from repeated pairing attempts in quick
-  succession. Pairing should retry through the slow-HTTP-service case
-  automatically.
+  power-on can still fail on timing alone - **now retried through
+  automatically** (see Features above), so this no longer means a second
+  manual attempt, just a short wait with its own on-screen message. Once
+  during the investigation, a pairing request was also accepted
+  server-side (got as far as "waiting for the dial press") but nothing
+  ever rendered on the printer's screen to press - resolved on its own
+  on a later attempt, cause not confirmed, possibly a UI-state issue
+  from repeated pairing attempts in quick succession.
 - Support for printer models/brands beyond the MakerBot Replicator+.
 - An admin UI for managing printers - add/remove a printer and pair it,
   all from within the app, rather than today's CLI-only, server-access-

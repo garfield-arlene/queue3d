@@ -1538,6 +1538,48 @@ correctly got the clear "needs re-pairing" `PrinterError` rather than a
 confusing raw exception, since that process's connection attempt was
 inherently a second session against an already-spent token.
 
+### Automatic retry through a slow printer boot
+
+**Why this exists - a real, observed timing issue, not theoretical:**
+the printer's TCP/JSON-RPC port (9999) has been seen answering well
+before its HTTP pairing service (port 80, `/auth`) is actually ready -
+in one case by close to a minute, with `/auth` returning a plain 503
+the whole time it's still coming up. Since the printer is normally
+power-cycled rather than left running continuously (see "Persistent
+printer connection" above), pairing right after power-on used to fail
+outright on timing alone, with nothing actually wrong - the only fix
+was trying again by hand a minute later.
+
+`printer._auth_get()` now accepts a `retry_timeout`, retrying on any
+`URLError` - a connection refused/timeout (nothing listening yet) or
+an HTTPError like that 503 (listening, but not ready) both mean "try
+again shortly," not "pairing actually failed." `pair()` applies this
+only to its very first request (`response_type=code`): by the time any
+later call in the same flow runs, the HTTP service already proved
+itself reachable moments ago, so retrying those too would just mask a
+real failure for longer, not help. Default window is 90s - comfortably
+past the roughly-a-minute observed in practice, without hanging
+drastically long against a printer that's genuinely unreachable for an
+unrelated reason.
+
+Surfaced distinctly, not silently: `pair()` takes an `on_connecting`
+callback (alongside the existing `on_waiting`, for the already-separate
+"now waiting on a human to press the dial" phase), fired once a retry
+is actually underway - `pair_printer.py` prints a plain message
+explaining this is normal; the admin dashboard's "Pair printer" flow
+(`start_pairing()`/`_pairing_state["phase"]`) shows its own distinct
+banner instead of the generic "press the dial" one, which would have
+been actively misleading before anything's even reached the printer's
+screen yet.
+
+Verified against `simulator/printer_simulator.py`'s `--auth-startup-delay`
+(built alongside this fix specifically to test it - see that script's
+own README): confirmed pairing retries through and succeeds once the
+simulated service comes up, gives up cleanly with a clear error once a
+shorter retry window is deliberately exceeded, and - unchanged from
+before - pairs immediately with no retry at all when the service is
+already up, the overwhelmingly common case.
+
 ### Detecting a print started outside the app entirely
 
 **A real incident, not a hypothetical:** after a bed-adhesion failure
