@@ -11,6 +11,13 @@ from printer import pair, printer_host, printer_port, save_access_token
 
 def main():
     host = printer_host()
+    if not host:
+        print(
+            "No printer configured - set the printer's IP address on the "
+            "admin settings page (/admin/settings) first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     port = printer_port()
     print(f"Pairing with printer at {host}:{port} ...")
 

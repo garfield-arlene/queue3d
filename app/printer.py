@@ -37,7 +37,6 @@ exactly what was confirmed to work without incident during the
 investigation (one connection, kept open, used repeatedly)."""
 
 import json
-import os
 import queue
 import socket
 import struct
@@ -49,7 +48,10 @@ import urllib.request
 import zlib
 from pathlib import Path
 
-from db import DATA_DIR
+from sqlmodel import Session
+
+from db import DATA_DIR, engine
+from models import Settings
 
 CLIENT_ID = "MakerWare"
 CLIENT_SECRET = "queue3d"  # arbitrary app identifier, not a real secret - the
@@ -59,12 +61,50 @@ CHUNK_SIZE = 50_000
 AUTH_PATH = DATA_DIR / "printer_auth.json"
 
 
-def printer_host() -> str:
-    return os.environ.get("QUEUE3D_PRINTER_HOST", "192.168.1.250")
+def _get_settings() -> Settings:
+    """A short-lived session of its own, not an injected one - unlike
+    most of this app's DB access, printer_host()/printer_port() below
+    get called from several contexts that have no FastAPI request (and
+    so no request-scoped Session) to hand them one at all:
+    pair_printer.py's own CLI, start_pairing()'s background thread,
+    _PersistentConnection's methods. Same pattern backup.py already
+    uses for the same reason. Falls back to Settings()'s own class
+    defaults if the row doesn't exist yet (fresh database, before
+    anything has ever written one) rather than failing - matches
+    cleanup_drafts.py's identical get_draft_expiry_days()."""
+    with Session(engine) as session:
+        settings = session.get(Settings, 1)
+        return settings if settings else Settings()
+
+
+def printer_host() -> str | None:
+    """The printer's LAN address on this deployment's network, admin-
+    configurable at /admin/settings - never falsy-empty in practice
+    (the Settings column itself defaults to the real deployment site's
+    own address, not a placeholder), but typed to allow None/empty
+    anyway so every caller still has to handle "not actually set" rather
+    than assuming a non-empty string always means a *correct* one.
+
+    Used to be a plain env var (QUEUE3D_PRINTER_HOST) with a hardcoded
+    fallback baked into this function - a real incident, not a
+    hypothetical, is why that changed: the hardcoded fallback was the
+    dev network's own printer address, which silently "worked" through
+    every round of dev/testing, right up until the actual deployment
+    site's real, different network needed a different one. The env var
+    had never been wired into deploy/queue3d.service either, so pairing
+    failed with no indication why until the source was edited directly
+    on the Pi as an on-the-spot workaround - an edit the *next* redeploy
+    would have silently reverted, since the app's own source gets
+    reinstalled fresh from git every time. A database row doesn't have
+    that problem at all: it survives every future redeploy/upgrade the
+    same way every other piece of this app's own data already does, and
+    - unlike an env var - an admin can change it from the dashboard with
+    no server access needed at all."""
+    return _get_settings().printer_host or None
 
 
 def printer_port() -> int:
-    return int(os.environ.get("QUEUE3D_PRINTER_PORT", "9999"))
+    return _get_settings().printer_port
 
 
 def load_access_token() -> str | None:
@@ -427,10 +467,10 @@ def _auth_get(host, **params):
     qs = urllib.parse.urlencode(params)
     url = f"http://{host}/auth?{qs}"
     try:
-        # host is the printer's own LAN address (QUEUE3D_PRINTER_HOST or
-        # the default - see this module's docstring/README), never web
-        # request input, so this isn't the SSRF-style risk bandit's
-        # urlopen check generically flags.
+        # host is the printer's own LAN address (the admin-configured
+        # Settings.printer_host, or its default - see this module's
+        # docstring/README), never web request input, so this isn't the
+        # SSRF-style risk bandit's urlopen check generically flags.
         with urllib.request.urlopen(url, timeout=10) as resp:  # nosec B310
             return json.load(resp)
     except urllib.error.URLError as e:
@@ -537,6 +577,12 @@ class _PersistentConnection:
                 self._client = None
 
         host = printer_host()
+        if not host:
+            self._last_error = "not_configured"
+            raise PrinterError(
+                "No printer configured - set the printer's IP address on "
+                "the admin settings page (/admin/settings)."
+            )
         port = printer_port()
         token = load_access_token()
         if not token:
@@ -652,17 +698,22 @@ def close_connection() -> None:
 
 def connection_status() -> str:
     """One of "connected" (currently holding a live, authenticated
-    connection), "needs_pairing" (never paired, or a connection just died
-    - whether during authentication itself or partway through a later
-    release/capture - leaving its now-spent token unable to reconnect),
-    "unreachable" (the last real attempt never even got as far as
-    authenticating - a network failure instead, so pairing again won't
-    help), or "unknown" (paired at some point, nothing's actually been
-    attempted against the printer yet this run, so whether that token
-    still works genuinely isn't known - see _PersistentConnection's
-    docstring for why this is never checked speculatively). For display
-    only (see admin_dashboard.html's printer status banner) - never
-    itself touches the network."""
+    connection), "not_configured" (no printer IP set on the admin
+    settings page at all - distinct from "unreachable" below, since
+    there's no address to even have failed to reach; see
+    printer_host()'s own docstring for the real incident this
+    distinction exists to make obvious instead of looking like a
+    generic network failure), "needs_pairing" (never paired, or a
+    connection just died - whether during authentication
+    itself or partway through a later release/capture - leaving its
+    now-spent token unable to reconnect), "unreachable" (the last real
+    attempt never even got as far as authenticating - a network failure
+    instead, so pairing again won't help), or "unknown" (paired at some
+    point, nothing's actually been attempted against the printer yet
+    this run, so whether that token still works genuinely isn't known -
+    see _PersistentConnection's docstring for why this is never checked
+    speculatively). For display only (see admin_dashboard.html's printer
+    status banner) - never itself touches the network."""
     return _connection.status()
 
 
@@ -691,7 +742,20 @@ def start_pairing() -> bool:
 
     def run():
         try:
-            token = pair(printer_host())
+            host = printer_host()
+            if not host:
+                # pair() takes a host string and has no idea whether one
+                # was ever actually configured - without this check it
+                # would just try to connect to the literal string "None"
+                # and fail with a confusing low-level error ("Couldn't
+                # reach http://None/auth...") instead of the same clear
+                # message _connected_client() already gives for the
+                # exact same underlying problem.
+                raise PrinterError(
+                    "No printer configured - set the printer's IP address "
+                    "on the admin settings page (/admin/settings)."
+                )
+            token = pair(host)
             save_access_token(token)
             with _connection._lock:
                 _connection._last_error = "unknown"  # untested-but-fresh, not a known failure

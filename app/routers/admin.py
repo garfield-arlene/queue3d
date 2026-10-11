@@ -1080,9 +1080,12 @@ def update_settings(
     draft_expiry_days: int = Form(...),
     display_timezone: str = Form(...),
     old_job_threshold_days: int = Form(...),
+    printer_host: str = Form(...),
+    printer_port: int = Form(...),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
+    printer_host = printer_host.strip()
     error = None
     if draft_expiry_days < 1:
         error = "Draft expiry must be at least 1 day."
@@ -1090,11 +1093,17 @@ def update_settings(
         error = "Not a real timezone choice."
     elif old_job_threshold_days < 1:
         error = "Old-job threshold must be at least 1 day."
+    elif not printer_host:
+        error = "Printer IP address can't be blank."
+    elif not (1 <= printer_port <= 65535):
+        error = "Printer port must be between 1 and 65535."
     else:
         settings = get_settings(session)
         settings.draft_expiry_days = draft_expiry_days
         settings.display_timezone = display_timezone
         settings.old_job_threshold_days = old_job_threshold_days
+        settings.printer_host = printer_host
+        settings.printer_port = printer_port
         session.add(settings)
         session.commit()
         # Takes effect immediately, for every viewer, not just after a

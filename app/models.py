@@ -221,6 +221,27 @@ class Settings(SQLModel, table=True):
     # already uses). Defaults to 30, matching the to-do list's own
     # example value.
     old_job_threshold_days: int = Field(default=30)
+    # The printer's own LAN address on this deployment's network -
+    # see printer.printer_host(). Admin-configurable (same
+    # /admin/settings page) rather than an env var: a wrong or missing
+    # address used to mean SSH access to the Pi to fix it, and a real
+    # incident, not a hypothetical, showed that's worse than it sounds -
+    # this app got deployed to a real site whose network needed a
+    # different address than the one dev/testing ever used, and nothing
+    # short of editing the source directly on the Pi (which the next
+    # redeploy would have silently reverted) could fix it in the
+    # moment. A database row survives every future redeploy/upgrade the
+    # same way the rest of the app's own data already does, with no
+    # server access needed to change it. Defaults to the real
+    # deployment site's own address, not a placeholder - the one
+    # thing this app actually needs to talk to on its one real network.
+    printer_host: str = Field(default="192.168.0.254")
+    # The printer's own JSON-RPC port - see printer.printer_port(). Not
+    # genuinely deployment-specific the way the host is (it's the fixed
+    # protocol port the firmware listens on, not something that varies
+    # by network), but kept admin-configurable alongside the host rather
+    # than a separate, inconsistent mechanism just for this one field.
+    printer_port: int = Field(default=9999)
 
 
 class Color(SQLModel, table=True):

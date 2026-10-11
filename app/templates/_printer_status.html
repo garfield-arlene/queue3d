@@ -14,6 +14,13 @@
   {% else %}
     {% if printer_status == "connected" %}
       <p class="muted">Printer connected.</p>
+    {% elif printer_status == "not_configured" %}
+      <p class="error">
+        No printer configured at all - not even a wrong address.
+        (Different from "couldn't reach the printer" below - there's no
+        address here to have even tried.) Set one on the
+        <a href="/admin/settings">settings page</a>.
+      </p>
     {% elif printer_status == "unreachable" %}
       <p class="error">
         Couldn't reach the printer on the last attempt - check that it's powered

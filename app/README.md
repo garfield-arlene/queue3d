@@ -1252,11 +1252,16 @@ mid-upload) leaves the job `approved` and shows the admin a clear error
 instead, rather than claiming a print started that may not have.
 
 Pairing (`pair_printer.py`, needs someone physically at the printer's
-dial) saves an access token to `data/printer_auth.json`; `QUEUE3D_PRINTER_HOST`/
-`QUEUE3D_PRINTER_PORT` env vars override the printer's address if it's
-not at the default. **Not actually a one-time-ever step, despite how
-that reads** - see "Persistent printer connection" right below for why,
-and what that does and doesn't fix.
+dial) saves an access token to `data/printer_auth.json`. The printer's
+own address (`Settings.printer_host`/`printer_port`, defaulting to
+this deployment's real printer at `192.168.0.254:9999`) is an
+admin-configurable setting at `/admin/settings`, not an env var or a
+hardcoded value - it lives in the database, so it survives every
+redeploy the same way the rest of the app's own data does; see
+`deploy/README.md`'s "Printer pairing" section for the full setup.
+**Not actually a one-time-ever step, despite how that reads** - see
+"Persistent printer connection" right below for why, and what that
+does and doesn't fix.
 
 Not yet built: live print progress/status polling (the printer's own
 `get_system_information` exists in the protocol but isn't wired up - see
@@ -4735,7 +4740,8 @@ calls (`app/printer.py`, `test-print/pairing.py`) trip bandit's B310
 check, which generically flags urlopen as an SSRF-style risk - a
 reasonable default, but a false positive here specifically, since `host`
 in both cases is always the printer's own LAN address from local
-config/env vars (`QUEUE3D_PRINTER_HOST`), never web request input. Marked
+config (an admin-configured setting, `Settings.printer_host`), never
+web request input. Marked
 `# nosec B310` right at each call, with a comment explaining why - not a
 blanket exemption for B310 everywhere, so a *new* urlopen call elsewhere
 in the codebase still fails the build until it's reviewed the same way.

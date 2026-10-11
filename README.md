@@ -434,7 +434,15 @@ behind each.
   history graphs of the last few minutes, in the style of a desktop
   system monitor.
 - **Built for offline deployment** - runs entirely on a local network with
-  no internet access required; no CDN dependencies.
+  no internet access required; no CDN dependencies. On the real hardware:
+  an mDNS hostname, the full `deploy.sh` install/upgrade flow with an
+  nginx+https reverse proxy in front of it, the pre-upgrade backup/
+  rollback safety net, the three-drive live-data + rotating-backup
+  storage setup with its own systemd timers, the printer's own address
+  as an admin-configurable setting (stored in the database, so it
+  survives every future redeploy rather than needing to be hardcoded or
+  re-entered), and the downloadable admin support bundle. Full account
+  of all of it in `deploy/README.md`.
 - **App version number** shown as a footer on every page, read from
   `app/VERSION` at startup - bump that file to change what's shown, no code
   change needed.
@@ -529,7 +537,7 @@ the real deployment site)
 - An admin UI for managing printers - add/remove a printer and pair it,
   all from within the app, rather than today's CLI-only, server-access-
   required flow (`pair_printer.py`, one `data/printer_auth.json`/
-  `QUEUE3D_PRINTER_HOST` implicitly assuming a single printer). Real
+  `Settings.printer_host` implicitly assuming a single printer). Real
   prerequisite, not just a UI wrapper around what exists: the data model
   and `jobs.release()`'s one-job-at-a-time rule are currently written
   for exactly one printer - this needs an actual multi-printer design
@@ -575,23 +583,15 @@ the real deployment site)
   person on a shared device may not want their name remembered on it
   even if others do. Defaults to enabled.
 
-**Deployment**
-- Done, on the real hardware: mDNS hostname, the full `deploy.sh`
-  install/upgrade flow with an nginx+https reverse proxy in front of it,
-  the pre-upgrade backup/rollback safety net, the three-drive live-data
-  + rotating-backup storage setup with its own systemd timers, and the
-  downloadable admin support bundle. Full account of all of it in
-  `deploy/README.md`. The one remaining open item there:
-  `QUEUE3D_PRINTER_HOST`/`QUEUE3D_PRINTER_PORT` as an `EnvironmentFile`,
-  only needed if the real network setup ever requires non-default
-  values.
-
 ## Project layout
 
 - `app/` - the web app (FastAPI). Start here for setup instructions.
 - `slicing/` - the STL -> print-ready-file pipeline, usable standalone.
 - `test-print/` - the printer network protocol client, usable standalone
   for testing connectivity without the rest of the app.
+- `simulator/` - a fake printer for dev work with no real hardware on
+  hand, standing in for the real MakerBot well enough to drive pairing,
+  uploads, and live status polling through their actual code paths.
 - `deploy/` - systemd unit + scripts for installing/upgrading on the real
   Raspberry Pi target with zero internet access at the deployment site.
 

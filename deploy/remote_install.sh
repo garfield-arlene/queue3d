@@ -142,6 +142,50 @@ else
   echo "No existing install found - nothing to back up (this is a fresh install)."
 fi
 
+# One-time carry-forward of the printer's address, for exactly the one
+# upgrade that moves printer_host from printer.py's own source (a plain
+# env var with a hardcoded fallback) to an admin-configurable database
+# setting (see models.Settings.printer_host's own comment, and
+# db.py's _migrate_to_9_1_0, for the full account) - a real incident on
+# this app's own real deployment is exactly why this exists: that
+# fallback had to be hand-edited directly on the Pi, outside git
+# entirely, to the real site's actual printer address, and the plain
+# rsync --delete below would otherwise silently discard that edit in
+# favor of a fresh checkout, leaving the printer unreachable again
+# until someone fixes it a second time. Calls the OLD, about-to-be-
+# overwritten printer.py's own printer_host() directly (via its still-
+# intact old venv) rather than trying to regex the source - whatever
+# that function actually resolves to right now is, by definition,
+# today's real working address, however it got set. Gated on the
+# database not already having a printer_host column: once this
+# migration has actually run once, the column exists for good, so this
+# never fires again on any later redeploy - critical, since re-running
+# it would otherwise blow away an admin's own later change made right
+# from the dashboard.
+if [ -f "$DATA_MOUNT/queue3d.db" ] && [ -f "$APP_DIR/app/printer.py" ] && [ -x "$APP_DIR/app/.venv/bin/python3" ]; then
+  HAS_PRINTER_HOST_COL="$(python3 -c "
+import sqlite3
+conn = sqlite3.connect('$DATA_MOUNT/queue3d.db')
+cols = [row[1] for row in conn.execute('PRAGMA table_info(settings)')]
+print('yes' if 'printer_host' in cols else 'no')
+" 2>/dev/null || echo no)"
+  if [ "$HAS_PRINTER_HOST_COL" = "no" ]; then
+    OLD_PRINTER_HOST="$("$APP_DIR/app/.venv/bin/python3" -c "
+import sys
+sys.path.insert(0, '$APP_DIR/app')
+try:
+    from printer import printer_host
+    print(printer_host() or '')
+except Exception:
+    print('')
+" 2>/dev/null || true)"
+    if [ -n "$OLD_PRINTER_HOST" ]; then
+      echo "Carrying forward the currently-configured printer address ($OLD_PRINTER_HOST) into the new admin setting..."
+      printf '%s' "$OLD_PRINTER_HOST" > "$DATA_MOUNT/.printer_host_migration_seed"
+    fi
+  fi
+fi
+
 echo "Syncing staged files into $APP_DIR..."
 mkdir -p "$APP_DIR/app" "$APP_DIR/slicing"
 # Two separate calls, not one rsync given both source dirs at once -

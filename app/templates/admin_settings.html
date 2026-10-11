@@ -55,6 +55,20 @@
       view - out of the way there, not shown in both places at once.
       Doesn't apply to a job that's already printing.
     </p>
+    <label>Printer IP address<br>
+      <input type="text" name="printer_host" value="{{ settings.printer_host }}" required>
+    </label>
+    <label>Printer port<br>
+      <input type="number" name="printer_port" min="1" max="65535" value="{{ settings.printer_port }}" required>
+    </label>
+    <p class="muted">
+      The printer's address on this network - defaults to this site's
+      real printer, change it only if that's actually different here
+      (a different deployment, the printer got a new DHCP lease, etc.).
+      Leave the port at <code>9999</code> unless the printer's own
+      JSON-RPC port is non-default. Takes effect on the next connection
+      attempt - doesn't drop one already in progress.
+    </p>
     <button type="submit">Save</button>
   </form>
 
