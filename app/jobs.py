@@ -461,10 +461,26 @@ def printing_eta(session: Session, job: Job) -> datetime | None:
     from that estimate, not a claim of real progress. Rendered
     client-side (see static/countdown.js) rather than recomputed "minutes
     remaining" server-side, so it keeps ticking between page loads/htmx
-    polls without needing a matching request each time."""
+    polls without needing a matching request each time.
+
+    `.replace(tzinfo=None)` on released_at - the same recurring
+    naive-vs-aware gotcha local_time() already defends against (see its
+    own docstring): found by testing, not assumed, that released_at can
+    come back tzinfo-*aware* here (depends on exactly how/when it's
+    read), while every caller of this function (_jobs_table.html,
+    admin_dashboard.html) appends a literal "Z" to the isoformat()
+    result for countdown.js to parse, assuming a bare, offset-less
+    string. An aware value's isoformat() already carries its own
+    "+00:00" suffix, so appending "Z" on top produced a string with two
+    conflicting offset markers at once ("...+00:00Z") - invalid enough
+    that the browser's own Date() silently parsed it as Invalid Date,
+    surfacing as a very literal "~NaNm over the estimate" in the UI.
+    Stripping tzinfo first, unconditionally, makes this work the same
+    regardless of which way released_at happens to come back."""
     if job.status != JobStatus.printing or job.released_at is None or job.duration_estimate_s is None:
         return None
-    return job.released_at + timedelta(seconds=corrected_duration_estimate_s(session, job))
+    released_at = job.released_at.replace(tzinfo=None)
+    return released_at + timedelta(seconds=corrected_duration_estimate_s(session, job))
 
 
 def print_progress(job: Job) -> dict | None:

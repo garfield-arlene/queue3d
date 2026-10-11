@@ -112,11 +112,14 @@
           <td class="muted">
             {% if row.eta %}
               {% include "_print_progress.html" %}
-              {# .isoformat() alone has no offset - these datetimes are
-                 always UTC but come back tzinfo-naive from SQLite (same
-                 as event.at elsewhere in this app), so the "Z" here is
-                 required, not decorative: without it, the browser's
-                 Date() would parse this as *local* time instead. #}
+              {# .isoformat() alone has no offset - jobs.printing_eta()
+                 guarantees a tzinfo-naive UTC value specifically so
+                 this holds (found by testing that released_at itself
+                 isn't reliably naive on its own - see that function's
+                 own docstring for the real bug this fixed), so the "Z"
+                 here is required, not decorative: without it, the
+                 browser's Date() would parse this as *local* time
+                 instead. #}
               <span data-countdown-eta="{{ row.eta.isoformat() }}Z"></span>
             {% elif row.duration_display %}
               {{ row.duration_display }}
