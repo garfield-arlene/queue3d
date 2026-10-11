@@ -2635,6 +2635,55 @@ the coat/hat color varying between them - the same level of abstraction
 as Fil (a stick figure) or the turkey/snowman mascots, not an attempt at
 a realistic or specific-looking person.
 
+### The "Veterans Day" theme - a real photo instead of original artwork, and why that's fine here
+
+**Why this exists:** the same shared sidebar/full-width/bordered-section
+layout again, seasonal like Halloween/Thanksgiving/Winter but with a
+deliberately much narrower window (November 8-14, a flat seven days
+centered on the holiday's own fixed November 11th date) - "available
+during the week of the holiday," not weeks on either side of it the way
+the other three seasonal themes are.
+
+**Unlike every other seasonal theme here, the background behind the
+sidebar (`theme-veterans-poster.jpg`) isn't original artwork - it's the
+real official VA.gov Veterans Day poster**, used directly: a bugler
+silhouette against a dusk sky, the U.S. flag, every branch of the Armed
+Forces named down the side, both government seals. A federal government
+work like this is public domain under 17 U.S.C. § 105 - created by a
+federal employee as part of their official duties - which is exactly why
+using it directly, unlike a trademarked or copyrighted character, is
+fine; it's the inverse of the Fil-instead-of-a-licensed-character
+reasoning every other mascot/icon in this app otherwise follows, not an
+exception to it. The only edit made to the poster itself: its date text
+("November 11, 2023") painted over with the surrounding near-black
+background color, located by sampling actual pixel values rather than
+guessing at coordinates, so the poster reads as undated and the paint-
+over leaves no visible seam.
+
+**`background-size: contain`, not `cover` like every other photo/art
+sidebar background in this app** - the whole poster stays visible rather
+than getting cropped to fill a sidebar much narrower than the poster's
+own aspect ratio. That leaves empty space on one axis in a typical tall
+sidebar, which `background-repeat: no-repeat` has to guard against
+explicitly (a background image tiles into unused space by default under
+`contain`; `cover` never faces this because it never leaves any). The
+poster also needs a notably stronger scrim than this app's other photo/
+art sidebar backgrounds, which are already dark almost everywhere - this
+one has a genuinely bright sky band across its own top third, right
+where the page title and first nav links land.
+
+**The shared "Log out" button (every sidebar theme has one) needed its
+own override here, found by testing, not assumed:** every other sidebar
+theme's Log out button uses the shared `var(--section-title-bg)` red
+fill its own section titles use, which for this poster is close to the
+red in its own flag stripes - and because `contain` sizing means the
+poster can still reach a short nav list's last item rather than sit
+entirely above it, a solid-red button with no border was able to land on
+top of those stripes and blend into them. Fixed with this theme's own
+override: a navy fill plus a gold border, matching the poster's own gold
+accents, which reads clearly against the red stripes, the poster's sky,
+and the plain navy backdrop alike - not just one of them.
+
 ### Login rate-limiting
 
 **Why this exists:** PINs are short by design (low

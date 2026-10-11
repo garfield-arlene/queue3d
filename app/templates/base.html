@@ -330,6 +330,42 @@
       --section-title-bg: #a8291c;
       --section-title-text: #fdf6ec;
     }
+
+    /* Veterans Day theme (see themes.py) - same shared sidebar/full-
+       width/bordered-section layout, seasonal like Halloween/
+       Thanksgiving/Winter but with a much narrower window (see
+       SEASONAL_THEMES there). --sidebar-bg is a fixed Old-Glory navy in
+       both modes, same "fixed identity, the real look comes from the
+       background image" reasoning as the other seasonal themes.
+       --section-title-bg is Old-Glory red with a warm cream text - the
+       same warm-accent-against-cool-navy pairing Winter's own berry red
+       uses, not a coincidence: both posters share a cool navy base. */
+    [data-theme="veterans"] {
+      color-scheme: light;
+      --bg: #f7f3e8;
+      --text: #1c2b4a;
+      --error: #c0392b;
+      --border: #e3dcc8;
+      --border-strong: #cfc4a3;
+      --detail-bg: #8881;
+      --sidebar-bg: #1c2b4a;
+      --content-bg: #fffdf8;
+      --section-title-bg: #a8291c;
+      --section-title-text: #fdf6ec;
+    }
+    [data-theme="veterans"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #0c1120;
+      --text: #ecebe2;
+      --error: #ff6b6b;
+      --border: #2a3450;
+      --border-strong: #3c4a6e;
+      --sidebar-bg: #1c2b4a;
+      --content-bg: #141c30;
+      --section-title-bg: #a8291c;
+      --section-title-text: #fdf6ec;
+    }
+
     body {
       background: var(--bg);
       color: var(--text);
@@ -530,7 +566,8 @@
     [data-theme="bmms"] body,
     [data-theme="halloween"] body,
     [data-theme="thanksgiving"] body,
-    [data-theme="winter"] body {
+    [data-theme="winter"] body,
+    [data-theme="veterans"] body {
       max-width: none;
       margin: 0;
       padding: 0;
@@ -544,7 +581,8 @@
     [data-theme="bmms"] header,
     [data-theme="halloween"] header,
     [data-theme="thanksgiving"] header,
-    [data-theme="winter"] header {
+    [data-theme="winter"] header,
+    [data-theme="veterans"] header {
       flex: 0 0 220px;
       box-sizing: border-box;
       flex-direction: column;
@@ -567,7 +605,8 @@
     [data-theme="bmms"] header h1,
     [data-theme="halloween"] header h1,
     [data-theme="thanksgiving"] header h1,
-    [data-theme="winter"] header h1 {
+    [data-theme="winter"] header h1,
+    [data-theme="veterans"] header h1 {
       margin: 0 0 1rem 0.25rem;
     }
     /* Every page's own nav block is a flat list of <a> tags (plus one
@@ -587,7 +626,9 @@
     [data-theme="thanksgiving"] header a,
     [data-theme="thanksgiving"] header form,
     [data-theme="winter"] header a,
-    [data-theme="winter"] header form {
+    [data-theme="winter"] header form,
+    [data-theme="veterans"] header a,
+    [data-theme="veterans"] header form {
       display: block;
     }
     [data-theme="console"] header a,
@@ -596,7 +637,8 @@
     [data-theme="bmms"] header a,
     [data-theme="halloween"] header a,
     [data-theme="thanksgiving"] header a,
-    [data-theme="winter"] header a {
+    [data-theme="winter"] header a,
+    [data-theme="veterans"] header a {
       padding: 0.6rem 0.75rem;
       border-radius: 4px;
       color: var(--text);
@@ -607,7 +649,8 @@
     [data-theme="bmms"] header a:hover,
     [data-theme="halloween"] header a:hover,
     [data-theme="thanksgiving"] header a:hover,
-    [data-theme="winter"] header a:hover {
+    [data-theme="winter"] header a:hover,
+    [data-theme="veterans"] header a:hover {
       background: var(--border);
     }
     [data-theme="console"] header form,
@@ -616,7 +659,8 @@
     [data-theme="bmms"] header form,
     [data-theme="halloween"] header form,
     [data-theme="thanksgiving"] header form,
-    [data-theme="winter"] header form {
+    [data-theme="winter"] header form,
+    [data-theme="veterans"] header form {
       margin-top: 0.5rem;
       padding-top: 0.75rem;
       border-top: 1px solid var(--border);
@@ -627,7 +671,8 @@
     [data-theme="bmms"] header form button,
     [data-theme="halloween"] header form button,
     [data-theme="thanksgiving"] header form button,
-    [data-theme="winter"] header form button {
+    [data-theme="winter"] header form button,
+    [data-theme="veterans"] header form button {
       width: 100%;
     }
     [data-theme="console"] main,
@@ -636,7 +681,8 @@
     [data-theme="bmms"] main,
     [data-theme="halloween"] main,
     [data-theme="thanksgiving"] main,
-    [data-theme="winter"] main {
+    [data-theme="winter"] main,
+    [data-theme="veterans"] main {
       flex: 1 1 auto;
       min-width: 0;
       padding: 2rem 2.5rem;
@@ -658,7 +704,8 @@
     [data-theme="bmms"] .theme-section,
     [data-theme="halloween"] .theme-section,
     [data-theme="thanksgiving"] .theme-section,
-    [data-theme="winter"] .theme-section {
+    [data-theme="winter"] .theme-section,
+    [data-theme="veterans"] .theme-section {
       border: 1px solid var(--border-strong);
       border-radius: 6px;
       margin-bottom: 1.5rem;
@@ -670,7 +717,8 @@
     [data-theme="bmms"] .theme-section > h3,
     [data-theme="halloween"] .theme-section > h3,
     [data-theme="thanksgiving"] .theme-section > h3,
-    [data-theme="winter"] .theme-section > h3 {
+    [data-theme="winter"] .theme-section > h3,
+    [data-theme="veterans"] .theme-section > h3 {
       margin: 0;
       padding: 0.6rem 1rem;
       background: var(--section-title-bg);
@@ -682,7 +730,8 @@
     [data-theme="bmms"] .theme-section > :not(h3),
     [data-theme="halloween"] .theme-section > :not(h3),
     [data-theme="thanksgiving"] .theme-section > :not(h3),
-    [data-theme="winter"] .theme-section > :not(h3) {
+    [data-theme="winter"] .theme-section > :not(h3),
+    [data-theme="veterans"] .theme-section > :not(h3) {
       margin-left: 1rem;
       margin-right: 1rem;
     }
@@ -692,7 +741,8 @@
     [data-theme="bmms"] .theme-section > *:last-child,
     [data-theme="halloween"] .theme-section > *:last-child,
     [data-theme="thanksgiving"] .theme-section > *:last-child,
-    [data-theme="winter"] .theme-section > *:last-child {
+    [data-theme="winter"] .theme-section > *:last-child,
+    [data-theme="veterans"] .theme-section > *:last-child {
       margin-bottom: 1rem;
     }
     [data-theme="console"] .theme-section > table,
@@ -701,7 +751,8 @@
     [data-theme="bmms"] .theme-section > table,
     [data-theme="halloween"] .theme-section > table,
     [data-theme="thanksgiving"] .theme-section > table,
-    [data-theme="winter"] .theme-section > table {
+    [data-theme="winter"] .theme-section > table,
+    [data-theme="veterans"] .theme-section > table {
       /* The one child that should reach the section's own edges rather
          than sit inset like everything else - a table's own header row
          already reads as a boundary, and insetting it just wastes width
@@ -858,6 +909,76 @@
       background: var(--section-title-bg);
       color: var(--section-title-text);
       border: none;
+    }
+
+    /* Veterans Day-specific: the sidebar's background poster - a real
+       photo this time, not original artwork like every other seasonal
+       theme here (see theme-veterans-poster.jpg's own note in
+       themes.py for why this one's different). `contain`, not `cover`
+       like every other photo/art-backed sidebar theme in this app -
+       per the user, "resize it to fit" after two earlier from-scratch
+       attempts - so the whole poster stays visible rather than getting
+       cropped to fill a much narrower-than-the-source-image sidebar
+       the way `cover` would. `background-repeat: no-repeat` is load-
+       bearing, not decorative, specifically because of that: `contain`
+       can leave empty space on one axis (here, vertical, since this
+       sidebar is taller relative to its width than the poster's own
+       aspect ratio), and a background image tiles into that empty
+       space by default unless told not to - `cover` never needed this
+       rule because it never leaves empty space to tile into.
+       `background-position: center bottom`, not `center top` - the
+       sidebar's own nav content (title, links, Log out form) sits in
+       normal document flow at the TOP of a full 100vh-tall header, not
+       centered or pinned to the bottom, so anchoring the image to the
+       bottom instead keeps it clear of that nav content entirely on any
+       normal-height viewport, rather than sitting directly behind it.
+       Per the user, after seeing the image top-anchored: it was hard to
+       see the poster itself, and it made the nav links hard to read -
+       both were really the same cause, the poster's own bright sky band
+       landing right where the nav text does. Whatever space the
+       contained image doesn't reach falls through to the shared header
+       rule's own solid var(--sidebar-bg) beneath it - now the top of the
+       sidebar instead of the bottom, which is also exactly where the
+       nav content already expects a plain, uncluttered background.
+       Only a light scrim needed now, just enough to protect a short
+       viewport where the nav content's own bottom edge (the Log out
+       button) can still reach down into the image - unlike before, this
+       isn't covering the image's own brightest band by default anymore,
+       so a heavy scrim here would just needlessly dull the poster. */
+    [data-theme="veterans"] header {
+      background-image: linear-gradient(rgba(6, 10, 20, 0.1), rgba(6, 10, 20, 0.1)), url("/static/theme-veterans-poster.jpg");
+      background-size: contain;
+      background-position: center bottom;
+      background-repeat: no-repeat;
+    }
+    [data-theme="veterans"][data-mode="dark"] header {
+      background-image: linear-gradient(rgba(4, 6, 12, 0.3), rgba(4, 6, 12, 0.3)), url("/static/theme-veterans-poster.jpg");
+    }
+    [data-theme="veterans"] header,
+    [data-theme="veterans"] header a {
+      color: #f7f3e8;
+    }
+    [data-theme="veterans"] header a:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+    [data-theme="veterans"] header form button {
+      /* Not the shared var(--section-title-bg) red every other sidebar
+         theme's own Log out button uses - found by testing, not
+         assumed: this poster has real red flag stripes in it, and the
+         header rule above bottom-anchors the poster specifically so it
+         normally stays clear of the nav content at the top of the
+         sidebar - but on a short viewport, or an account with a longer
+         nav list, this button (the nav content's own last item) can
+         still reach down far enough to land on the stripe band. A
+         solid-red button with no border sitting on top of solid-red
+         stripes behind it genuinely disappeared into them. Navy fill
+         plus a gold border instead, matching the poster's own gold
+         accents, reads clearly whether it lands on the red stripes, the
+         poster's sky, or the plain navy backdrop above the image -
+         not just one of them. */
+      background: var(--sidebar-bg);
+      color: #fdf6ec;
+      border: 2px solid #f0c04c;
     }
 
     /* Fil-specific: the two mascot images (see the <body> markup below
@@ -1044,7 +1165,7 @@
     // replace themselves via hx-swap), not just on initial load, so a
     // background refresh can't silently leave a swapped-in section
     // unboxed.
-    const SECTION_THEMES = ["console", "savanna", "fil", "bmms", "halloween", "thanksgiving", "winter"];
+    const SECTION_THEMES = ["console", "savanna", "fil", "bmms", "halloween", "thanksgiving", "winter", "veterans"];
     function applyThemeSections() {
       if (!SECTION_THEMES.includes(document.documentElement.getAttribute("data-theme"))) return;
       // A descendant selector, not just direct children of <main> - some
