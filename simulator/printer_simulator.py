@@ -50,28 +50,28 @@ run pair_printer.py once.
 
 import argparse
 import json
+import socket
 import socketserver
 import struct
+import subprocess
+import sys
 import threading
 import time
 import uuid
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-# A real, verified-decodable JPEG, not a hand-rolled placeholder - a
-# 2x2 all-gray image generated with `convert -size 2x2 xc:gray` and
-# confirmed to actually decode before being inlined here. Good enough
-# for jobs.mark_finished's capture_photo() to have real, openable JPEG
-# bytes to write to the archive during a simulated run, without
-# shipping an image library dependency just for this one dev tool.
-_FAKE_JPEG = bytes.fromhex(
-    "ffd8ffe000104a46494600010100000100010000ffdb004300030202020202030202"
-    "020303030304060404040404080606050609080a0a090809090a0c0f0c0a0b0e0b09"
-    "090d110d0e0f101011100a0c12131210130f101010ffc0000b080002000201011100"
-    "ffc40014000100000000000000000000000000000003ffc400141001000000000000"
-    "00000000000000000000ffda0008010100003f0027ffd9"
-)
+# A real, decodable 320x240 JPEG, labeled so it's unmistakably not a
+# real capture when it shows up on a job's "Photo" link - found by
+# testing that an earlier, technically-valid-but-degenerate 2x2 JPEG
+# here rendered unusably small/broken-looking in a real browser, not
+# the uniform gray swatch it should have been. Shipped as a real file
+# (fake_frame.jpg, next to this script) rather than inlined as a hex
+# literal - a few KB of image bytes has no business bloating the
+# source as a giant hex string.
+_FAKE_JPEG = (Path(__file__).resolve().parent / "fake_frame.jpg").read_bytes()
 
 
 class _TokenState:
@@ -441,7 +441,7 @@ class RPCHandler(socketserver.BaseRequestHandler):
         stream; there's no true one-shot capture)."""
         while not self._camera_stop.is_set():
             try:
-                header = struct.pack(">IIII", len(_FAKE_JPEG), 1, 1, 0)
+                header = struct.pack(">IIII", len(_FAKE_JPEG), 320, 240, 0)
                 notification = json.dumps({"method": "camera_frame"}).encode("utf-8")
                 self.request.sendall(notification + header + _FAKE_JPEG)
             except OSError:
@@ -511,6 +511,39 @@ class AuthServer(ThreadingHTTPServer):
         self.tokens = tokens
 
 
+def _detect_lan_ip() -> str | None:
+    """Best-effort LAN IP for the "set this on /admin/settings" message
+    below - binding "0.0.0.0" (every interface) is correct and
+    necessary, but not something to actually type into that setting,
+    and making the person go look it up separately (`ip addr`,
+    `hostname -I`, the router's own DHCP page) defeats most of the
+    point of printing this message at all. The UDP "connect" trick:
+    connecting a UDP socket never actually sends a packet (UDP is
+    connectionless) - it only asks the OS which local address would be
+    used to route to that destination, which works even fully offline,
+    as long as some default route exists at all (true on any ordinary
+    LAN-connected machine, same as deploy/remote_install.sh's own
+    `hostname -I` detection assumes for the real Pi). Falls back to
+    parsing `hostname -I` directly (not available on every OS, but
+    worth trying) if that somehow doesn't work; None if neither does,
+    so the caller can fall back to just showing the literal bind
+    address instead."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except OSError:
+        pass
+    try:
+        result = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2)
+        first = result.stdout.split()
+        if first:
+            return first[0]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--host", default="0.0.0.0", help="bind address (default: all interfaces)")
@@ -538,17 +571,48 @@ def main():
         "serial_number": "SIMULATOR-0001",
     }
 
-    rpc_server = RPCServer((args.host, args.rpc_port), tokens, print_state, handshake_info, args.reject_upload)
-    auth_server = AuthServer((args.host, args.http_port), pairing, tokens)
+    try:
+        rpc_server = RPCServer((args.host, args.rpc_port), tokens, print_state, handshake_info, args.reject_upload)
+        auth_server = AuthServer((args.host, args.http_port), pairing, tokens)
+    except PermissionError:
+        # The real failure mode found by testing: binding port 80 (the
+        # default --http-port, matching the real printer) without root
+        # raises this - a bare traceback here is useless noise, not an
+        # actual explanation. run_simulator.sh checks for this ahead of
+        # time and offers to re-run itself under sudo; this still needs
+        # to fail clearly on its own for anyone running this script
+        # directly instead.
+        privileged_port = args.http_port if args.http_port < 1024 else args.rpc_port
+        print(
+            f"\nCouldn't bind port {privileged_port} - that needs root. Either "
+            f"run this with sudo, or pass --http-port 8080 (or similar) if you "
+            f"only need RPC-side testing, not real pairing through pair_printer.py "
+            f"unmodified (see this script's own docstring).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except OSError as e:
+        print(f"\nCouldn't start listening: {e}", file=sys.stderr)
+        sys.exit(1)
 
     rpc_thread = threading.Thread(target=rpc_server.serve_forever, daemon=True)
     auth_thread = threading.Thread(target=auth_server.serve_forever, daemon=True)
+
+    # args.host is "0.0.0.0" (every interface) by default - correct to
+    # bind, but not a usable address to actually type into
+    # /admin/settings. Show the real LAN IP there instead when that's
+    # what's bound; an explicit --host already is a specific, usable
+    # address, so leave it alone.
+    display_host = args.host
+    if args.host in ("0.0.0.0", "::"):
+        detected = _detect_lan_ip()
+        display_host = detected or args.host
 
     print(f"Simulated printer listening:")
     print(f"  JSON-RPC: {args.host}:{args.rpc_port}")
     print(f"  /auth:    {args.host}:{args.http_port}")
     print(f"  print duration: {args.print_duration:.0f}s, fail-at: {args.fail_at}, pairing-delay: {args.pairing_delay:.0f}s" + (" (rejecting)" if args.reject_pairing else ""))
-    print("Set this as the printer's address on /admin/settings, then run pair_printer.py. Ctrl-C to stop.")
+    print(f"Set {display_host}:{args.rpc_port} as the printer's address on /admin/settings, then run pair_printer.py. Ctrl-C to stop.")
 
     rpc_thread.start()
     auth_thread.start()

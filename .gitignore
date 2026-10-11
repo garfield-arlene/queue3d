@@ -17,3 +17,8 @@ slicing/models/USN ddg.stl
 # the OrcaSlicer AppImage) fetched fresh from a machine with internet,
 # never something to commit; deploy.sh reads straight from here.
 deploy/cache/
+
+# simulator/run_simulator.sh's own runtime state - a background run's
+# PID file and log, never something to commit.
+simulator/.simulator.pid
+simulator/simulator.log

@@ -22,9 +22,16 @@ this mirrors.
 ## Running it
 
 ```bash
-cd simulator
-python3 printer_simulator.py
+./run_simulator.sh
 ```
+
+Asks whether to run in the foreground (blocks this terminal, Ctrl-C to
+stop - good for watching the log live) or the background (frees the
+terminal; run the script again to check status/stop it). Any arguments
+given to the script (see Options, below) are passed straight through to
+`printer_simulator.py` either way - e.g. `./run_simulator.sh
+--print-duration 10`. Exists so there's nothing to remember beyond this
+one command - it resolves the right Python (this project's venv) itself.
 
 No dependencies beyond the standard library - nothing to install.
 
@@ -35,8 +42,12 @@ real client always has, so testing an unmodified pairing flow needs this
 on port 80, which needs root):
 
 ```bash
-sudo python3 printer_simulator.py
+sudo ./run_simulator.sh
 ```
+
+(Running `printer_simulator.py` directly, without the launcher, still
+works exactly as before, if you'd rather - see Options below for its
+full command-line flags either way.)
 
 Then, same as against real hardware: set the printer's address on
 `/admin/settings` to this machine's own LAN address (port 9999, unless
