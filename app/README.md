@@ -1358,11 +1358,10 @@ look at the raw shape again.
 **Correcting the fallback estimate itself, from real history.** Even
 with live progress now available, `printing_eta()`'s estimate-based
 countdown still matters as the fallback for whenever a live reading
-isn't. `_duration_correction_factor()` computes the median
-ratio of actual (`finished_at - released_at`) to estimated duration
-across past `done` jobs, and `printing_eta()` scales the current job's
-estimate by it. Deliberately narrow about what counts as a valid data
-point:
+isn't. `_duration_correction_factor()` computes the median ratio of
+actual to estimated duration across past `done` jobs, and
+`printing_eta()` scales the current job's estimate by it. Deliberately
+narrow about what counts as a valid data point:
 
 - Only `done` jobs, never `failed` ones - a failed print's duration says
   nothing about how long a full print takes; it could have been cut
@@ -1376,19 +1375,31 @@ point:
   running long needs correcting the other way, and assuming so on no
   evidence could make things worse, not better.
 
-**A known, accepted imprecision, not silently glossed over:**
-`finished_at` is when an admin clicked "Mark done," not necessarily
-the exact moment the printer itself actually finished - any delay
-between the two inflates every ratio computed from it. Precisely fixing
-this would mean capturing the printer's own `current_process.elapsed_time`
-(see `print_progress` above) at the moment of that click instead - not
-built here, since that reading has often been unavailable exactly when
-needed during this same investigation (the connection dying being the
-common case that motivated the printer status banner/pairing button in
-the first place). Still meaningfully better than trusting the raw,
-uncorrected slicer estimate outright - see README.md's Printer to-do
-list for capturing the printer's own elapsed time as a future
-refinement.
+**Each job's own "actual" duration prefers `Job.actual_duration_s` -
+the printer's own `current_process.elapsed_time` - over the
+`finished_at - released_at` wall-clock gap.** `finished_at` is when an
+admin clicked "Mark done" (or the automatic poller caught it), not
+necessarily the exact moment the printer itself actually finished - any
+delay between the two inflated every ratio computed from the wall-clock
+figure alone. `mark_finished()` now captures `current_process.elapsed_time`
+directly, whenever a reading is available and its `filename` matches
+this job's `makerbot_path`: the automatic-detection path
+(`check_and_finish_active_print`) passes through the very reading that
+already confirmed completion, rather than risking a second read moments
+later that might miss it entirely (the printer can clear
+`current_process` right as a print ends); the manual Mark done/Mark
+failed path takes its own fresh, best-effort one. Not every job ends up
+with `actual_duration_s` - a live read can still fail exactly when it
+matters most, the same reason that motivated the printer status
+banner/pairing button in the first place - so `_duration_correction_factor()`
+falls back to the wall-clock figure per job whenever it's missing,
+rather than requiring every single job to have it. Verified against
+`simulator/printer_simulator.py` (which reports a real `elapsed_time`
+in its own `current_process`, built alongside this specifically to test
+it): a job's `actual_duration_s` came back matching the simulator's own
+elapsed seconds exactly, confirmed distinct from the much larger
+wall-clock gap a deliberately unrealistic `duration_estimate_s` made
+obvious.
 
 **Applied everywhere a duration is shown, not just the live printing
 countdown.** Caught live: a job showed a 20-minute estimate at queue
@@ -2676,6 +2687,53 @@ password/PIN through normally and clears both fields - identical for
 both account types. The `3.3.0` migration applies
 cleanly against both a fresh database and an existing one,
 defaulting every existing account to `failed_login_attempts=0, locked_until=None`.
+
+### "Remember my name" on both login pages
+
+**Per-account, not a single site-wide switch** (`User.remember_me`/
+`Admin.remember_me`, schema `9.2.0`, default `True`) - per the user, one
+person on a shared device may not want their own name remembered on it
+even if others sharing that device do, which a single global toggle
+couldn't express. The preference itself lives on the account; its
+*effect* (a cookie) is still ordinary browser-local state like any
+cookie, not some account-wide "remember on every device" magic - it
+only ever gets set on whatever device someone actually logs in from.
+
+**Two long-lived, httponly cookies** (`queue3d_remembered_name`/
+`queue3d_remembered_admin_username` - separate, since the two login
+pages/account types never share state), applied by
+`auth.apply_remembered_name()` in two places: right after a successful
+login (so a *new* device starts remembering correctly), and right when
+the preference itself is saved on the settings page (so flipping it
+takes effect immediately on the device someone's actually sitting at,
+not just "next login there"). `max_age` is a full year - "remembered"
+should mean something, not quietly expire after the session cookie's
+own couple of weeks. No `secure` flag forced, matching the session
+cookie's own (`SessionMiddleware`'s) default - this app runs over plain
+HTTP in local dev and HTTPS in production alike, and forcing it here
+would silently stop the cookie working in dev.
+
+**Turning the preference off clears the cookie immediately, not just
+"stops updating it going forward"** - the more privacy-respecting
+behavior: an account holder who decides they don't want their name
+shown on a shared device's login page would reasonably expect that to
+take effect right away, not linger until the cookie's own year-long
+expiry or until someone else's login happens to overwrite it.
+`login_form()` (both routers) reads the cookie, when present, into the
+exact same `name`/`username` template variable a failed-login
+round-trip already populates - `user_login.html`/`admin_login.html`
+needed no changes at all for the actual prefill.
+
+**Never the PIN/password itself** - only ever the plain name/username
+already typed into the form, the one thing genuinely safe to persist
+client-side for this long.
+
+Verified live, both account types: no prefill before a first login;
+the cookie set correctly on login; the name/username prefilled on the
+next visit to that login page; turning the preference off clears the
+cookie immediately (confirmed via the response's own `Set-Cookie`, not
+inferred); and a later login with the preference off does not re-set
+it.
 
 ### Failure reasons shown to the user
 

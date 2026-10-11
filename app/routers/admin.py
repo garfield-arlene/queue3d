@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 import sysmetrics
 from auth import (
     admin_by_username,
+    apply_remembered_name,
     check_lockout,
     generate_password,
     generate_pin,
@@ -72,6 +73,10 @@ from themes import DEFAULT_MODE, MODES, effective_theme, is_theme_selectable, is
 
 router = APIRouter(prefix="/admin")
 
+# See auth.apply_remembered_name's own docstring. A separate cookie from
+# routers/user.py's own - two entirely separate login pages/accounts.
+REMEMBERED_NAME_COOKIE = "queue3d_remembered_admin_username"
+
 # Every JobStatus that can actually appear in active_jobs()/finished_jobs()
 # respectively - the status dropdown on each filtered view (see
 # templates/_job_filters.html) only ever offers a value that view's own
@@ -86,7 +91,12 @@ _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
 
 @router.get("/login")
 def login_form(request: Request):
-    return templates.TemplateResponse(request, "admin_login.html", {})
+    # Pre-fills Username from a remembered previous login on this device,
+    # if any (see auth.apply_remembered_name) - the exact same "username"
+    # template variable a failed-login round-trip already populates
+    # below, so admin_login.html needs no change at all for this.
+    remembered_username = request.cookies.get(REMEMBERED_NAME_COOKIE)
+    return templates.TemplateResponse(request, "admin_login.html", {"username": remembered_username})
 
 
 @router.post("/login")
@@ -121,7 +131,9 @@ def login(
 
     record_successful_login(session, admin)
     request.session["admin_id"] = admin.id
-    return RedirectResponse("/admin/dashboard", status_code=303)
+    response = RedirectResponse("/admin/dashboard", status_code=303)
+    apply_remembered_name(response, REMEMBERED_NAME_COOKIE, admin.remember_me, admin.username)
+    return response
 
 
 @router.post("/logout")
@@ -1138,14 +1150,17 @@ def update_admin_theme(
     request: Request,
     theme: str = Form(...),
     mode: str = Form(...),
+    # False, not Form(...) - an unchecked checkbox sends no field at
+    # all, same reasoning as routers/user.py's own update_settings.
+    remember_me: bool = Form(False),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     """Separate from update_settings above on purpose - this is the
     signed-in admin's own personal preference (models.Admin.theme/
-    theme_mode), not part of the shared, site-wide Settings row every
-    admin edits together, so it gets its own form/endpoint rather than
-    being bundled into the same submit."""
+    theme_mode/remember_me), not part of the shared, site-wide Settings
+    row every admin edits together, so it gets its own form/endpoint
+    rather than being bundled into the same submit."""
     error = None
     if not is_valid_theme(theme):
         error = "Not a real theme choice."
@@ -1156,11 +1171,18 @@ def update_admin_theme(
     else:
         admin.theme = theme
         admin.theme_mode = mode
+        admin.remember_me = remember_me
         session.add(admin)
         session.commit()
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request, "admin_settings.html", _admin_settings_context(request, session, admin, error, error is None)
     )
+    if error is None:
+        # Takes effect on this device right now, not just "next login" -
+        # see auth.apply_remembered_name's own docstring for why both
+        # places matter.
+        apply_remembered_name(response, REMEMBERED_NAME_COOKIE, admin.remember_me, admin.username)
+    return response
 
 
 @router.post("/settings/change_password")

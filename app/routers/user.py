@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 import storage
 from auth import (
+    apply_remembered_name,
     check_lockout,
     hash_secret,
     record_failed_login,
@@ -61,6 +62,9 @@ SUPPORT_STYLES = {
 }
 
 router = APIRouter()
+
+# See auth.apply_remembered_name's own docstring.
+REMEMBERED_NAME_COOKIE = "queue3d_remembered_name"
 
 
 @router.get("/signup")
@@ -119,7 +123,12 @@ def signup(
 
 @router.get("/login")
 def login_form(request: Request):
-    return templates.TemplateResponse(request, "user_login.html", {})
+    # Pre-fills Name from a remembered previous login on this device, if
+    # any (see auth.apply_remembered_name) - the exact same "name"
+    # template variable a failed-login round-trip already populates
+    # below, so user_login.html needs no change at all for this.
+    remembered_name = request.cookies.get(REMEMBERED_NAME_COOKIE)
+    return templates.TemplateResponse(request, "user_login.html", {"name": remembered_name})
 
 
 @router.post("/login")
@@ -154,7 +163,9 @@ def login(
 
     record_successful_login(session, user)
     request.session["user_id"] = user.id
-    return RedirectResponse("/dashboard", status_code=303)
+    response = RedirectResponse("/dashboard", status_code=303)
+    apply_remembered_name(response, REMEMBERED_NAME_COOKIE, user.remember_me, user.name)
+    return response
 
 
 @router.post("/logout")
@@ -205,6 +216,10 @@ def update_settings(
     request: Request,
     theme: str = Form(...),
     mode: str = Form(...),
+    # False, not Form(...) - an unchecked checkbox sends no field at
+    # all (same reasoning as signup()'s agree_aup above), so a required
+    # field here would 422 the moment someone actually turns this off.
+    remember_me: bool = Form(False),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
@@ -218,11 +233,18 @@ def update_settings(
     else:
         user.theme = theme
         user.theme_mode = mode
+        user.remember_me = remember_me
         session.add(user)
         session.commit()
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request, "user_settings.html", _user_settings_context(request, user, error, error is None)
     )
+    if error is None:
+        # Takes effect on this device right now, not just "next login" -
+        # see auth.apply_remembered_name's own docstring for why both
+        # places matter.
+        apply_remembered_name(response, REMEMBERED_NAME_COOKIE, user.remember_me, user.name)
+    return response
 
 
 @router.post("/settings/change_pin")

@@ -458,6 +458,22 @@ def _migrate_to_9_1_0(conn):
         seed_path.unlink()
 
 
+def _migrate_to_9_2_0(conn):
+    """New User.remember_me/Admin.remember_me (default True - per the
+    user, opt-out not opt-in) and Job.actual_duration_s (default NULL -
+    nothing to carry forward for a job that already finished before
+    this existed; _duration_correction_factor's own fallback already
+    handles that case) - see each column's own comment in models.py."""
+    for table, col, ddl in [
+        ("user", "remember_me", "ALTER TABLE user ADD COLUMN remember_me BOOLEAN NOT NULL DEFAULT 1"),
+        ("admin", "remember_me", "ALTER TABLE admin ADD COLUMN remember_me BOOLEAN NOT NULL DEFAULT 1"),
+        ("job", "actual_duration_s", "ALTER TABLE job ADD COLUMN actual_duration_s FLOAT"),
+    ]:
+        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if col not in cols:
+            conn.execute(text(ddl))
+
+
 # Keyed by the app VERSION a schema (or, as of 7.1.0, sometimes pure
 # data) change shipped in, not a separate incrementing number - per the
 # user, a schema change should always come with a version bump, so
@@ -502,6 +518,7 @@ MIGRATIONS = {
     "7.1.0": _migrate_to_7_1_0,
     "8.1.0": _migrate_to_8_1_0,
     "9.1.0": _migrate_to_9_1_0,
+    "9.2.0": _migrate_to_9_2_0,
 }
 
 

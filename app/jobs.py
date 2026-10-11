@@ -331,19 +331,22 @@ def _duration_correction_factor(session: Session) -> float:
     every future estimate as more data accumulates. Returns 1.0 (no
     correction) with no `done` jobs yet to learn from.
 
-    Necessarily includes whatever time elapsed between a print actually
-    finishing and an admin noticing and clicking "Mark done" -
-    `finished_at` is when that click happened, not confirmed to be the
-    exact moment the printer itself actually stopped (`released_at` is
-    accurate the other direction - see jobs.release). Rough by nature
-    this way, but still meaningfully better than trusting the raw,
-    uncorrected slicer estimate outright. Precisely fixing this would
-    mean capturing the printer's own `current_process.elapsed_time` (see
-    jobs.print_progress) at the moment of that click instead - not done
-    here, since that reading has often been unavailable exactly when
-    needed (the connection dying is the common case that motivated
-    building the printer status banner in the first place) - see
-    README.md's Printer to-do list."""
+    Each job's own actual duration prefers `Job.actual_duration_s` - the
+    printer's own `current_process.elapsed_time`, captured directly by
+    `mark_finished()` at the moment it ran (see that field's own
+    comment in models.py) - over the `finished_at - released_at`
+    wall-clock fallback below, since that wall-clock figure necessarily
+    includes whatever delay elapsed between the print actually
+    finishing and an admin (or the automatic poller) noticing;
+    `finished_at` is when that happened, not confirmed to be the exact
+    moment the printer itself actually stopped (`released_at` is
+    accurate the other direction - see jobs.release). Not every job has
+    `actual_duration_s` though - it's only ever set from a live read
+    that happened to succeed right when it mattered most, and the
+    connection dying at exactly that moment is common enough that it
+    motivated the printer status banner in the first place - so the
+    wall-clock figure remains a real, needed fallback for whichever
+    jobs don't have it, not dead code superseded by this."""
     done_jobs = session.exec(
         select(Job).where(
             Job.status == JobStatus.done,
@@ -353,10 +356,13 @@ def _duration_correction_factor(session: Session) -> float:
             Job.duration_estimate_s > 0,
         )
     ).all()
-    ratios = [
-        (job.finished_at - job.released_at).total_seconds() / job.duration_estimate_s
-        for job in done_jobs
-    ]
+    ratios = []
+    for job in done_jobs:
+        if job.actual_duration_s and job.actual_duration_s > 0:
+            actual_s = job.actual_duration_s
+        else:
+            actual_s = (job.finished_at - job.released_at).total_seconds()
+        ratios.append(actual_s / job.duration_estimate_s)
     if not ratios:
         return 1.0
     return max(1.0, statistics.median(ratios))
@@ -1400,13 +1406,34 @@ def submit_draft(session: Session, job: Job) -> Job:
     return job
 
 
-def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool, reason: str = "") -> Job:
+def mark_finished(
+    session: Session,
+    job: Job,
+    admin: Admin | None,
+    success: bool,
+    reason: str = "",
+    current_process: dict | None = None,
+) -> Job:
     """Records a print's outcome - a manual admin action (`admin` set), or
     an automatic one (`admin=None`, actor logged as `"system"` - same
     convention `cleanup_drafts.py` already uses for automated draft
     expiry) from check_and_finish_active_print() below, now that live
     printer status reporting exists (see release() above and
     print_progress()) to actually notice a print ending on its own.
+
+    current_process: the printer's own current_process reading, if the
+    caller already has a fresh one on hand - check_and_finish_active_print
+    does, from the very read that confirmed completion, and passes it
+    straight through here rather than this function reading again a
+    moment later, which risks missing it entirely (the printer can
+    clear current_process right as a print ends - see that function's
+    own docstring). The manual Mark done/Mark failed path has no such
+    reading queued up, so it takes its own fresh, best-effort one
+    instead. Either way, feeds Job.actual_duration_s (see that field's
+    own comment, and _duration_correction_factor, for why this is a
+    more accurate "how long did this actually take" than the wall-clock
+    finished_at - released_at fallback) whenever current_process
+    actually matches this job's file and reports elapsed_time.
 
     Also captures a photo of the build plate via the printer's camera,
     regardless of outcome - success, failure, or (today, since there's no
@@ -1444,6 +1471,21 @@ def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool
         job.failure_reason = reason
     move_job_to_archive(job)
 
+    if current_process is None and job.makerbot_path:
+        try:
+            current_process = system_information().get("current_process")
+        except PrinterError:
+            current_process = None
+    duration_detail = ""
+    if (
+        current_process
+        and job.makerbot_path
+        and Path(current_process.get("filename") or "").name == Path(job.makerbot_path).name
+        and current_process.get("elapsed_time") is not None
+    ):
+        job.actual_duration_s = current_process["elapsed_time"]
+        duration_detail = "actual duration captured"
+
     try:
         jpeg_data = capture_photo()
         photo_path = archive_photo_path(job.id)
@@ -1453,6 +1495,8 @@ def mark_finished(session: Session, job: Job, admin: Admin | None, success: bool
     except PrinterError as e:
         photo_detail = f"photo capture failed: {e}"
     job.finished_at = datetime.now(timezone.utc)
+    if duration_detail:
+        photo_detail = f"{duration_detail}; {photo_detail}"
     if reason:
         photo_detail = f"{reason}; {photo_detail}"
 
@@ -1505,9 +1549,13 @@ def check_and_finish_active_print(session: Session) -> Job | None:
     complete = bool(current.get("complete"))
     if cancelled or error:
         why = "cancelled at the printer" if cancelled else f"printer reported an error: {error}"
-        return mark_finished(session, job, admin=None, success=False, reason=f"detected automatically - {why}")
+        return mark_finished(
+            session, job, admin=None, success=False, reason=f"detected automatically - {why}", current_process=current
+        )
     if complete:
-        return mark_finished(session, job, admin=None, success=True, reason="detected automatically - print complete")
+        return mark_finished(
+            session, job, admin=None, success=True, reason="detected automatically - print complete", current_process=current
+        )
     return None
 
 

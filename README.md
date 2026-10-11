@@ -188,7 +188,12 @@ behind each.
   more realistic as more prints complete, without ever needing to be set
   by hand. Only learns from completed ("done") prints, never cancelled
   or failed ones, whose duration says nothing about how long a full
-  print actually takes.
+  print actually takes. Each job's own ratio prefers the printer's own
+  reported elapsed time, captured the moment it's marked finished, over
+  the wall-clock gap between release and that moment - the latter
+  necessarily inherits whatever delay elapsed before someone (or the
+  automatic poller) actually noticed, which isn't the print's own
+  duration at all.
 - **Per-account theme and light/dark mode selection** - both users and
   admins get their own settings page to pick a UI theme and a light/dark
   mode independently, persisting across logins/devices (not a
@@ -198,6 +203,15 @@ behind each.
   the CSS says" - `base.html`'s styles are CSS custom properties a
   theme/mode combination overrides selectively. See `app/README.md`'s
   "Themes" section.
+- **"Remember my name" on both login pages** - another per-account
+  setting, on by default, alongside theme/mode on each account's own
+  Settings page. Pre-fills the Name/Username field on whatever device's
+  login page is visited next, never the PIN/password - deliberately
+  per-account rather than one site-wide switch, since one person on a
+  shared device may not want their own name remembered on it even if
+  others sharing that device do. Turning it off clears the remembered
+  name on the device it's turned off from immediately, not just the
+  next time that account logs in somewhere.
 - **"Console," "Savanna," "Fil," and "BMMS" themes** - four genuinely
   different themes (not just color swaps), sharing one layout: page
   links as tabs down a left sidebar instead of a top row, each page's
@@ -485,16 +499,6 @@ behind each.
 **Printer** (hardware-dependent items on hold - the printer itself just
 shipped out to the real deployment site; `simulator/` stands in well
 enough for everything else to keep moving without it)
-- ~~Correct the fallback time estimate using real completion history~~
-  **Done** - see Features below ("A history-corrected time estimate")
-  and `app/README.md`'s "Live print progress" section. What's still
-  open: the correction is based on `finished_at` (when an admin clicked
-  "Mark done", or when automatic completion detection caught it), not
-  the printer's own recorded elapsed time for that print - capturing
-  `current_process.elapsed_time` at the moment a job is marked finished
-  would let the correction stop inheriting whatever delay elapsed
-  between the physical print actually finishing and someone/something
-  noticing.
 - A dedicated camera, independent of the printer's own flaky single-
   session connection, motivated by a string of real
   photo-capture failures (all since fixed - see Features above) that
@@ -582,12 +586,6 @@ enough for everything else to keep moving without it)
   immune to this, since it was a plain string snapshot from the start,
   never a live FK. Still open: no permission scoping between admins at
   all yet - every one has identical, full access; decided later.
-- A "remember me" option on the login pages that remembers the
-  submitted name/username for next time (never the PIN/password) -
-  a per-account setting (alongside theme/mode on each account's own
-  Settings page) rather than a single site-wide switch, since one
-  person on a shared device may not want their name remembered on it
-  even if others do. Defaults to enabled.
 
 ## Project layout
 

@@ -103,9 +103,13 @@ auth_codes, authenticated vs. unauthenticated RPC calls, a chunked
 upload with real CRC32 validation against what was actually received,
 live `current_process` progress through `final_heating` -> `printing` ->
 a terminal outcome (`complete`/`cancelled`/`error`, chosen by
-`--fail-at`), and a one-frame-per-second camera stream of a real,
-decodable JPEG clearly labeled "SIMULATED PHOTO" (`fake_frame.jpg`),
-so it's unmistakable as fake wherever a job's "Photo" link shows it.
+`--fail-at`) - including a real `elapsed_time` (seconds since the
+simulated print actually started), so `jobs.mark_finished()`'s own
+`Job.actual_duration_s` capture has a genuine value to read, not just
+`progress`/`time_remaining` - and a one-frame-per-second camera stream
+of a real, decodable JPEG clearly labeled "SIMULATED PHOTO"
+(`fake_frame.jpg`), so it's unmistakable as fake wherever a job's
+"Photo" link shows it.
 
 Not simulated: anything about the physical machine itself (temperature,
 filament, actual G-code execution), any RPC method the app doesn't
