@@ -398,6 +398,15 @@
        since this is the only other place that needs any highlight at
        all beyond plain text or .error. */
     .notice { background: var(--detail-bg); border: 1px solid var(--border-strong); border-radius: 4px; padding: 0.5rem 0.75rem; }
+    /* _printer_status.html's headline status box is the first place
+       .notice holds more than a single line of plain text (a bold
+       status line plus an explanatory paragraph) - these two rules
+       only ever match when it actually has that nested structure, so
+       every existing plain `<p class="notice">` usage elsewhere is
+       unaffected. */
+    .notice strong { display: block; font-size: 1.05rem; }
+    .notice p { margin: 0.35rem 0 0; }
+    .notice p:last-child { margin-bottom: 0; }
     /* Overrides the generic `form` rule above (a narrow, one-field-per-row
        grid, right for a login/settings form) for the GET-based filter bar
        above every job/log/user table (see _job_filters.html/

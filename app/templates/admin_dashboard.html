@@ -42,8 +42,6 @@
     a slicing error, for offline bugfixing with no internet access.
   </p>
 
-  {% include "_printer_status.html" %}
-
   {% if untracked_print %}
     <p class="error">
       The printer itself reports it's actively printing
@@ -68,6 +66,22 @@
       - <a href="/admin/jobs/old">view old jobs</a>.
     </p>
   {% endif %}
+
+  {# A real <h3>, same as "Queue" below - on the sidebar-layout themes
+     (Console/Savanna/Fil/BMMS/Halloween/Thanksgiving/Winter), base.html's
+     own applyThemeSections() script automatically groups this heading
+     with everything after it, up to the next <h3>, into one bordered,
+     titled box (.theme-section) - the exact same mechanism "Queue"
+     already gets, not a separate thing built for this. Placed outside
+     _printer_status.html itself (not as that partial's own first
+     element) so the grouping only has to happen once, on initial page
+     load - htmx's polling only ever swaps #printer-status's own
+     contents, never this heading, so there's nothing to re-wrap on
+     every poll. untracked_print/old_job_count above stay outside this
+     section on purpose - they're about a specific job/queue mismatch,
+     not the printer's own connection status. #}
+  <h3>Printer</h3>
+  {% include "_printer_status.html" %}
 
   {% if action_error %}<p class="error">{{ action_error }}</p>{% endif %}
 
