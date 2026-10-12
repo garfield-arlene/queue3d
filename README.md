@@ -257,6 +257,11 @@ for the full design rationale behind each.
   directly with only its date text removed. See `app/README.md`'s "The
   'Halloween' theme," "The 'Thanksgiving' theme," "The 'Winter' theme,"
   "The 'Veterans Day' theme," and "The 'Valentine's Day' theme" sections.
+- **An app logo** - an original isometric cube icon, with print-layer
+  lines etched into its two front faces, next to the "queue3d" title in
+  the header on every page, every theme. Inline SVG using `currentColor`,
+  so it always matches whatever color the surrounding header text
+  resolves to in each theme/mode, with no per-theme override needed.
 - **Automatic completion detection** - a background poller notices a
   print finishing, failing, or being cancelled on its own (via the same
   printer status read as the live progress bar above) and records the
@@ -292,6 +297,19 @@ for the full design rationale behind each.
   right there, to relay to the user in person. The old PIN stops working
   immediately. Logged in the activity log like any other account action
   - who did it and for whom, never the PIN value itself.
+- **Admins creating and managing other admins** - any signed-in admin can
+  create another admin from `/admin/admins` (a fresh username+password,
+  not promoting an existing user's account), and disable/re-enable or
+  reset the password of another admin from that same page; a disabled
+  admin is logged out of an already-open session immediately, same as a
+  disabled user. Every admin created via `create_admin.py` is permanently
+  protected from deletion, guaranteeing there's always at least one admin
+  who can't be locked out by another's mistake - admins created through
+  the UI itself have no such protection. Every account type can also
+  change its own credential itself (current credential required first),
+  without needing another admin's help. A deleted admin's past job
+  reviews stay attributed to "`<username>` (deleted)" rather than going
+  silently orphaned.
 - **Print duration estimates shown as days/hours/minutes**, not raw
   total minutes - "1d 1h" or "2h 5m" instead of "1500 min"/"125 min",
   everywhere a duration is displayed (queued/approved/sliced estimates,
@@ -488,43 +506,14 @@ for the full design rationale behind each.
 ## To do
 
 **Appearance**
-- Done - nine themes beyond Default: "Console" (sidebar nav,
-  bordered/titled sections, full browser width), "Savanna" (the same
-  layout with a desert-sunrise background photo), "Fil" (the same
-  layout again with an original mascot instead of a photo - a Mickey
-  Mouse theme was requested and turned down over trademark risk, see
-  `app/README.md`'s "The 'Fil' theme" section for why), "BMMS"
-  (the same layout built for this app's actual deployment site - Black
-  Mountain Middle School's own maroon-and-gold colors and Raiders logo,
-  also shown on both login pages regardless of theme), "Halloween,"
-  "Thanksgiving," "Winter," "Veterans Day," and "Valentine's Day" (the
-  same layout again, all five seasonal rather than year-round, Veterans
-  Day with a much narrower one-week window than Halloween/Thanksgiving/
-  Winter and Valentine's Day with a two-week window - a week either side
-  of the holiday itself, since it falls on a weekend - see Features' own
-  bullet for the seasonal date windows and reversion behavior). All
-  nine ship both a light and dark palette - see `app/README.md`'s "The
-  'Console' theme," "The 'Savanna' theme," "The 'Fil' theme," "The
-  'BMMS' theme," "The 'Halloween' theme," "The 'Thanksgiving' theme,"
-  "The 'Winter' theme," "The 'Veterans Day' theme," and "The 'Valentine's
-  Day' theme" sections. Further
-  themes beyond these remain open; everything must still ship as local
-  static files, no CDN fonts or external image URLs (see "Deployment:
-  zero internet access" - this app runs with none, ever).
-- Candidate future seasonal themes, not yet started: President's Day,
-  St. Patrick's Day, Easter, Cinco de Mayo, Mother's Day, and Memorial
-  Day. Window length/placement, color palette, and artwork all still to
-  be decided per theme, the same way each of the five done so far
+- Further themes beyond the nine shipped so far remain open; everything
+  must still ship as local static files, no CDN fonts or external image
+  URLs (see "Deployment: zero internet access" - this app runs with none,
+  ever). Candidates not yet started: President's Day, St. Patrick's Day,
+  Easter, Cinco de Mayo, Mother's Day, and Memorial Day. Window
+  length/placement, color palette, and artwork all still to be decided
+  per theme, the same way each of the five seasonal ones done so far
   settled its own.
-- Done - a logo for the app, shown next to the "queue3d" title in the
-  header on every page, every theme. An original isometric cube with a
-  couple of print-layer lines etched into its two front faces - the
-  printed object itself, not a reference to anything queue-related,
-  since the wordmark right next to it already covers that. Inline SVG
-  rather than a static file like every other theme icon here, so it can
-  use `currentColor` and pick up whatever color the surrounding header
-  text already resolves to in each theme and mode, with no per-theme
-  override needed anywhere.
 
 **Printer** (hardware-dependent items on hold - the printer itself just
 shipped out to the real deployment site; `simulator/` stands in well
@@ -553,21 +542,6 @@ enough for everything else to keep moving without it)
   per printer (setting up cleanly for the already-planned second
   printer), with RTSP as a fallback for any future camera that only
   streams rather than serving a plain snapshot.
-- Done - the persistent-connection fix (see Features below); the
-  investigation that found the underlying problem, and why the fix is
-  architectural rather than a retry/backoff tweak, is in `app/README.md`'s
-  "Persistent printer connection" section. Two things about it remain
-  real limits, not bugs to chase further: it doesn't make pairing
-  permanent - an app restart or the printer being power-cycled (this
-  printer's normal day-to-day usage pattern) still drops the connection
-  and needs one more dial-press before the next release, same as before,
-  just not *between every single release* within one continuous run any
-  more; and the printer's HTTP pairing service has been observed to take
-  roughly a minute to come up after its network/JSON-RPC service already
-  answers, so pairing immediately after power-on can still fail on
-  timing alone - now retried through automatically (see Features above),
-  so this no longer means a second manual attempt, just a short wait with
-  its own on-screen message.
 - Support for printer models/brands beyond the MakerBot Replicator+.
 - An admin UI for managing printers - add/remove a printer and pair it,
   all from within the app, rather than today's CLI-only, server-access-
@@ -585,36 +559,8 @@ enough for everything else to keep moving without it)
   the same way the MakerBot's was.
 
 **Accounts**
-- Done - any signed-in admin can create another admin from `/admin/admins`
-  (a fresh username+password, same as `create_admin.py`'s own design, not
-  promoting/converting an existing user's account - those stay two
-  separate tables). Every admin created via `create_admin.py` itself is
-  permanently `unremovable` (schema 6.4.0) - the "what stops an admin from
-  locking everyone out by deleting every admin account" question this
-  used to raise is resolved by construction as long as at least one
-  admin was ever provisioned that way, which is required regardless
-  (it's the only way to get the very first admin at all). Admins created
-  through the new UI have no such protection and can be deleted by any
-  other admin (never by themselves, while signed in as that account).
-  Done, too - disable/re-enable and password reset for another (not
-  `unremovable`) admin, from that same page (schema 6.5.0's
-  `Admin.disabled`); a disabled admin is logged out of an already-open
-  session immediately, same as a disabled user. Also done: every account
-  type can now change its own credential itself, without another
-  admin's help - `/settings` (a user's own PIN) and `/admin/settings`
-  (an admin's own password) both require the *current* credential first,
-  unlike an admin resetting someone else's, which doesn't (a different,
-  already-authenticated admin's own session is the trust boundary there
-  instead). Done, too - a deleted admin's past job reviews no longer go
-  silently orphaned: `Job.reviewed_by_name` (schema 6.6.0) is replaced
-  with "`<username>` (deleted)" at the moment of deletion, and the
-  underlying `reviewed_by_admin_id` FK is cleared rather than left
-  pointing at a since-reused id. `admin_note` needed nothing - it's the
-  rejection reason the admin typed, not a reference to which admin typed
-  it; the activity log's own attribution (`JobEvent.actor`) was already
-  immune to this, since it was a plain string snapshot from the start,
-  never a live FK. Still open: no permission scoping between admins at
-  all yet - every one has identical, full access; decided later.
+- No permission scoping between admins yet - every one has identical,
+  full access; decided later.
 
 ## Project layout
 
