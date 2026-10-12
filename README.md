@@ -511,6 +511,11 @@ for the full design rationale behind each.
   themes beyond these remain open; everything must still ship as local
   static files, no CDN fonts or external image URLs (see "Deployment:
   zero internet access" - this app runs with none, ever).
+- Candidate future seasonal themes, not yet started: President's Day,
+  St. Patrick's Day, Easter, Cinco de Mayo, Mother's Day, and Memorial
+  Day. Window length/placement, color palette, and artwork all still to
+  be decided per theme, the same way each of the five done so far
+  settled its own.
 - Done - a logo for the app, shown next to the "queue3d" title in the
   header on every page, every theme. An original isometric cube with a
   couple of print-layer lines etched into its two front faces - the
@@ -548,26 +553,21 @@ enough for everything else to keep moving without it)
   per printer (setting up cleanly for the already-planned second
   printer), with RTSP as a fallback for any future camera that only
   streams rather than serving a plain snapshot.
-- **The persistent-connection fix is built** (see Features below) - the
+- Done - the persistent-connection fix (see Features below); the
   investigation that found the underlying problem, and why the fix is
   architectural rather than a retry/backoff tweak, is in `app/README.md`'s
-  "Persistent printer connection" section. Two things about it still
-  worth remembering as real limits, not bugs to chase further: it doesn't
-  make pairing permanent - an app restart or the printer being
-  power-cycled (this printer's normal day-to-day usage pattern) still
-  drops the connection and needs one more dial-press before the next
-  release, same as before, just not *between every single release*
-  within one continuous run any more; and the printer's HTTP pairing
-  service has been observed to take roughly a minute to come up after its
-  network/JSON-RPC service already answers, so pairing immediately after
-  power-on can still fail on timing alone - **now retried through
-  automatically** (see Features above), so this no longer means a second
-  manual attempt, just a short wait with its own on-screen message. Once
-  during the investigation, a pairing request was also accepted
-  server-side (got as far as "waiting for the dial press") but nothing
-  ever rendered on the printer's screen to press - resolved on its own
-  on a later attempt, cause not confirmed, possibly a UI-state issue
-  from repeated pairing attempts in quick succession.
+  "Persistent printer connection" section. Two things about it remain
+  real limits, not bugs to chase further: it doesn't make pairing
+  permanent - an app restart or the printer being power-cycled (this
+  printer's normal day-to-day usage pattern) still drops the connection
+  and needs one more dial-press before the next release, same as before,
+  just not *between every single release* within one continuous run any
+  more; and the printer's HTTP pairing service has been observed to take
+  roughly a minute to come up after its network/JSON-RPC service already
+  answers, so pairing immediately after power-on can still fail on
+  timing alone - now retried through automatically (see Features above),
+  so this no longer means a second manual attempt, just a short wait with
+  its own on-screen message.
 - Support for printer models/brands beyond the MakerBot Replicator+.
 - An admin UI for managing printers - add/remove a printer and pair it,
   all from within the app, rather than today's CLI-only, server-access-
@@ -578,7 +578,11 @@ enough for everything else to keep moving without it)
   for exactly one printer - this needs an actual multi-printer design
   (which printer a job goes to, per-printer queues or one shared queue
   with printer selection, per-printer pairing state) before it's just a
-  form.
+  form. On hold until a second printer is actually on hand and its model
+  known - building this against an unknown printer would mean designing
+  for a protocol with no way to simulate or test it, unless that
+  printer's own API turns out to be documented or reverse-engineerable
+  the same way the MakerBot's was.
 
 **Accounts**
 - Done - any signed-in admin can create another admin from `/admin/admins`

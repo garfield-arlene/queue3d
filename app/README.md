@@ -2688,14 +2688,14 @@ and the plain navy backdrop alike - not just one of them.
 
 **Why this exists:** the same shared sidebar/full-width/bordered-section
 layout again, seasonal like Halloween/Thanksgiving/Winter/Veterans Day,
-but with a wider window than any of them - per the user, "the week before
-and week after the holiday since it falls on a weekend" (February 7-21, a
-flat fourteen days centered on the holiday's own fixed February 14th
-date). Veterans Day's own narrow seven-day window works precisely because
-"available during the week of the holiday" was the explicit ask there;
-here the ask was specifically to cover the school days on either side of
-a holiday that itself falls on a weekend, which needs the wider
-symmetric span instead.
+but with a wider window than any of them - a full week either side of
+February 14th (February 7-21, a flat fourteen days centered on the
+holiday's own fixed date), since the holiday itself falls on a weekend
+and the window needs to cover the school days around it, not just the
+days immediately adjacent the way a weekday holiday's own narrower
+window can. Veterans Day's own narrow seven-day window works because
+covering the holiday's own week was enough there; here the wider
+symmetric span is what actually reaches the surrounding school days.
 
 **The background scene (`theme-valentines-hearts.svg`) and mascot
 (`theme-valentines-bear.svg`) follow the same conventions every other
@@ -2727,20 +2727,14 @@ reads as "what even is that," not as the thing it's supposed to be.
 **The garland of heart bunting (`theme-valentines-garland.svg`) is its
 own small standalone banner over the content panel's top-right corner
 (`[data-theme="valentines"] main`'s own `background-image`), not part of
-the sidebar scene at all - found by testing, not assumed.** A first
-version strung it across the top of `theme-valentines-hearts.svg`
-instead, directly behind the header's own nav text, the same spot
-Winter's snowflakes/Halloween's bats already sit behind theirs. Those
-read fine there because they're soft and translucent; this garland's
-solid, saturated hearts didn't, and per the user, after seeing it live:
-"the white text on the pink background are difficult to read, especially
-with the heart banner behind it." Moving the garland to the content
-panel's own corner - a spot with no text in front of it to conflict with
-- fixed that outright rather than trying to tune contrast around it
-further; the sidebar's own scrim also went up in both modes at the same
-time (`0.15`/`0.5` alpha to `0.35`/`0.6`), since this scene's sky reads
-pale pink almost everywhere, not just a bright top band the way
-Thanksgiving's own dusk scene does.
+the sidebar scene at all** - the one spot with no nav text in front of
+it to conflict with. These hearts are solid and saturated rather than
+soft and translucent like Winter's snowflakes/Halloween's bats, which
+read fine behind text precisely because they aren't. The sidebar's own
+scrim is also higher in both modes than Halloween/Thanksgiving/Winter's
+own (`0.35`/`0.6` alpha rather than their `0.15`/`0.5`), since this
+scene's sky reads pale pink almost everywhere, not just a bright top
+band the way Thanksgiving's own dusk scene does.
 
 **Deliberately just hearts and a card-exchange mailbox, nothing romantic
 beyond that** - the same "school-appropriate for everyone" bar every
@@ -2805,8 +2799,8 @@ defaulting every existing account to `failed_login_attempts=0, locked_until=None
 ### "Remember my name" on both login pages
 
 **Per-account, not a single site-wide switch** (`User.remember_me`/
-`Admin.remember_me`, schema `9.2.0`, default `True`) - per the user, one
-person on a shared device may not want their own name remembered on it
+`Admin.remember_me`, schema `9.2.0`, default `True`) - one person on a
+shared device may not want their own name remembered on it
 even if others sharing that device do, which a single global toggle
 couldn't express. The preference itself lives on the account; its
 *effect* (a cookie) is still ordinary browser-local state like any
