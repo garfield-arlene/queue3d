@@ -42,9 +42,9 @@ downloadable support bundle for offline diagnosis:
 
 Every account - user or admin - picks its own theme and light/dark mode
 independently, persisting across logins and devices. The screenshots above
-use the plain "Basic" theme; seven more ship alongside it, all sharing the
+use the plain "Basic" theme; nine more ship alongside it, all sharing the
 same sidebar-tabs-and-bordered-sections layout with their own palette (and
-in Fil's/the three seasonal themes' case, an original mascot) on top:
+in Fil's/the seasonal themes' case, an original mascot) on top:
 
 ![Console theme - a neutral gray and indigo sidebar layout](docs/screenshots/console.png)
 
@@ -52,7 +52,7 @@ in Fil's/the three seasonal themes' case, an original mascot) on top:
 
 ![Fil theme - an original filament-wire mascot peeking around the sidebar](docs/screenshots/fil.png)
 
-Three more are seasonal - selectable in the theme picker only during their
+Five more are seasonal - selectable in the theme picker only during their
 own date window (always selectable regardless of date at `127.0.0.1`, for
 development), reverting any account back to the default once their window
 closes rather than sitting year-round as permanent clutter:
@@ -62,6 +62,10 @@ closes rather than sitting year-round as permanent clutter:
 ![Thanksgiving theme - a harvest-dusk scene with a barn and a turkey standing at the bottom of the window](docs/screenshots/thanksgiving.png)
 
 ![Winter theme - a snowy-dusk scene with a log cabin, a frozen pond, and a snowman standing at the bottom of the window](docs/screenshots/winter.png)
+
+![Veterans Day theme - the real VA.gov Veterans Day poster behind the sidebar](docs/screenshots/veterans.png)
+
+![Valentine's Day theme - a heart-blossom tree, a garland of heart bunting, and a teddy bear hugging a heart standing at the bottom of the window](docs/screenshots/valentines.png)
 
 **BMMS** is the odd one out - not a generic option, but built for this
 app's actual deployment site, using the school's own colors and logo. It's
@@ -75,8 +79,8 @@ theme (if any) the person logging in has picked:
 ![The login page, showing the school's logo as a large letterhead above the form](docs/screenshots/bmms-login.png)
 
 See `app/README.md`'s "The 'Console'/'Savanna'/'Fil'/'BMMS'/'Halloween'/
-'Thanksgiving'/'Winter' theme" sections for the full design rationale
-behind each.
+'Thanksgiving'/'Winter'/'Veterans Day'/'Valentine's Day' theme" sections
+for the full design rationale behind each.
 
 ## Features
 
@@ -113,6 +117,11 @@ behind each.
 - **Choice of support style** - Automatic, Grid, Snug, Organic, or one of
   two tree-support variants, matching the shapes PrusaSlicer users would
   recognize by the same names.
+- **A single filament color per job**, or "Any available," chosen from
+  a dropdown of whatever an admin currently has enabled - plus a
+  best-effort low-inventory notice, read straight out of the job's own
+  sliced file rather than estimated. See `app/README.md`'s "Filament
+  color selection" section.
 - **One shared queue** - submissions land directly in it; there's no
   separate pre-review step before something counts as queued.
 - **Admin review** - approve, or reject with a required note explaining
@@ -124,7 +133,11 @@ behind each.
   (with the note), release, and outcome, across every job, most recent
   first, at a glance - plus each job's own history on its own page
   (`/admin/jobs/{id}/log`, linked from the queue, the finished-jobs list,
-  and the global log).
+  and the global log). Filters (substring, color, status, estimated
+  print time, date range, and submitter where relevant) are available
+  on the global log and on every other job/user listing in the app
+  besides. See `app/README.md`'s "Filters, on every job/log/user
+  listing" section.
 - **Release to the printer over the network** - an approved job is sent
   and started directly; no walking a file over on a flash drive. One
   persistent, authenticated connection is held open for the app's whole
@@ -139,7 +152,11 @@ behind each.
   dashboard shows its connection state plainly, and a "Pair printer"
   button starts pairing right from there (with on-screen instructions to
   go press the printer's dial) instead of needing server/CLI access to
-  run `pair_printer.py` by hand.
+  run `pair_printer.py` by hand. Retries automatically, with its own
+  distinct on-screen message, if the printer's HTTP pairing service
+  isn't up yet - a real, confirmed condition right after power-on (see
+  below) that used to mean "try again in a minute," now handled without
+  a second attempt.
 - **A build-plate photo on every finished job** - marking a job done or
   failed automatically captures a photo from the printer's onboard camera
   (over the same persistent JSON-RPC connection) and links it from the
@@ -175,7 +192,12 @@ behind each.
   more realistic as more prints complete, without ever needing to be set
   by hand. Only learns from completed ("done") prints, never cancelled
   or failed ones, whose duration says nothing about how long a full
-  print actually takes.
+  print actually takes. Each job's own ratio prefers the printer's own
+  reported elapsed time, captured the moment it's marked finished, over
+  the wall-clock gap between release and that moment - the latter
+  necessarily inherits whatever delay elapsed before someone (or the
+  automatic poller) actually noticed, which isn't the print's own
+  duration at all.
 - **Per-account theme and light/dark mode selection** - both users and
   admins get their own settings page to pick a UI theme and a light/dark
   mode independently, persisting across logins/devices (not a
@@ -185,6 +207,15 @@ behind each.
   the CSS says" - `base.html`'s styles are CSS custom properties a
   theme/mode combination overrides selectively. See `app/README.md`'s
   "Themes" section.
+- **"Remember my name" on both login pages** - another per-account
+  setting, on by default, alongside theme/mode on each account's own
+  Settings page. Pre-fills the Name/Username field on whatever device's
+  login page is visited next, never the PIN/password - deliberately
+  per-account rather than one site-wide switch, since one person on a
+  shared device may not want their own name remembered on it even if
+  others sharing that device do. Turning it off clears the remembered
+  name on the device it's turned off from immediately, not just the
+  next time that account logs in somewhere.
 - **"Console," "Savanna," "Fil," and "BMMS" themes** - four genuinely
   different themes (not just color swaps), sharing one layout: page
   links as tabs down a left sidebar instead of a top row, each page's
@@ -201,6 +232,36 @@ behind each.
   modes. See `app/README.md`'s "The 'Console' theme,"
   "The 'Savanna' theme," "The 'Fil' theme," and "The 'BMMS' theme"
   sections.
+- **"Halloween," "Thanksgiving," "Winter," "Veterans Day," and
+  "Valentine's Day" seasonal themes** - the same sidebar layout again,
+  each selectable in the theme picker only during its own date window
+  (September 15 - November 15 for Halloween, October 15 - November 30
+  for Thanksgiving, December 1 - January 15 for Winter, a much narrower
+  November 8-14 for Veterans Day - "available during the week of the
+  holiday," rather than weeks on either side of it - and February 7-21
+  for Valentine's Day, a full week either side of the holiday itself
+  since it falls on a weekend) rather than sitting year-round as
+  permanent clutter, except always selectable regardless of the current
+  date when accessing via `127.0.0.1` so development/testing doesn't
+  require waiting for the actual season. An account that picks a
+  seasonal theme reverts to the default once its window closes, rather
+  than silently keeping it forever. Halloween/Thanksgiving/Winter/
+  Valentine's Day are deliberately generic/non-romantic takes on their
+  own season or holiday, not anything that could exclude anyone - Winter
+  has no Christmas tree, menorah, or other single-holiday imagery, and
+  Valentine's Day is just hearts and a classroom card-exchange mailbox,
+  the same "school-appropriate for everyone" bar every one of these
+  themes follows; Veterans Day is the only one of the five backed by a
+  real photo rather than original artwork - the official VA.gov Veterans
+  Day poster, public domain as a U.S. federal government work, used
+  directly with only its date text removed. See `app/README.md`'s "The
+  'Halloween' theme," "The 'Thanksgiving' theme," "The 'Winter' theme,"
+  "The 'Veterans Day' theme," and "The 'Valentine's Day' theme" sections.
+- **An app logo** - an original isometric cube icon, with print-layer
+  lines etched into its two front faces, next to the "queue3d" title in
+  the header on every page, every theme. Inline SVG using `currentColor`,
+  so it always matches whatever color the surrounding header text
+  resolves to in each theme/mode, with no per-theme override needed.
 - **Automatic completion detection** - a background poller notices a
   print finishing, failing, or being cancelled on its own (via the same
   printer status read as the live progress bar above) and records the
@@ -236,6 +297,19 @@ behind each.
   right there, to relay to the user in person. The old PIN stops working
   immediately. Logged in the activity log like any other account action
   - who did it and for whom, never the PIN value itself.
+- **Admins creating and managing other admins** - any signed-in admin can
+  create another admin from `/admin/admins` (a fresh username+password,
+  not promoting an existing user's account), and disable/re-enable or
+  reset the password of another admin from that same page; a disabled
+  admin is logged out of an already-open session immediately, same as a
+  disabled user. Every admin created via `create_admin.py` is permanently
+  protected from deletion, guaranteeing there's always at least one admin
+  who can't be locked out by another's mistake - admins created through
+  the UI itself have no such protection. Every account type can also
+  change its own credential itself (current credential required first),
+  without needing another admin's help. A deleted admin's past job
+  reviews stay attributed to "`<username>` (deleted)" rather than going
+  silently orphaned.
 - **Print duration estimates shown as days/hours/minutes**, not raw
   total minutes - "1d 1h" or "2h 5m" instead of "1500 min"/"125 min",
   everywhere a duration is displayed (queued/approved/sliced estimates,
@@ -301,8 +375,12 @@ behind each.
   interlocking piece) are merged into a single job at the positions
   already saved in the file, not split apart, since those pieces are
   meant to be printed together, unlike a zip's genuinely separate files.
-  An `.obj`/`.3mf` upload is converted to a real `.stl` immediately
-  (losslessly - same geometry, different container) so nothing
+  Nested `<components>` (grouped/instanced parts some CAD tools export
+  that way) are resolved recursively; an object typed
+  `support`/`solidsupport` is skipped, so a pre-sliced export's own
+  baked-in supports can't double up against this app's own support
+  generation. An `.obj`/`.3mf` upload is converted to a real `.stl`
+  immediately (losslessly - same geometry, different container) so nothing
   downstream (slicing, the 3D preview, re-slicing) needs to know it was
   ever anything but one; the original filename still displays as
   uploaded. A real multi-part functional-print kit (15 separate model
@@ -310,14 +388,37 @@ behind each.
   successfully - see `app/README.md`'s "Fixing a real multi-model zip
   upload" for the earlier, narrower cap this exposed and the (wrong)
   concurrency assumption it was based on.
-- **Resize and auto-fit on the job edit page** - a draft's own edit page
-  has a scale control (always uniform - proportions can never distort)
-  with a live, before-you-commit 3D preview as you change it, and a
-  one-click "Auto-resize to fit build plate" button for a model that's
-  too large, computing exactly the shrink needed rather than making the
-  user guess a percentage by hand. The read-only "View 3D" page for an
+- **Resize and auto-fit on the job edit page** - a scale control (always
+  uniform - proportions can never distort) with a live, before-you-commit
+  3D preview as you change it, and a one-click "Auto-resize to fit build
+  plate" button for a model that's too large, computing exactly the
+  shrink needed rather than making the user guess a percentage by hand.
+  Full editing, not just color, is reachable from a queued/approved
+  job's own dashboard row too, not just a draft's - changing anything on
+  one re-slices it as a fresh submission (a new `queued_at`, same as a
+  genuinely new upload), landing at the end of the queue rather than
+  re-slicing in place at its old position. See `app/README.md`'s "Full
+  editing for a queued/approved job" section for the real safety
+  question this raised (an admin must never be able to release a file
+  mid-re-slice) and how it's handled. The read-only "View 3D" page for an
   already-submitted job shows it at whatever scale it was actually
-  sliced at too, not just the original file size.
+  sliced at too, not just the original file size. The camera frames
+  against the bed's own fixed scale, not just the model's - a tiny
+  model reads as small against a consistently bed-scaled view instead
+  of filling the frame on its own, and a model that's actually too
+  big for the bed visibly overflows that view instead of just
+  re-filling the frame to look "normal-sized" like every other model.
+- **Automatic mesh repair** - every upload gets checked for a watertight,
+  correctly-oriented mesh before it ever reaches the slicer (which has
+  no repair flag of its own), and repaired automatically if it isn't -
+  a lightweight pass for common issues (flipped faces, small gaps),
+  escalating to a dedicated hole-filling algorithm for larger or messier
+  ones. Already-good geometry is left completely untouched. See
+  `app/README.md`'s "Automatic mesh repair" section for two real bugs
+  caught while building this (a false "not watertight" reading from a
+  missed STL-loading step, and a repaired mesh that could come back
+  with every normal silently pointing inward) and the live verification
+  that a mesh failing OrcaSlicer directly now slices successfully.
 - **Automatic rotation retry on a slicing failure** - if a model fails to
   slice at the *default* orientation (never rotated at all), the app
   automatically tries a handful of likely rotations (quarter/eighth
@@ -351,8 +452,16 @@ behind each.
   snap-to-surface - three different ways to reach the same rotate/scale
   values, kept in sync with each other.
 - **Automated backups** - the database and finished-job archive back up
-  automatically on a schedule, rotating between two targets, with a
-  dashboard indicator if a backup hasn't run recently.
+  automatically on a schedule, rotating between two targets, each
+  keeping about three weeks of dated, auto-pruned snapshots rather than
+  a single overwritten file. `/admin/backups` shows a live, on-disk
+  manifest of what's actually retained on each drive plus the full
+  attempt history, not just the dashboard's most-recent-timestamp
+  indicator; `restore_backup.py` is the disaster-recovery counterpart -
+  a guided, interactive script for restoring a chosen snapshot back as
+  the live data. See `app/README.md`'s "Backups" section and
+  `deploy/README.md`'s "Disaster recovery: restoring from backup"
+  section for the full account.
 - **Feedback** - a free-text support/bug-report channel for either
   account type (what were you doing and what went wrong, which model/job
   it was about if applicable, approximately when), reachable from every
@@ -375,7 +484,15 @@ behind each.
   history graphs of the last few minutes, in the style of a desktop
   system monitor.
 - **Built for offline deployment** - runs entirely on a local network with
-  no internet access required; no CDN dependencies.
+  no internet access required; no CDN dependencies. On the real hardware:
+  an mDNS hostname, the full `deploy.sh` install/upgrade flow with an
+  nginx+https reverse proxy in front of it, the pre-upgrade backup/
+  rollback safety net, the three-drive live-data + rotating-backup
+  storage setup with its own systemd timers, the printer's own address
+  as an admin-configurable setting (stored in the database, so it
+  survives every future redeploy rather than needing to be hardcoded or
+  re-entered), and the downloadable admin support bundle. Full account
+  of all of it in `deploy/README.md`.
 - **App version number** shown as a footer on every page, read from
   `app/VERSION` at startup - bump that file to change what's shown, no code
   change needed.
@@ -388,171 +505,19 @@ behind each.
 
 ## To do
 
-**Upload**
-- Done - `.3mf` upload support (`mesh.parse_3mf`). Unlike a `.zip`'s
-  several genuinely separate files, a real-world `.3mf` bundling
-  multiple objects with their own placement transforms is usually one
-  interlocking assembly (hinges, gears, anything meant to print
-  together as a single piece) - so every object referenced from the
-  file's own `<build>` section is merged into one flattened mesh at
-  upload time, at the exact relative positions the file already
-  specifies, and becomes a single job, the same as any other upload -
-  not split into separate jobs the way `.zip` is. Nested `<components>`
-  (grouped/instanced parts some CAD tools export that way) are resolved
-  recursively; an object typed `support`/`solidsupport` is skipped, so a
-  pre-sliced export's own baked-in supports can't double up against this
-  app's own support generation. The client-side instant preview still
-  only understands `.stl` (same as `.obj`/`.zip` already) - a `.3mf`
-  selection shows "Preview available after upload" like those do,
-  rather than vendoring Three.js's heavier `3MFLoader` for a look
-  available moments later anyway once it's actually sliced.
-- Model repair (like PrusaSlicer/OrcaSlicer's "Fix through Netfabb") -
-  OrcaSlicer's CLI has no repair flag to lean on (that's a
-  GUI-only feature there), so this would mean a dedicated repair pass
-  before slicing - `trimesh` (Python, fill holes/fix normals/fix winding)
-  or `admesh` (a small purpose-built STL repair CLI) are the two realistic
-  options to build it on.
-- ~~Centering an uploaded model by its actual geometric centroid, not
-  just its bounding-box center - a real asymmetric model was seen to
-  fail `mbotmake`'s own bed-centering sanity check this way.~~ **Done,
-  but only a partial fix** - `slicing/stl_to_3mf.center_vertices`
-  now uses an area-weighted surface centroid (matched in
-  `static/preview.js`, which has to stay in lockstep - see either's own
-  comment), a real, measured improvement (moved the actual failing
-  model's `yrel` from -0.232 to -0.162 against the real pipeline), but
-  that specific model is asymmetric enough to still narrowly miss the
-  ±0.15 tolerance. A full volume-centroid (not just projected surface
-  area) might close the remaining gap, but needs a watertight,
-  consistently-wound mesh to compute correctly - a real precondition to
-  check first for a mesh converted from an arbitrary uploaded OBJ, not
-  yet attempted. See `app/README.md`'s "A real stuck-slicing incident"
-  section for the full numbers.
-
-**Job review & feedback**
-- Done - the open question this item raised (does changing something on
-  an active `queued`/`approved` job re-slice in place, keeping its
-  queue position, or count as a new submission that goes to the end)
-  is resolved: a new submission - a fresh `queued_at`,
-  same as a genuinely new one. The job-edit page itself (not
-  `/jobs/{id}/preview`, which stays view-only) is now reachable from a
-  queued/approved job's own dashboard row, with full resize/rotate/
-  support editing identical to a draft's - see `app/README.md`'s "Full
-  editing for a queued/approved job" section for the real safety
-  question this raised (an admin must never be able to release a file
-  mid-re-slice) and how it's handled.
-- **Real bug found using auto-fit on an actual model (an F-35 fighter
-  jet STL): "Auto-resize to fit build plate" could compute a scale that
-  still didn't actually fit.** Root cause: auto-fit and the "too large"
-  warning both measured the model's raw bounding-box span against the
-  bed, assuming it would be centered by that same bounding box - but the
-  model is actually centered on its area-weighted surface centroid (see
-  the Flexi_Seal fix above), which for a strongly lopsided shape can sit
-  nowhere near the bounding-box middle. This exact jet model, shrunk to
-  fit its own total span, still hung ~29mm off one edge of the bed once
-  centered on its real centroid. **Fixed** - both checks now measure the
-  actual centroid-relative distance to each side independently, which
-  is what genuinely determines whether it fits; unchanged for any
-  roughly-symmetric model, where the two calculations agree anyway.
-  Verified against the real file: auto-fit dropped from a wrong 9.74% to
-  a correct 7.50%, and OrcaSlicer's own placement check accepted the
-  result (previously refused with "no object is fully inside the print
-  volume").
-- The 3D preview's camera always frames around the *model's own* size
-  and position, not the bed's fixed physical dimensions - correctly
-  identified by the user right after the auto-fit fix above: "The
-  preview always shows the model in the center. If it's off center,
-  that's not displayed visually." The numeric fit-check is now correct
-  (see above) and shows as a red model + text warning, but a viewer
-  only glancing at the picture rather than reading that line could
-  still miss an overhang, since every model - fitting or not - gets
-  framed to look similarly "centered in the picture." Would need the
-  camera (or at least the bed-plate rendering) to hold a consistent
-  scale/position across every model rather than re-framing per-model -
-  a real design change to the preview, not a quick follow-up.
-
-**Audit log**
-- The core log is built (`models.JobEvent`; `/admin/log` - one global,
-  most-recent-first table across every job, which is the actual "admin
-  log view"; `/admin/jobs/{id}/log` for one job's own history) - see
-  Features below.
-- Done - filters for the global log (`/admin/log`, by actor/action/date
-  range/filename or detail substring), and for every other job/user
-  listing in the app besides (substring, color, status, est. print time,
-  date range, and submitter where relevant) - see app/README.md's
-  "Filters, on every job/log/user listing" for the full design.
-
-**Backups & recovery**
-- Let admins see a list of backups taken and a manifest of what's actually
-  in each one. Presentation undecided (a subpage, a pop-up list, something
-  else). Restoring an individual model doesn't need this - see "restore an
-  archived model" under Job review & feedback, which works directly off
-  `archive/` instead; this is about visibility into the database-level
-  backups themselves (see `backup.py`), for confirming they're actually
-  capturing what's expected.
-
-**Print options**
-- Done - a single color per job (not 1st/2nd/3rd preference, a more
-  specific spec superseding this item's original
-  wording), or "Any available" so an admin doesn't have to change
-  filament, chosen from a dropdown of whatever an admin currently has
-  enabled - plus a best-effort low-inventory notice, since it turned out
-  possible to read a job's actual filament use straight out of the real
-  sliced file. Full account in `app/README.md`'s "Filament color
-  selection" section.
-
 **Appearance**
-- Done - seven themes beyond Default: "Console" (sidebar nav,
-  bordered/titled sections, full browser width), "Savanna" (the same
-  layout with a desert-sunrise background photo), "Fil" (the same
-  layout again with an original mascot instead of a photo - a Mickey
-  Mouse theme was requested and turned down over trademark risk, see
-  `app/README.md`'s "The 'Fil' theme" section for why), "BMMS"
-  (the same layout built for this app's actual deployment site - Black
-  Mountain Middle School's own maroon-and-gold colors and Raiders logo,
-  also shown on both login pages regardless of theme), "Halloween,"
-  "Thanksgiving," and "Winter" (the same layout again, all three
-  seasonal rather than year-round - see the dedicated bullet below). All
-  seven ship both a light and dark palette - see `app/README.md`'s "The
-  'Console' theme," "The 'Savanna' theme," "The 'Fil' theme," "The
-  'BMMS' theme," "The 'Halloween' theme," "The 'Thanksgiving' theme,"
-  and "The 'Winter' theme" sections. Further themes beyond these remain
-  open; everything must still ship as local static files, no CDN fonts
-  or external image URLs (see "Deployment: zero internet access" - this
-  app runs with none, ever).
-- A logo for the app, shown on every page next to the "queue3d" title in
-  the header (`templates/base.html`).
-- Done, for Halloween, Thanksgiving, and Winter - three seasonal themes
-  (a haunted-mansion night scene with a spider hanging from the top of
-  the window; a harvest-dusk scene with a barn and a turkey standing at
-  the bottom; a snowy-dusk scene with a log cabin and a snowman standing
-  at the bottom), each selectable in the theme picker only during its
-  own date window (September 15 - November 15 for Halloween, October 15
-  - November 30 for Thanksgiving, December 1 - January 15 for Winter -
-  the first window in this app that actually crosses the calendar year
-  boundary) rather than sitting year-round as permanent clutter, except
-  always selectable regardless of the current date when accessing via
-  `127.0.0.1`, so development/testing against any of them doesn't
-  require waiting for the actual season or faking the system clock. An
-  account that picks a seasonal theme actually reverts to Default once
-  its window closes, rather than silently keeping it forever.
-  Deliberately generic seasons, not specific holidays beyond Halloween
-  and Thanksgiving themselves - Winter has no Christmas tree, menorah, or
-  any other single-holiday imagery, the same "school-appropriate for
-  everyone" bar the other two already follow. See `app/README.md`'s "The
-  'Halloween' theme," "The 'Thanksgiving' theme," and "The 'Winter'
-  theme" sections.
+- Further themes beyond the nine shipped so far remain open; everything
+  must still ship as local static files, no CDN fonts or external image
+  URLs (see "Deployment: zero internet access" - this app runs with none,
+  ever). Candidates not yet started: President's Day, St. Patrick's Day,
+  Easter, Cinco de Mayo, Mother's Day, and Memorial Day. Window
+  length/placement, color palette, and artwork all still to be decided
+  per theme, the same way each of the five seasonal ones done so far
+  settled its own.
 
-**Printer**
-- ~~Correct the fallback time estimate using real completion history~~
-  **Done** - see Features below ("A history-corrected time estimate")
-  and `app/README.md`'s "Live print progress" section. What's still
-  open: the correction is based on `finished_at` (when an admin clicked
-  "Mark done", or when automatic completion detection caught it), not
-  the printer's own recorded elapsed time for that print - capturing
-  `current_process.elapsed_time` at the moment a job is marked finished
-  would let the correction stop inheriting whatever delay elapsed
-  between the physical print actually finishing and someone/something
-  noticing.
+**Printer** (hardware-dependent items on hold - the printer itself just
+shipped out to the real deployment site; `simulator/` stands in well
+enough for everything else to keep moving without it)
 - A dedicated camera, independent of the printer's own flaky single-
   session connection, motivated by a string of real
   photo-capture failures (all since fixed - see Features above) that
@@ -577,85 +542,25 @@ behind each.
   per printer (setting up cleanly for the already-planned second
   printer), with RTSP as a fallback for any future camera that only
   streams rather than serving a plain snapshot.
-- **The persistent-connection fix is built** (see Features below) - the
-  investigation that found the underlying problem, and why the fix is
-  architectural rather than a retry/backoff tweak, is in `app/README.md`'s
-  "Persistent printer connection" section. Two things about it still
-  worth remembering as real limits, not bugs to chase further: it doesn't
-  make pairing permanent - an app restart or the printer being
-  power-cycled (this printer's normal day-to-day usage pattern) still
-  drops the connection and needs one more dial-press before the next
-  release, same as before, just not *between every single release*
-  within one continuous run any more; and the printer's HTTP pairing
-  service has been observed to take roughly a minute to come up after its
-  network/JSON-RPC service already answers, so pairing immediately after
-  power-on can still fail on timing alone. Once during the investigation,
-  a pairing request was also accepted server-side (got as far as "waiting
-  for the dial press") but nothing ever rendered on the printer's screen
-  to press - resolved on its own on a later attempt, cause not confirmed,
-  possibly a UI-state issue from repeated pairing attempts in quick
-  succession. Pairing should retry through the slow-HTTP-service case
-  automatically.
 - Support for printer models/brands beyond the MakerBot Replicator+.
 - An admin UI for managing printers - add/remove a printer and pair it,
   all from within the app, rather than today's CLI-only, server-access-
   required flow (`pair_printer.py`, one `data/printer_auth.json`/
-  `QUEUE3D_PRINTER_HOST` implicitly assuming a single printer). Real
+  `Settings.printer_host` implicitly assuming a single printer). Real
   prerequisite, not just a UI wrapper around what exists: the data model
   and `jobs.release()`'s one-job-at-a-time rule are currently written
   for exactly one printer - this needs an actual multi-printer design
   (which printer a job goes to, per-printer queues or one shared queue
   with printer selection, per-printer pairing state) before it's just a
-  form.
+  form. On hold until a second printer is actually on hand and its model
+  known - building this against an unknown printer would mean designing
+  for a protocol with no way to simulate or test it, unless that
+  printer's own API turns out to be documented or reverse-engineerable
+  the same way the MakerBot's was.
 
 **Accounts**
-- Done - any signed-in admin can create another admin from `/admin/admins`
-  (a fresh username+password, same as `create_admin.py`'s own design, not
-  promoting/converting an existing user's account - those stay two
-  separate tables). Every admin created via `create_admin.py` itself is
-  permanently `unremovable` (schema 6.4.0) - the "what stops an admin from
-  locking everyone out by deleting every admin account" question this
-  used to raise is resolved by construction as long as at least one
-  admin was ever provisioned that way, which is required regardless
-  (it's the only way to get the very first admin at all). Admins created
-  through the new UI have no such protection and can be deleted by any
-  other admin (never by themselves, while signed in as that account).
-  Done, too - disable/re-enable and password reset for another (not
-  `unremovable`) admin, from that same page (schema 6.5.0's
-  `Admin.disabled`); a disabled admin is logged out of an already-open
-  session immediately, same as a disabled user. Also done: every account
-  type can now change its own credential itself, without another
-  admin's help - `/settings` (a user's own PIN) and `/admin/settings`
-  (an admin's own password) both require the *current* credential first,
-  unlike an admin resetting someone else's, which doesn't (a different,
-  already-authenticated admin's own session is the trust boundary there
-  instead). Done, too - a deleted admin's past job reviews no longer go
-  silently orphaned: `Job.reviewed_by_name` (schema 6.6.0) is replaced
-  with "`<username>` (deleted)" at the moment of deletion, and the
-  underlying `reviewed_by_admin_id` FK is cleared rather than left
-  pointing at a since-reused id. `admin_note` needed nothing - it's the
-  rejection reason the admin typed, not a reference to which admin typed
-  it; the activity log's own attribution (`JobEvent.actor`) was already
-  immune to this, since it was a plain string snapshot from the start,
-  never a live FK. Still open: no permission scoping between admins at
-  all yet - every one has identical, full access; decided later.
-- A "remember me" option on the login pages that remembers the
-  submitted name/username for next time (never the PIN/password) -
-  a per-account setting (alongside theme/mode on each account's own
-  Settings page) rather than a single site-wide switch, since one
-  person on a shared device may not want their name remembered on it
-  even if others do. Defaults to enabled.
-
-**Deployment**
-- Done, on the real hardware: mDNS hostname, the full `deploy.sh`
-  install/upgrade flow with an nginx+https reverse proxy in front of it,
-  the pre-upgrade backup/rollback safety net, the three-drive live-data
-  + rotating-backup storage setup with its own systemd timers, and the
-  downloadable admin support bundle. Full account of all of it in
-  `deploy/README.md`. The one remaining open item there:
-  `QUEUE3D_PRINTER_HOST`/`QUEUE3D_PRINTER_PORT` as an `EnvironmentFile`,
-  only needed if the real network setup ever requires non-default
-  values.
+- No permission scoping between admins yet - every one has identical,
+  full access; decided later.
 
 ## Project layout
 
@@ -663,6 +568,9 @@ behind each.
 - `slicing/` - the STL -> print-ready-file pipeline, usable standalone.
 - `test-print/` - the printer network protocol client, usable standalone
   for testing connectivity without the rest of the app.
+- `simulator/` - a fake printer for dev work with no real hardware on
+  hand, standing in for the real MakerBot well enough to drive pairing,
+  uploads, and live status polling through their actual code paths.
 - `deploy/` - systemd unit + scripts for installing/upgrading on the real
   Raspberry Pi target with zero internet access at the deployment site.
 

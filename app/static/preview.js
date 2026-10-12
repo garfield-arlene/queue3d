@@ -18,6 +18,11 @@ const BED_WIDTH_MM = 295;
 const BED_DEPTH_MM = 195;
 const BED_HEIGHT_MM = 165;
 
+// The camera-framing floor in renderGeometry() below, matching the
+// bed's own largest dimension rather than an arbitrary small constant -
+// see that function's own comment for why.
+const BED_RADIUS_MM = Math.max(BED_WIDTH_MM, BED_DEPTH_MM, BED_HEIGHT_MM);
+
 const loader = new STLLoader();
 let scene, camera, renderer, controls, container, infoEl;
 let currentMesh = null;
@@ -186,6 +191,109 @@ function surfaceCentroidXY(geometry) {
 }
 
 /**
+ * True if every edge of `geometry`'s mesh is shared by exactly two
+ * triangles, traversed in opposite directions - the precondition
+ * volumeCentroidXY() below needs to be meaningful at all. Exact JS
+ * counterpart of slicing/stl_to_3mf.py's _is_watertight_consistent(),
+ * which must stay in lockstep with this one for the same reason
+ * surfaceCentroidXY() already does (see that function's own comment).
+ *
+ * Keyed by each edge endpoint's own coordinates (rounded to a fixed
+ * precision), not by buffer index, unlike the Python side - STLLoader
+ * here never calls setIndex() (confirmed directly against its source),
+ * so every triangle in this app's actual geometry owns independent
+ * vertex copies even along a shared edge, the same way the raw STL
+ * format itself does. Two coincident vertices from different triangles
+ * are only recognizable as "the same point" by comparing their actual
+ * coordinates, which is exactly what Python's own parse_stl() does too
+ * (its vertex-dedup dict is keyed by the exact (x,y,z) tuple) - this is
+ * the equivalent check, just performed inline per-edge instead of via a
+ * separate up-front dedup pass.
+ */
+function isWatertightConsistent(geometry) {
+    const pos = geometry.attributes.position;
+    const index = geometry.index;
+    const triCount = (index ? index.count : pos.count) / 3;
+    const vi = (i) => (index ? index.getX(i) : i);
+    const key = (i) => `${pos.getX(vi(i)).toFixed(5)},${pos.getY(vi(i)).toFixed(5)},${pos.getZ(vi(i)).toFixed(5)}`;
+
+    const directedEdges = new Map();
+    for (let t = 0; t < triCount; t++) {
+        const i0 = t * 3, i1 = t * 3 + 1, i2 = t * 3 + 2;
+        const k0 = key(i0), k1 = key(i1), k2 = key(i2);
+        for (const [u, v] of [[k0, k1], [k1, k2], [k2, k0]]) {
+            const edgeKey = `${u}|${v}`;
+            directedEdges.set(edgeKey, (directedEdges.get(edgeKey) || 0) + 1);
+        }
+    }
+    for (const [edgeKey, count] of directedEdges) {
+        if (count !== 1) return false;
+        const [u, v] = edgeKey.split("|");
+        if ((directedEdges.get(`${v}|${u}`) || 0) !== 1) return false;
+    }
+    return true;
+}
+
+/**
+ * True 3D center-of-mass of `geometry`'s enclosed volume, projected to
+ * X/Y, or null if the precondition (isWatertightConsistent above)
+ * isn't met or the computed total volume comes out ~zero (a degenerate/
+ * flat mesh, or one broken enough that the formula's own signed
+ * contributions cancelled out to noise). Exact JS counterpart of
+ * slicing/stl_to_3mf.py's volume_centroid_xy() - see that function's
+ * own docstring for why this exists (surface_centroid_xy's gap for a
+ * strongly asymmetric model) and the divergence-theorem formula this
+ * computes. Works directly on the raw, non-indexed triangle positions -
+ * unlike the watertightness check above, this sum doesn't need shared
+ * vertex identity at all, only each triangle's own three positions.
+ */
+function volumeCentroidXY(geometry) {
+    if (!isWatertightConsistent(geometry)) return null;
+    const pos = geometry.attributes.position;
+    const index = geometry.index;
+    const triCount = (index ? index.count : pos.count) / 3;
+    const vx = (i) => pos.getX(index ? index.getX(i) : i);
+    const vy = (i) => pos.getY(index ? index.getX(i) : i);
+    const vz = (i) => pos.getZ(index ? index.getX(i) : i);
+
+    let totalVolume = 0;
+    let weightedX = 0;
+    let weightedY = 0;
+    for (let t = 0; t < triCount; t++) {
+        const i0 = t * 3, i1 = t * 3 + 1, i2 = t * 3 + 2;
+        const ax = vx(i0), ay = vy(i0), az = vz(i0);
+        const bx = vx(i1), by = vy(i1), bz = vz(i1);
+        const cx = vx(i2), cy = vy(i2), cz = vz(i2);
+        const signedVol = (
+            ax * (by * cz - bz * cy) +
+            ay * (bz * cx - bx * cz) +
+            az * (bx * cy - by * cx)
+        ) / 6;
+        weightedX += signedVol * (ax + bx + cx) / 4;
+        weightedY += signedVol * (ay + by + cy) / 4;
+        totalVolume += signedVol;
+    }
+    if (Math.abs(totalVolume) < 1e-9) return null;
+    return { x: weightedX / totalVolume, y: weightedY / totalVolume };
+}
+
+/**
+ * The actual centroid to center a model on - the true volume centroid
+ * when it's computable (volumeCentroidXY above), falling back to the
+ * area-weighted surface projection (surfaceCentroidXY) otherwise. Every
+ * caller that needs "where is this model's center" uses this, not
+ * surfaceCentroidXY directly, so renderGeometry()'s own centering and
+ * autoFitScale()'s centroid-relative distance check can never disagree
+ * with each other - exact JS counterpart of slicing/stl_to_3mf.py's
+ * center_vertices() using the same volume-first, surface-fallback
+ * logic, which this must stay in lockstep with for the same reason
+ * surfaceCentroidXY's own comment already explains.
+ */
+function centroidXY(geometry) {
+    return volumeCentroidXY(geometry) || surfaceCentroidXY(geometry);
+}
+
+/**
  * Renders `geometry` (already scaled by the caller, if at all) - the
  * shared body behind both showModel() (a fresh load) and
  * setPreviewScale() (re-rendering the same raw model at a new scale,
@@ -221,15 +329,18 @@ function renderGeometry(geometry) {
 
     // Center the model on the bed in X/Y and drop it so its lowest point
     // sits on the plate (Z=0) - the same "auto place on bed" a slicer does.
-    // Area-weighted surface centroid, not the bounding-box midpoint - see
-    // surfaceCentroidXY()'s own comment and slicing/stl_to_3mf.py's
-    // matching center_vertices(): an asymmetric model (most of its
-    // surface well off from its own box's middle) can pass bbox-centering
-    // fine here but then fail the slicer's own downstream bed-centering
-    // check, since that check looks at where the sliced material actually
-    // ends up, not the box. Confirmed against a real model that failed
-    // exactly that way before this changed.
-    const centroid = surfaceCentroidXY(geometry);
+    // The true volume centroid when computable, falling back to the
+    // area-weighted surface projection otherwise (see centroidXY's own
+    // comment) - not the bounding-box midpoint either way:
+    // slicing/stl_to_3mf.py's matching center_vertices() uses the
+    // identical volume-first, surface-fallback logic, since an
+    // asymmetric model (most of its surface or volume well off from its
+    // own box's middle) can pass bbox-centering fine here but then fail
+    // the slicer's own downstream bed-centering check, which looks at
+    // where the sliced material actually ends up, not the box. Confirmed
+    // against a real model that failed exactly that way before this
+    // changed.
+    const centroid = centroidXY(geometry);
     geometry.translate(-centroid.x, -centroid.y, -box.min.z);
 
     // Whether it actually fits has to be checked against this final,
@@ -260,15 +371,32 @@ function renderGeometry(geometry) {
     currentMesh = new THREE.Mesh(geometry, material);
     scene.add(currentMesh);
 
-    // Frame the camera around the model - distance scales with its size so
-    // a tiny calibration cube and a bed-filling model both start visible.
-    // near/far scale too: a fixed far plane would clip (render nothing for)
-    // a model large enough to need a camera distance beyond it - a real
-    // risk here specifically, since "too large for the build plate" is
-    // often a units mistake (e.g. meters exported as if mm) rather than a
-    // merely-somewhat-oversized model, and can be 1000x larger than expected.
-    const radius = Math.max(size.x, size.y, size.z, 20);
-    camera.near = Math.max(radius / 1000, 0.01);
+    // Frame the camera around the model AND the bed together, holding a
+    // floor tied to the bed's own fixed size (BED_RADIUS_MM) rather than
+    // a small, model-size-only minimum. The real bug this fixes: every
+    // model used to get framed to fill the view similarly regardless of
+    // its actual size relative to the bed - a genuinely tiny model and a
+    // genuinely oversized one both just "filled the frame" and looked
+    // similarly normal-sized, with only the separate text warning (see
+    // infoEl below) saying otherwise. A model actually bigger than the
+    // bed now visibly overflows this bed-anchored view instead of simply
+    // re-filling the frame to match it; a tiny one now visibly reads as
+    // small against a consistently bed-scaled view instead of filling
+    // the frame on its own. near/far scale with it too: a fixed far
+    // plane would clip (render nothing for) a model large enough to need
+    // a camera distance beyond it - a real risk here specifically, since
+    // "too large for the build plate" is often a units mistake (e.g.
+    // meters exported as if mm) rather than a merely-somewhat-oversized
+    // model, and can be 1000x larger than expected.
+    const modelSpan = Math.max(size.x, size.y, size.z, 1);
+    const radius = Math.max(modelSpan, BED_RADIUS_MM);
+    // near scales with the model's own span, not the bed-anchored radius
+    // below - otherwise a small model's minDistance (also model-span-
+    // based, a few lines down) could end up closer than near itself,
+    // clipping the model out of view the moment someone actually zoomed
+    // in close on it. far still uses the bed-anchored radius - that
+    // direction has no equivalent clipping risk, only wasted depth range.
+    camera.near = Math.max(modelSpan / 1000, 0.01);
     camera.far = radius * 20;
     camera.updateProjectionMatrix();
     camera.position.set(radius * 1.4, -radius * 1.6, radius * 1.3);
@@ -278,11 +406,13 @@ function renderGeometry(geometry) {
     // scrolling the camera distance past near or far above, at which
     // point the model just clips out of view entirely: turning still
     // worked (orbit doesn't change distance), but zooming either
-    // direction far enough made the model disappear completely. Bounds
-    // tied to the same radius near/far are scaled from, comfortably
-    // inside both (well past near, well short of far) so the zoom range
-    // itself can never reach the clipping planes that broke this.
-    controls.minDistance = radius * 0.1;
+    // direction far enough made the model disappear completely. Minimum
+    // distance is tied to the model's own span, not the bed-anchored
+    // radius above - a small model should still be zoomable in close for
+    // inspection, not stuck behind the bed-scale framing floor; maximum
+    // distance uses the bed-anchored radius, since zooming out further
+    // than that is harmless either way. Both comfortably inside near/far.
+    controls.minDistance = modelSpan * 0.1;
     controls.maxDistance = radius * 15;
     controls.update();
 
@@ -484,7 +614,7 @@ export function autoFitScale(rotateX = 0, rotateY = 0, rotateZ = 0) {
     box.getSize(size);
     if (![size.x, size.y, size.z].every(Number.isFinite)) return 1;
 
-    const centroid = surfaceCentroidXY(geometry);
+    const centroid = centroidXY(geometry);
     const halfExtentX = Math.max(Math.abs(box.min.x - centroid.x), Math.abs(box.max.x - centroid.x));
     const halfExtentY = Math.max(Math.abs(box.min.y - centroid.y), Math.abs(box.max.y - centroid.y));
     if (![halfExtentX, halfExtentY].every(Number.isFinite)) return 1;

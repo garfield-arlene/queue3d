@@ -201,3 +201,31 @@ def record_successful_login(session: Session, account) -> None:
         account.locked_until = None
         session.add(account)
         session.commit()
+
+
+# A year - "remembered" should actually mean something, not quietly
+# expire after a couple of weeks like the session cookie itself does.
+REMEMBERED_NAME_MAX_AGE = 60 * 60 * 24 * 365
+
+
+def apply_remembered_name(response, cookie_name: str, remember: bool, name: str) -> None:
+    """Sets or clears the long-lived, httponly cookie that pre-fills a
+    login page's Name/Username field next time - never the PIN/
+    password itself, only ever the plain name already typed into the
+    form. `remember` is the account's own User.remember_me/
+    Admin.remember_me preference (see each model's own comment) - True
+    sets the cookie to `name`, False actively clears it rather than
+    just leaving an old one to linger until it naturally expires, so
+    turning this off takes effect immediately, not just "next login."
+    Called both right after a successful login (so a *new* device
+    starts remembering correctly) and right when the preference itself
+    is saved on the settings page (so flipping it takes effect on the
+    device someone's actually sitting at, without waiting for their
+    next login there). No `secure` flag forced, same as the session
+    cookie's own (SessionMiddleware's) default - this app runs over
+    plain HTTP in local dev and HTTPS in production alike, and forcing
+    it here would silently stop this working in dev."""
+    if remember:
+        response.set_cookie(cookie_name, name, max_age=REMEMBERED_NAME_MAX_AGE, httponly=True, samesite="lax")
+    else:
+        response.delete_cookie(cookie_name)

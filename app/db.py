@@ -404,6 +404,76 @@ def _migrate_to_8_1_0(conn):
         conn.execute(text("ALTER TABLE job ADD COLUMN rotation_manual BOOLEAN NOT NULL DEFAULT 0"))
 
 
+def _migrate_to_9_1_0(conn):
+    """New Settings.printer_host/printer_port columns - see
+    models.Settings's own comment on them and printer.printer_host's
+    docstring for the real incident that moved this from an env var to
+    an admin-configurable setting. Defaults to the real deployment
+    site's own address (192.168.0.254) and the protocol's fixed port
+    (9999) - not a placeholder, since that's the one address this app
+    actually needs on its one real network.
+
+    That default alone isn't quite enough for the one real deployment
+    actually making this exact transition, though: its printer.py was
+    hand-edited directly on the Pi (the real incident above) to a
+    hardcoded address that may not even be this one, and this upgrade
+    would otherwise silently discard that in favor of the hardcoded
+    default here, right back to needing a manual fix. remote_install.sh
+    captures whatever the OLD, about-to-be-replaced printer.py's
+    printer_host() actually resolves to, before overwriting it, and
+    drops it in this seed file for exactly this migration to pick up
+    and carry forward - see that script's own comment. Deleted after
+    being read, so it can never re-apply (or re-override a since-
+    changed admin setting) on any later run; its mere absence is also
+    exactly what makes a genuinely fresh install just use the plain
+    default above with no seed file ever involved at all."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(settings)")).fetchall()}
+    if "printer_host" not in cols:
+        conn.execute(
+            text("ALTER TABLE settings ADD COLUMN printer_host VARCHAR NOT NULL DEFAULT '192.168.0.254'")
+        )
+    if "printer_port" not in cols:
+        conn.execute(text("ALTER TABLE settings ADD COLUMN printer_port INTEGER NOT NULL DEFAULT 9999"))
+
+    seed_path = DATA_DIR / ".printer_host_migration_seed"
+    if seed_path.exists():
+        seed_host = seed_path.read_text().strip()
+        if seed_host:
+            row = conn.execute(text("SELECT id FROM settings WHERE id=1")).first()
+            if row is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO settings "
+                        "(id, draft_expiry_days, display_timezone, old_job_threshold_days, "
+                        "printer_host, printer_port) "
+                        "VALUES (1, 7, 'UTC', 30, :host, 9999)"
+                    ),
+                    {"host": seed_host},
+                )
+            else:
+                conn.execute(
+                    text("UPDATE settings SET printer_host = :host WHERE id = 1"),
+                    {"host": seed_host},
+                )
+        seed_path.unlink()
+
+
+def _migrate_to_9_2_0(conn):
+    """New User.remember_me/Admin.remember_me (default True - per the
+    user, opt-out not opt-in) and Job.actual_duration_s (default NULL -
+    nothing to carry forward for a job that already finished before
+    this existed; _duration_correction_factor's own fallback already
+    handles that case) - see each column's own comment in models.py."""
+    for table, col, ddl in [
+        ("user", "remember_me", "ALTER TABLE user ADD COLUMN remember_me BOOLEAN NOT NULL DEFAULT 1"),
+        ("admin", "remember_me", "ALTER TABLE admin ADD COLUMN remember_me BOOLEAN NOT NULL DEFAULT 1"),
+        ("job", "actual_duration_s", "ALTER TABLE job ADD COLUMN actual_duration_s FLOAT"),
+    ]:
+        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if col not in cols:
+            conn.execute(text(ddl))
+
+
 # Keyed by the app VERSION a schema (or, as of 7.1.0, sometimes pure
 # data) change shipped in, not a separate incrementing number - per the
 # user, a schema change should always come with a version bump, so
@@ -447,6 +517,8 @@ MIGRATIONS = {
     "6.6.0": _migrate_to_6_6_0,
     "7.1.0": _migrate_to_7_1_0,
     "8.1.0": _migrate_to_8_1_0,
+    "9.1.0": _migrate_to_9_1_0,
+    "9.2.0": _migrate_to_9_2_0,
 }
 
 

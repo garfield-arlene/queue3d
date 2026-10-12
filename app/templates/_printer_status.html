@@ -3,24 +3,66 @@
    self-terminating pattern as _jobs_table.html's slicing-progress
    polling: only carries hx-get/hx-trigger while pairing is actually in
    progress, so polling stops on its own the moment it finishes one way
-   or the other. #}
+   or the other.
+
+   The headline status (bold, in its own bordered box - .notice, the
+   same neutral "highlight box" token every other one-off status
+   message in this app already uses, see base.html's own comment on
+   it) is deliberately the first, most visually distinct thing here -
+   found by testing, not assumed: with every state rendered as plain
+   paragraph text of the same weight/size, a quick glance at the
+   dashboard couldn't tell "connected" from "needs attention" without
+   actually reading it. .error (already theme-aware - see base.html)
+   is added to the same box only for states that need action; anything
+   neutral/in-progress/good stays on .notice alone rather than
+   introducing a separate "success" color per theme for this one spot. #}
 <div id="printer-status"
   {% if pairing.in_progress %}
     hx-get="/admin/printer-status" hx-trigger="every 2s" hx-swap="outerHTML"
   {% endif %}
 >
   {% if pairing.in_progress %}
-    <p class="muted">Pairing with the printer - check its screen and press the dial to accept.</p>
+    {% if pairing.phase == "connecting" %}
+      <div class="notice">
+        <strong>Pairing: waiting for the printer</strong>
+        <p class="muted">
+          Its pairing service isn't up yet (normal for up to about a
+          minute right after power-on) - retrying automatically.
+        </p>
+      </div>
+    {% else %}
+      <div class="notice">
+        <strong>Pairing: waiting for the dial press</strong>
+        <p class="muted">Check the printer's screen and press the dial to accept.</p>
+      </div>
+    {% endif %}
   {% else %}
     {% if printer_status == "connected" %}
-      <p class="muted">Printer connected.</p>
+      <div class="notice"><strong>Printer: connected</strong></div>
+    {% elif printer_status == "not_configured" %}
+      <div class="notice error">
+        <strong>Printer: not configured</strong>
+        <p>
+          No printer configured at all - not even a wrong address.
+          (Different from "unreachable" below - there's no address here
+          to have even tried.) Set one on the
+          <a href="/admin/settings">settings page</a>.
+        </p>
+      </div>
     {% elif printer_status == "unreachable" %}
-      <p class="error">
-        Couldn't reach the printer on the last attempt - check that it's powered
-        on and on the network. (Re-pairing won't fix this specific problem.)
-      </p>
+      <div class="notice error">
+        <strong>Printer: unreachable</strong>
+        <p>
+          Couldn't reach it on the last attempt - check that it's
+          powered on and on the network. (Re-pairing won't fix this
+          specific problem.)
+        </p>
+      </div>
     {% elif printer_status == "needs_pairing" %}
-      <p class="error">Printer needs to be paired before jobs can be released to it.</p>
+      <div class="notice error">
+        <strong>Printer: needs pairing</strong>
+        <p>Jobs can't be released to it until it's paired - see below.</p>
+      </div>
     {% elif pairing.just_succeeded %}
       {# Distinct from the generic "not yet verified" below - that
          wording, right after someone just paired (dial press and all),
@@ -28,9 +70,12 @@
          actually been tried against the printer to disprove it yet (see
          printer.start_pairing()'s docstring for why a fresh token is
          never speculatively verified). #}
-      <p class="muted">Pairing succeeded - ready for the next release or capture.</p>
+      <div class="notice">
+        <strong>Pairing succeeded</strong>
+        <p class="muted">Ready for the next release or capture.</p>
+      </div>
     {% else %}
-      <p class="muted">Printer connection not yet verified this session.</p>
+      <div class="notice"><strong>Printer: not yet verified this session</strong></div>
     {% endif %}
     {# The button is always available, regardless of the status above -
        that status is only ever a best-effort snapshot of the last real

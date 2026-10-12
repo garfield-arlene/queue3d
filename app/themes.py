@@ -170,6 +170,55 @@ THEMES = {
     # it's actually offered, and app/README.md's "The 'Winter' theme"
     # section for the full writeup.
     "winter": "Winter",
+    # Same shared sidebar/full-width/bordered-section layout again,
+    # seasonal like the other three, with a much narrower window than
+    # any of them - per the user, "available during the week of the
+    # holiday" (Veterans Day itself is fixed, November 11th, unlike
+    # Thanksgiving's own floating fourth-Thursday date) - see
+    # SEASONAL_THEMES below. Unlike every other seasonal theme here, the
+    # background behind the sidebar (app/static/theme-veterans-
+    # poster.jpg) isn't original artwork - after two from-scratch
+    # redesigns (a medallion grid, then a silhouette ensemble) both read
+    # as "a bunch of stickers arranged on a wall" rather than a real
+    # poster, the user asked to just use a real one directly: the
+    # official VA.gov Veterans Day poster (a bugler silhouette against a
+    # dusk sky, the U.S. flag, every branch of the Armed Forces named
+    # down the side, both government seals), with only its date text
+    # edited out. A federal government work like this is public domain
+    # under 17 U.S.C. SS 105 - created by a federal employee as part of
+    # their official duties - which is exactly why using it directly,
+    # unlike a trademarked/copyrighted character, is fine; see app/
+    # README.md's "The 'Veterans Day' theme" section for the full
+    # writeup, including how the date was removed.
+    "veterans": "Veterans Day",
+    # Same shared sidebar/full-width/bordered-section layout again,
+    # seasonal like the other four, with a wider window than Veterans
+    # Day's own narrow one - per the user, "the week before and week
+    # after the holiday since it falls on a weekend" (Valentine's Day
+    # itself, February 14th, is fixed like Veterans Day's November 11th,
+    # unlike Thanksgiving's floating date): a flat fourteen-day window,
+    # a full week either side of the date itself, so the theme stays
+    # active on nearby school days even though the holiday itself lands
+    # on a weekend. A cozy pink-and-red scene (app/static/theme-
+    # valentines-hearts.svg: a dusky rose sky, a heart-blossom tree, a
+    # mailbox overflowing with valentine cards, drifting hearts) behind
+    # the sidebar, a teddy bear hugging a heart standing at the bottom
+    # of the window (app/static/theme-valentines-bear.svg) - same
+    # bottom-of-the-window standing slot as the Thanksgiving turkey/
+    # Winter snowman, same reasoning: a bear has an obvious standing
+    # pose, no edge-gripping/hanging concept needed - and a small
+    # garland of heart bunting (app/static/theme-valentines-garland.svg)
+    # over the top-right corner of the content panel rather than the
+    # sidebar: a first version strung it across the sidebar instead,
+    # directly behind the header's own nav text, and per the user,
+    # after seeing it live, that read as "difficult to read." Deliberately
+    # just hearts and a classic card-
+    # exchange mailbox, nothing romantic beyond that - the same
+    # "school-appropriate for everyone" bar every other seasonal theme
+    # here follows. See SEASONAL_THEMES below for when it's actually
+    # offered, and app/README.md's "The 'Valentine's Day' theme" section
+    # for the full writeup.
+    "valentines": "Valentine's Day",
 }
 
 MODES = {
@@ -194,6 +243,23 @@ SEASONAL_THEMES = {
     # Crosses the calendar year boundary - see _in_season()'s own
     # docstring for why that needed a real fix, not just a new entry.
     "winter": ((12, 1), (1, 15)),
+    # Deliberately much narrower than the other three - per the user,
+    # "available during the week of the holiday," not weeks on either
+    # side of it the way Halloween/Thanksgiving/Winter each are.
+    # Veterans Day itself is always November 11th (unlike Thanksgiving's
+    # floating fourth-Thursday date, which still gets a flat date range
+    # here rather than any real weekday math), so a fixed, symmetric
+    # seven-day window centered on it - three days either side - is a
+    # plain, unambiguous reading of "the week of" that needs no
+    # day-of-week awareness at all, matching how every other window here
+    # is just a flat (month, day) range.
+    "veterans": ((11, 8), (11, 14)),
+    # Per the user, "the week before and week after the holiday since it
+    # falls on a weekend" - unlike Veterans Day's own narrow three-days-
+    # either-side window, a full seven days either side of February
+    # 14th so the theme stays active on nearby school days even though
+    # the holiday itself lands on a weekend.
+    "valentines": ((2, 7), (2, 21)),
 }
 
 

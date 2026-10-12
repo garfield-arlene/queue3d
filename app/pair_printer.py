@@ -11,14 +11,28 @@ from printer import pair, printer_host, printer_port, save_access_token
 
 def main():
     host = printer_host()
+    if not host:
+        print(
+            "No printer configured - set the printer's IP address on the "
+            "admin settings page (/admin/settings) first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     port = printer_port()
     print(f"Pairing with printer at {host}:{port} ...")
+
+    def on_connecting():
+        print(
+            "The printer's pairing service isn't responding yet (this is "
+            "normal for up to about a minute right after power-on) - "
+            "retrying..."
+        )
 
     def on_waiting():
         print("Check the printer's screen and press the dial to accept the pairing request...")
 
     try:
-        token = pair(host, on_waiting=on_waiting)
+        token = pair(host, on_waiting=on_waiting, on_connecting=on_connecting)
     except Exception as e:
         print(f"Pairing failed: {e}", file=sys.stderr)
         sys.exit(1)

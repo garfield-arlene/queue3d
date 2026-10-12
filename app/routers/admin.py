@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 import sysmetrics
 from auth import (
     admin_by_username,
+    apply_remembered_name,
     check_lockout,
     generate_password,
     generate_pin,
@@ -25,7 +26,8 @@ from auth import (
     require_admin,
     verify_secret,
 )
-from backup import get_last_successful_backup, is_stale
+from backup import get_backup_history, get_last_successful_backup, is_stale
+from backup import manifest as backup_manifest
 from db import get_session
 from feedback import create_feedback, list_feedback
 from filters import (
@@ -71,6 +73,10 @@ from themes import DEFAULT_MODE, MODES, effective_theme, is_theme_selectable, is
 
 router = APIRouter(prefix="/admin")
 
+# See auth.apply_remembered_name's own docstring. A separate cookie from
+# routers/user.py's own - two entirely separate login pages/accounts.
+REMEMBERED_NAME_COOKIE = "queue3d_remembered_admin_username"
+
 # Every JobStatus that can actually appear in active_jobs()/finished_jobs()
 # respectively - the status dropdown on each filtered view (see
 # templates/_job_filters.html) only ever offers a value that view's own
@@ -85,7 +91,12 @@ _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
 
 @router.get("/login")
 def login_form(request: Request):
-    return templates.TemplateResponse(request, "admin_login.html", {})
+    # Pre-fills Username from a remembered previous login on this device,
+    # if any (see auth.apply_remembered_name) - the exact same "username"
+    # template variable a failed-login round-trip already populates
+    # below, so admin_login.html needs no change at all for this.
+    remembered_username = request.cookies.get(REMEMBERED_NAME_COOKIE)
+    return templates.TemplateResponse(request, "admin_login.html", {"username": remembered_username})
 
 
 @router.post("/login")
@@ -120,7 +131,9 @@ def login(
 
     record_successful_login(session, admin)
     request.session["admin_id"] = admin.id
-    return RedirectResponse("/admin/dashboard", status_code=303)
+    response = RedirectResponse("/admin/dashboard", status_code=303)
+    apply_remembered_name(response, REMEMBERED_NAME_COOKIE, admin.remember_me, admin.username)
+    return response
 
 
 @router.post("/logout")
@@ -204,6 +217,23 @@ def dashboard(
     return templates.TemplateResponse(
         request, "admin_dashboard.html", _dashboard_context(session, admin, filters=filters)
     )
+
+
+@router.get("/dashboard/jobs-table")
+def dashboard_jobs_table(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+    filters: dict = Depends(job_filter_params),
+):
+    """Just the queue table, for the htmx polling in
+    templates/_admin_jobs_table.html to re-fetch while a job is still
+    printing - see that template for why polling stops on its own once
+    none are. Mirrors routers/user.py's identical dashboard_jobs_table,
+    same reasoning: takes the same filter query params as /dashboard so
+    a filtered view doesn't silently revert to unfiltered every poll."""
+    context = _dashboard_context(session, admin, filters=filters)
+    return templates.TemplateResponse(request, "_admin_jobs_table.html", context)
 
 
 @router.get("/printer-status")
@@ -319,6 +349,31 @@ def system_refresh(
     (sysmetrics.SAMPLE_INTERVAL_S) - a faster poll would just re-render
     the identical numbers for nothing."""
     return templates.TemplateResponse(request, "_system_metrics.html", _system_context(admin))
+
+
+@router.get("/backups")
+def backups_page(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """See README.md's Backups & recovery to-do item: an admin-visible
+    way to confirm backups are actually capturing what's expected,
+    rather than trusting the dashboard's single "last backup" timestamp
+    alone. Two halves - `records` is the full attempt history
+    (backup.get_backup_history); `manifest` is a live stat of what's
+    actually sitting at each target right now (backup.manifest) - a log
+    entry claiming success and the real file on disk are two different
+    things to check."""
+    return templates.TemplateResponse(
+        request,
+        "admin_backups.html",
+        {
+            "admin": admin,
+            "records": get_backup_history(session),
+            "manifest": backup_manifest(),
+        },
+    )
 
 
 def _get_job_or_404(session: Session, job_id: int) -> Job:
@@ -1054,9 +1109,12 @@ def update_settings(
     draft_expiry_days: int = Form(...),
     display_timezone: str = Form(...),
     old_job_threshold_days: int = Form(...),
+    printer_host: str = Form(...),
+    printer_port: int = Form(...),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
+    printer_host = printer_host.strip()
     error = None
     if draft_expiry_days < 1:
         error = "Draft expiry must be at least 1 day."
@@ -1064,11 +1122,17 @@ def update_settings(
         error = "Not a real timezone choice."
     elif old_job_threshold_days < 1:
         error = "Old-job threshold must be at least 1 day."
+    elif not printer_host:
+        error = "Printer IP address can't be blank."
+    elif not (1 <= printer_port <= 65535):
+        error = "Printer port must be between 1 and 65535."
     else:
         settings = get_settings(session)
         settings.draft_expiry_days = draft_expiry_days
         settings.display_timezone = display_timezone
         settings.old_job_threshold_days = old_job_threshold_days
+        settings.printer_host = printer_host
+        settings.printer_port = printer_port
         session.add(settings)
         session.commit()
         # Takes effect immediately, for every viewer, not just after a
@@ -1086,14 +1150,17 @@ def update_admin_theme(
     request: Request,
     theme: str = Form(...),
     mode: str = Form(...),
+    # False, not Form(...) - an unchecked checkbox sends no field at
+    # all, same reasoning as routers/user.py's own update_settings.
+    remember_me: bool = Form(False),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
     """Separate from update_settings above on purpose - this is the
     signed-in admin's own personal preference (models.Admin.theme/
-    theme_mode), not part of the shared, site-wide Settings row every
-    admin edits together, so it gets its own form/endpoint rather than
-    being bundled into the same submit."""
+    theme_mode/remember_me), not part of the shared, site-wide Settings
+    row every admin edits together, so it gets its own form/endpoint
+    rather than being bundled into the same submit."""
     error = None
     if not is_valid_theme(theme):
         error = "Not a real theme choice."
@@ -1104,11 +1171,18 @@ def update_admin_theme(
     else:
         admin.theme = theme
         admin.theme_mode = mode
+        admin.remember_me = remember_me
         session.add(admin)
         session.commit()
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request, "admin_settings.html", _admin_settings_context(request, session, admin, error, error is None)
     )
+    if error is None:
+        # Takes effect on this device right now, not just "next login" -
+        # see auth.apply_remembered_name's own docstring for why both
+        # places matter.
+        apply_remembered_name(response, REMEMBERED_NAME_COOKIE, admin.remember_me, admin.username)
+    return response
 
 
 @router.post("/settings/change_password")

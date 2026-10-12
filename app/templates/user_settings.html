@@ -28,6 +28,15 @@
       </select>
     </label>
     <p class="muted">Follows your account across logins, not just this browser.</p>
+    <label>
+      <input type="checkbox" name="remember_me" {% if user.remember_me %}checked{% endif %}>
+      Remember my name on this device's login page
+    </label>
+    <p class="muted">
+      Pre-fills your name next time you log in on whatever device you're
+      using - never your PIN. Turn this off if you're on a shared device
+      and don't want your name shown there.
+    </p>
     <button type="submit">Save</button>
   </form>
 

@@ -1,14 +1,19 @@
 {# Included by user_dashboard.html, and re-rendered standalone by
    GET /dashboard/jobs-table for htmx polling below.
 
-   Polling (hx-trigger="every 2s") only turns on when a row is still
-   'submitted' - i.e. slicing (or re-slicing) hasn't finished yet - and
-   stops on its own the moment it has: once nothing here is 'submitted'
-   any more, the re-rendered div simply doesn't carry the hx-get/
-   hx-trigger attributes, so there's nothing left telling htmx to keep
-   asking. No separate "stop polling" signal needed. #}
+   Polling (hx-trigger="every 2s") turns on when a row is still
+   'submitted' (slicing, or re-slicing, hasn't finished yet) or
+   'printing' - stops on its own the moment neither applies any more:
+   once no row matches, the re-rendered div simply doesn't carry the
+   hx-get/hx-trigger attributes, so there's nothing left telling htmx
+   to keep asking. No separate "stop polling" signal needed. The
+   'printing' case specifically: found by testing, not assumed, that a
+   job finished automatically by jobs.check_and_finish_active_print's
+   background poller (nobody on this page clicked anything) just sat
+   showing "printing now" forever otherwise, since nothing was polling
+   any more once slicing itself had already finished earlier. #}
 <div id="jobs-table"
-  {% if rows | selectattr('job.status.value', 'equalto', 'submitted') | list %}
+  {% if rows | selectattr('job.status.value', 'in', ['submitted', 'printing']) | list %}
     {# Forwards the page's own current filter query string (see
        _job_filters.html) - without this, a filtered view would silently
        revert to unfiltered every 2s while something is still slicing. #}

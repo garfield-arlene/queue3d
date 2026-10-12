@@ -154,12 +154,98 @@ def surface_centroid_xy(vertices, triangles):
     return weighted_x / total_area, weighted_y / total_area
 
 
+def _is_watertight_consistent(triangles):
+    """True if every edge of the mesh is shared by exactly two triangles,
+    traversed in opposite directions - the precondition a true 3D volume
+    centroid (volume_centroid_xy below) needs to be meaningful at all.
+    A mesh that's torn open (a missing face - the kind app/mesh_repair.py
+    exists to catch at upload time) or inconsistently wound (some faces
+    flipped) would otherwise produce a volume-centroid number that looks
+    like a normal float but is actually wrong - silently worse than the
+    surface-projection fallback above, not better. Checked here
+    independently rather than trusted from upstream repair, since this
+    script runs as its own subprocess (see this module's own top-level
+    docstring on why) with no visibility into whether repair actually
+    succeeded for a given file - repair is best-effort, not a guarantee
+    (see app/mesh_repair.py's own docstring for why).
+
+    For a closed, consistently-wound mesh, each triangle's three directed
+    edges (a->b, b->c, c->a, in its own winding order) must each appear
+    exactly once across the whole mesh, and each one's exact reverse
+    (b->a) must also appear exactly once elsewhere - two triangles
+    sharing a real edge always traverse it in opposite directions if
+    consistently wound. A directed edge appearing twice means duplicate/
+    overlapping geometry or inconsistent winding; one with no matching
+    reverse means an open boundary (not watertight)."""
+    directed_edges = {}
+    for a, b, c in triangles:
+        for u, v in ((a, b), (b, c), (c, a)):
+            directed_edges[(u, v)] = directed_edges.get((u, v), 0) + 1
+    for (u, v), count in directed_edges.items():
+        if count != 1:
+            return False
+        if directed_edges.get((v, u), 0) != 1:
+            return False
+    return True
+
+
+def volume_centroid_xy(vertices, triangles):
+    """True 3D center-of-mass of the mesh's enclosed volume, projected to
+    X/Y, or None if the mesh doesn't meet the precondition that makes
+    this meaningful at all (see _is_watertight_consistent above) or comes
+    out with ~zero total volume (a degenerate/flat mesh, or one broken
+    enough that the formula's own signed contributions cancelled out to
+    noise) - center_vertices() below falls back to the surface-projection
+    centroid in either case.
+
+    This is the real fix for the gap surface_centroid_xy() above still
+    has: that one weights by *surface* area, which can sit far from
+    where the model's actual *material* is concentrated - a thin, wide
+    flange next to a tall, narrow tower weights toward the flange by
+    surface area alone, even if the tower holds more material.
+    mbotmake's own bed-centering sanity check compares against where the
+    sliced toolpath's material actually ends up, which is a question
+    about volume, not surface area.
+
+    Computed via signed tetrahedra from the coordinate origin to each
+    triangle (the standard divergence-theorem mesh-volume formula) -
+    exact for a true watertight, consistently-wound solid, meaningless
+    otherwise, which is exactly why the precondition above is checked
+    first rather than assumed."""
+    if not _is_watertight_consistent(triangles):
+        return None
+    total_volume = 0.0
+    weighted_x = 0.0
+    weighted_y = 0.0
+    for a_i, b_i, c_i in triangles:
+        ax, ay, az = vertices[a_i]
+        bx, by, bz = vertices[b_i]
+        cx, cy, cz = vertices[c_i]
+        signed_vol = (
+            ax * (by * cz - bz * cy)
+            + ay * (bz * cx - bx * cz)
+            + az * (bx * cy - by * cx)
+        ) / 6.0
+        # Centroid of the tetrahedron (origin, a, b, c) is the average of
+        # its four vertices; origin contributes (0, 0), so just the
+        # triangle's own three.
+        weighted_x += signed_vol * (ax + bx + cx) / 4.0
+        weighted_y += signed_vol * (ay + by + cy) / 4.0
+        total_volume += signed_vol
+    if abs(total_volume) < 1e-9:
+        return None
+    return weighted_x / total_volume, weighted_y / total_volume
+
+
 def center_vertices(vertices, triangles):
-    """Center X/Y on the mesh's own area-weighted surface centroid (see
-    surface_centroid_xy above), not just its bounding-box midpoint, and
-    drop Z so the lowest point sits at 0 - matching
-    app/static/preview.js's showModel() exactly, which must use the
-    identical centroid calculation for the same reason described below.
+    """Center X/Y on the mesh's own true volume centroid when that's
+    actually computable (volume_centroid_xy above - needs a watertight,
+    consistently-wound mesh), falling back to the area-weighted surface
+    centroid (surface_centroid_xy) otherwise - not just the bounding-box
+    midpoint either way - and drop Z so the lowest point sits at 0.
+    Matches app/static/preview.js's showModel() exactly, which must use
+    the identical centroid calculation (same volume-first, surface-
+    fallback logic) for the same reason described below.
 
     Why this has to happen here, not left to OrcaSlicer: confirmed (by
     slicing a real, off-center-authored model and comparing its sliced
@@ -190,11 +276,28 @@ def center_vertices(vertices, triangles):
     model before shipping this, not just reasoned about: the area-weighted
     centroid came out far closer to where the toolpath's own material
     center needed to be than the bounding-box center did, and re-slicing
-    the identical model with this centering passed cleanly."""
+    the identical model with this centering passed cleanly.
+
+    That area-weighted version was itself a real, measured improvement
+    but not a complete fix: it weights by *surface* area, which can
+    still sit meaningfully off from where the model's actual *material*
+    is concentrated for a strongly asymmetric shape (see
+    volume_centroid_xy's own docstring). Attempting the true volume
+    centroid outright wasn't safe before now - it needs a watertight,
+    consistently-wound mesh to mean anything at all, which an arbitrary
+    uploaded model couldn't be assumed to be. app/mesh_repair.py (an
+    upload-time repair pass, run before a file ever reaches this script)
+    closes that gap for the common case; volume_centroid_xy still checks
+    the precondition itself rather than trusting that upstream repair
+    succeeded, since this script has no visibility into that - repair is
+    best-effort, not a guarantee."""
     xs = [v[0] for v in vertices]
     ys = [v[1] for v in vertices]
     zs = [v[2] for v in vertices]
-    cx, cy = surface_centroid_xy(vertices, triangles)
+    centroid = volume_centroid_xy(vertices, triangles)
+    if centroid is None:
+        centroid = surface_centroid_xy(vertices, triangles)
+    cx, cy = centroid
     z_min = min(zs)
     return [(x - cx, y - cy, z - z_min) for x, y, z in vertices]
 

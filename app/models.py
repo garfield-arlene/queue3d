@@ -52,6 +52,16 @@ class User(SQLModel, table=True):
     # attempts at all.
     failed_login_attempts: int = Field(default=0)
     locked_until: datetime | None = Field(default=None)
+    # Whether a successful login sets a long-lived, httponly cookie that
+    # pre-fills the Name field on this device's login page next time -
+    # never the PIN itself. Per the user: a per-account preference, not
+    # a single site-wide switch, since one person on a shared device may
+    # not want their name remembered on it even if others do. The
+    # cookie itself is still device-local like any cookie - this column
+    # only controls whether logging in from a given device ever sets
+    # it there, not some account-wide "remember everywhere" magic.
+    # Defaults to True (schema 9.2.0).
+    remember_me: bool = Field(default=True)
 
 
 class Admin(SQLModel, table=True):
@@ -94,6 +104,10 @@ class Admin(SQLModel, table=True):
     # never end up with zero surviving admins, no matter what happens to
     # every other admin account created after it.
     unremovable: bool = Field(default=False)
+    # Same meaning as User.remember_me above (schema 9.2.0) - its own
+    # column, not shared, since an admin and a user logging in on the
+    # same device are two entirely separate login pages/cookies.
+    remember_me: bool = Field(default=True)
 
 
 class SchemaVersion(SQLModel, table=True):
@@ -221,6 +235,27 @@ class Settings(SQLModel, table=True):
     # already uses). Defaults to 30, matching the to-do list's own
     # example value.
     old_job_threshold_days: int = Field(default=30)
+    # The printer's own LAN address on this deployment's network -
+    # see printer.printer_host(). Admin-configurable (same
+    # /admin/settings page) rather than an env var: a wrong or missing
+    # address used to mean SSH access to the Pi to fix it, and a real
+    # incident, not a hypothetical, showed that's worse than it sounds -
+    # this app got deployed to a real site whose network needed a
+    # different address than the one dev/testing ever used, and nothing
+    # short of editing the source directly on the Pi (which the next
+    # redeploy would have silently reverted) could fix it in the
+    # moment. A database row survives every future redeploy/upgrade the
+    # same way the rest of the app's own data already does, with no
+    # server access needed to change it. Defaults to the real
+    # deployment site's own address, not a placeholder - the one
+    # thing this app actually needs to talk to on its one real network.
+    printer_host: str = Field(default="192.168.0.254")
+    # The printer's own JSON-RPC port - see printer.printer_port(). Not
+    # genuinely deployment-specific the way the host is (it's the fixed
+    # protocol port the firmware listens on, not something that varies
+    # by network), but kept admin-configurable alongside the host rather
+    # than a separate, inconsistent mechanism just for this one field.
+    printer_port: int = Field(default=9999)
 
 
 class Color(SQLModel, table=True):
@@ -374,6 +409,19 @@ class Job(SQLModel, table=True):
     released_at: datetime | None = Field(default=None)
     # Indexed (schema 6.3.0) for the admin finished-jobs date filter.
     finished_at: datetime | None = Field(default=None, index=True)
+    # The printer's own current_process.elapsed_time, captured at the
+    # moment mark_finished() ran (schema 9.2.0) - a real, direct measure
+    # of how long the print actually took, read straight from the
+    # printer rather than inferred from (finished_at - released_at),
+    # which necessarily inherits whatever delay elapsed between the
+    # print actually finishing and someone/something noticing. See
+    # jobs._duration_correction_factor, the one place this feeds - None
+    # whenever a live read wasn't available right at that moment (an
+    # older job that predates this field; the printer's own connection
+    # dying being the single most common reason the automatic-detection
+    # feature exists at all), in which case that wall-clock figure
+    # remains the fallback, not dead code.
+    actual_duration_s: float | None = Field(default=None)
     # Why a 'failed' job failed - shown to the submitter, not just an
     # admin (see jobs.mark_finished). Always set automatically when the
     # background poller detects the failure itself ("cancelled at the

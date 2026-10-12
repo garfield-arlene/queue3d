@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 import storage
 from auth import (
+    apply_remembered_name,
     check_lockout,
     hash_secret,
     record_failed_login,
@@ -37,6 +38,7 @@ from jobs import (
     submit_draft,
 )
 from mesh import convert_3mf_to_stl, convert_obj_to_stl
+from mesh_repair import repair_stl_bytes
 from models import DRAFT_STATUSES, Color, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, MAX_ZIP_MODEL_FILES, scratch_stl_path
 from templates_env import templates
@@ -60,6 +62,9 @@ SUPPORT_STYLES = {
 }
 
 router = APIRouter()
+
+# See auth.apply_remembered_name's own docstring.
+REMEMBERED_NAME_COOKIE = "queue3d_remembered_name"
 
 
 @router.get("/signup")
@@ -118,7 +123,12 @@ def signup(
 
 @router.get("/login")
 def login_form(request: Request):
-    return templates.TemplateResponse(request, "user_login.html", {})
+    # Pre-fills Name from a remembered previous login on this device, if
+    # any (see auth.apply_remembered_name) - the exact same "name"
+    # template variable a failed-login round-trip already populates
+    # below, so user_login.html needs no change at all for this.
+    remembered_name = request.cookies.get(REMEMBERED_NAME_COOKIE)
+    return templates.TemplateResponse(request, "user_login.html", {"name": remembered_name})
 
 
 @router.post("/login")
@@ -153,7 +163,9 @@ def login(
 
     record_successful_login(session, user)
     request.session["user_id"] = user.id
-    return RedirectResponse("/dashboard", status_code=303)
+    response = RedirectResponse("/dashboard", status_code=303)
+    apply_remembered_name(response, REMEMBERED_NAME_COOKIE, user.remember_me, user.name)
+    return response
 
 
 @router.post("/logout")
@@ -204,6 +216,10 @@ def update_settings(
     request: Request,
     theme: str = Form(...),
     mode: str = Form(...),
+    # False, not Form(...) - an unchecked checkbox sends no field at
+    # all (same reasoning as signup()'s agree_aup above), so a required
+    # field here would 422 the moment someone actually turns this off.
+    remember_me: bool = Form(False),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
@@ -217,11 +233,18 @@ def update_settings(
     else:
         user.theme = theme
         user.theme_mode = mode
+        user.remember_me = remember_me
         session.add(user)
         session.commit()
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request, "user_settings.html", _user_settings_context(request, user, error, error is None)
     )
+    if error is None:
+        # Takes effect on this device right now, not just "next login" -
+        # see auth.apply_remembered_name's own docstring for why both
+        # places matter.
+        apply_remembered_name(response, REMEMBERED_NAME_COOKIE, user.remember_me, user.name)
+    return response
 
 
 @router.post("/settings/change_pin")
@@ -462,26 +485,33 @@ def dashboard_jobs_table(
 
 
 def _stl_bytes_from_upload(filename: str, data: bytes) -> bytes:
-    """Validates one uploaded model file and returns real STL bytes ready
-    to write to scratch/ - converting from OBJ or 3MF first if that's
-    what this is (see mesh.py's own docstring for why that conversion
-    happens here, immediately, rather than teaching anything downstream a
-    second/third format). A multi-object .3mf is flattened into one
-    merged mesh at this same step (see mesh.parse_3mf) - by the time this
-    returns, every caller sees a single-object STL either way, never
-    anything that looks like an assembly. Raises ValueError with a
+    """Validates one uploaded model file and returns real, repaired STL
+    bytes ready to write to scratch/ - converting from OBJ or 3MF first
+    if that's what this is (see mesh.py's own docstring for why that
+    conversion happens here, immediately, rather than teaching anything
+    downstream a second/third format). A multi-object .3mf is flattened
+    into one merged mesh at this same step (see mesh.parse_3mf) - by the
+    time this returns, every caller sees a single-object STL either way,
+    never anything that looks like an assembly. Raises ValueError with a
     user-facing message for anything that shouldn't become a job at all:
     empty, oversized, or (for OBJ/3MF) not actually parseable. Shared by
     a plain upload and each file pulled out of an uploaded zip - both
     need the exact same validation+conversion, just applied once vs. in a
-    loop."""
+    loop.
+
+    mesh_repair.repair_stl_bytes runs last, on every path (a direct .stl
+    upload too, not just a converted OBJ/3MF) - OrcaSlicer's CLI has no
+    repair flag of its own, so this is the one place a broken mesh ever
+    gets a chance to be fixed before it's either a slice_failed job or a
+    silently-wrong print. See that module's own docstring for why it's
+    safe to always run: already-good geometry is returned untouched."""
     if not data:
         raise ValueError("empty file")
     if len(data) > MAX_UPLOAD_BYTES:
         raise ValueError(f"too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB)")
     ext = Path(filename).suffix.lower()
     if ext not in (".obj", ".3mf"):
-        return data
+        return repair_stl_bytes(data)
     with tempfile.TemporaryDirectory(prefix="queue3d-modelconvert-") as tmp:
         in_path = Path(tmp) / f"in{ext}"
         stl_path = Path(tmp) / "out.stl"
@@ -493,7 +523,7 @@ def _stl_bytes_from_upload(filename: str, data: bytes) -> bytes:
                 convert_3mf_to_stl(in_path, stl_path)
         except Exception as e:
             raise ValueError(f"couldn't read as {'an OBJ' if ext == '.obj' else 'a 3MF'} file ({e})")
-        return stl_path.read_bytes()
+        return repair_stl_bytes(stl_path.read_bytes())
 
 
 def _create_job_from_model(

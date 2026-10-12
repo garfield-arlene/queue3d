@@ -515,6 +515,65 @@ machine, then `./deploy.sh <target>` again from the `deploy/` directory.
 Nothing on the Pi side changes about this process whether it's the
 first deploy or the fiftieth.
 
+## Printer pairing
+
+Required before any job can actually be released to print - the app
+itself starts and serves the dashboard/queue fine without this, but
+`jobs.release()` can't reach the printer at all until it's done.
+
+**First, tell the app where the printer actually is on *this*
+deployment's network.** Unlike everything else on this page, this
+isn't a server-side file edit: the printer's IP and port are an
+admin-configurable setting, stored in the database (so it survives a
+redeploy/upgrade exactly like the rest of the app's own data does), set
+from `/admin/settings` in the dashboard itself - no server access
+needed. The default baked into a fresh database already matches this
+site's real printer (`192.168.0.254`); only change it there if the
+printer's address on this network is actually different, or if its
+JSON-RPC port isn't the default `9999`.
+
+**A real incident, not a hypothetical, this setting exists to prevent:**
+`printer.py` used to read the printer's address from an env var with a
+hardcoded fallback - the dev network's own printer - when unset. That
+silently "worked" through every round of dev/testing, right up until
+the actual deployment site's real, different network needed a
+different address. Pairing failed with no indication why until the
+source was edited directly on the Pi as an on-the-spot workaround - an
+edit the *next* redeploy would have silently reverted, since the app's
+own source is reinstalled fresh from git on every run. A database
+setting doesn't have that problem: it's admin-editable from the
+dashboard, and nothing about a redeploy ever touches it.
+
+**The one upgrade that actually makes this transition carries the old
+address forward automatically, with nothing to do here.**
+`remote_install.sh` reads whatever address the old, pre-upgrade
+printer.py was actually resolving to - including a manual, on-the-spot
+edit like the one above, hardcoded directly on this Pi outside git -
+and seeds the new setting with it, before the old source ever gets
+overwritten. Only matters for that one upgrade; every later redeploy
+leaves the setting alone regardless; see `db.py`'s `_migrate_to_9_1_0`
+for the full mechanism.
+
+**Then, physically pair with the printer** - needs someone actually
+standing at it, since its own screen prompts for a dial press to
+accept:
+
+```bash
+cd /opt/queue3d/app
+sudo -u queue3d .venv/bin/python3 pair_printer.py
+```
+
+Saves an access token to `data/printer_auth.json` (on the live data
+drive, so it survives a redeploy same as the database does). Not
+actually a one-time-ever step despite how that reads - a pairing token
+is only good for one authenticated session, so an app restart or the
+printer being power-cycled needs one more dial-press before the next
+release; see `app/README.md`'s "Persistent printer connection" section
+for the full account of what is and isn't fixed by the app's own
+persistent-connection handling. The admin dashboard's own "Pair
+printer" button does the same thing, no server access needed, for every
+pairing after this first one.
+
 ## If an upgrade goes wrong: rolling back
 
 Per the user, asked directly before ever relying on this for a real
@@ -551,10 +610,52 @@ data the new code already wrote. The last 5 pre-upgrade backups are kept
 automatically (oldest pruned first) so this option stays available
 without accumulating unboundedly on the Pi's limited storage.
 
-## What's NOT handled here yet
+## Disaster recovery: restoring from backup
 
-- **Printer pairing** (`QUEUE3D_PRINTER_HOST`/`QUEUE3D_PRINTER_PORT`
-  env vars, if the Pi's network setup needs them different from the
-  app's own defaults) - not yet wired into the systemd unit as an
-  `EnvironmentFile`; add one there if the real deployment needs
-  non-default values.
+The rollback above is for a *failed upgrade* - a different scenario
+from the one this section covers: the live data itself is gone or
+corrupted (a dead SD card, a failed drive, anything that leaves
+`/mnt/queue3d-data` empty or unusable), and you need to restore from
+one of the two backup USB drives (`backup.py`'s own rotating,
+~3-week-deep dated snapshots - see `app/README.md`'s "Backups"
+section). If the Pi itself is dead, redo steps 1-6 above on fresh
+hardware first (a normal install, same as the very first deploy) - once
+the app is installed and the drives are mounted, the steps below are
+identical either way.
+
+Check `/admin/backups` first if the app is still reachable at all - it
+shows exactly what each drive actually has before you commit to a
+date. If the app itself is down, `restore_backup.py`'s own interactive
+mode lists the same information.
+
+```bash
+sudo systemctl stop queue3d
+ssh <hostname-or-ip>.local
+cd /opt/queue3d/app
+sudo -u queue3d .venv/bin/python3 restore_backup.py
+```
+
+Run with no arguments for the guided flow: it lists every snapshot on
+both drives, asks which drive and which date (blank picks that drive's
+newest), shows exactly what it's about to overwrite, and requires
+typing `restore` to actually proceed - nothing is touched before that.
+Non-interactively (for scripting): `restore_backup.py --drive a --date
+2026-10-07 --yes`, or `--latest` instead of `--date` for that drive's
+newest.
+
+The current database is copied aside first automatically (to
+`queue3d.db.before-restore`, right next to the live one) in case the
+restore itself turns out to be the wrong call - that safety copy is
+overwritten by name on every run, so it only ever protects against
+undoing the single most recent restore, not a deeper history.
+
+```bash
+sudo chown -R queue3d:queue3d /mnt/queue3d-data
+sudo systemctl start queue3d
+sudo systemctl status queue3d
+```
+
+Same inherent tradeoff as the upgrade rollback above: restoring to a
+given snapshot loses anything submitted or changed after that
+snapshot's own date - up to about two days, given the day-parity
+rotation between drives, not "since the last upgrade" this time.

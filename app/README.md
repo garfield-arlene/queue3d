@@ -200,29 +200,80 @@ archive/ directory (once it exists) to one of two rotating targets, chosen
 automatically by day parity. See the module docstring for the full
 reasoning - short version: submissions can happen anytime the location is
 open, not just when an admin is physically there, so backups run
-unattended on a daily cron rather than being tied to a visit.
+unattended on a schedule rather than being tied to a visit.
 
 Point it at the two backup USB mounts on the real Pi (both should stay
 permanently plugged in - the rotation is decided in software, not by
 swapping drives):
 
 ```bash
-QUEUE3D_BACKUP_DIR_A=/mnt/backup-a QUEUE3D_BACKUP_DIR_B=/mnt/backup-b python3 backup.py
+QUEUE3D_BACKUP_DIR_A=/mnt/queue3d-backup-a QUEUE3D_BACKUP_DIR_B=/mnt/queue3d-backup-b python3 backup.py
 ```
 
-Wire it into cron for real deployment, e.g. daily at 3am:
+Each database backup is a dated snapshot (`queue3d-YYYY-MM-DD.db`), kept
+for `backup.RETENTION_DAYS` (21 days) and pruned automatically after
+that - not a single fixed filename overwritten every run. That first
+version only ever gave two total recoverable backups across both drives
+(today's and yesterday's); per the person running this deployment,
+directly: the site is only visited roughly every two weeks, and "today's
+and yesterday's" leaves nothing to recover from if a problem isn't
+caught on the very next visit. Each drive still only gets written every
+other day (day-parity rotation, unchanged), so in practice each one
+holds about 10-11 of its own dated snapshots, the two combining to the
+full three-week window. The `archive/` mirror has no history of its
+own - it's always just a current copy, since archived job files are
+effectively append-only and there's nothing meaningful to roll back to
+there the way there is for the database.
 
-```
-0 3 * * * cd /path/to/app && QUEUE3D_BACKUP_DIR_A=/mnt/backup-a QUEUE3D_BACKUP_DIR_B=/mnt/backup-b .venv/bin/python3 backup.py
-```
-
-Without those env vars it defaults to `data/backups/{a,b}` under this app
-directory - fine for local testing, not what you want on the real Pi.
+The real deployment runs this via a systemd timer
+(`deploy/queue3d-backup.service`/`.timer`, installed by
+`deploy/remote_install.sh`), not cron - `OnCalendar=*-*-* 03:00:00` with
+`Persistent=true`, so a Pi that happens to be off at 3am catches up on
+next boot instead of silently skipping to the next day. The service unit
+itself sets both env vars above; without them, `backup.py` defaults to
+`data/backups/{a,b}` under this app directory - fine for local testing,
+not what you want on the real Pi.
 
 The admin dashboard shows the most recent successful backup's timestamp,
 flagged if it's more than 36 hours old (`backup.STALE_AFTER_HOURS`) - since
 there's no internet for an alert email, this is the glance-and-verify
-signal for whoever checks in.
+signal for whoever checks in. `/admin/backups` has the full picture: a
+live, on-disk stat of every retained snapshot per drive plus the archive
+mirror's current contents (`backup.manifest()`), and the full attempt
+history, success or failure (`backup.get_backup_history()`) - the
+dashboard's own single timestamp is a summary of that, not the whole
+story. The System page's own "Disk space" section
+(`sysmetrics.disk_mounts()`) separately shows live usage for both backup
+drives, reading the exact same two env vars.
+
+`restore_backup.py` is the other direction - a manual, interactive
+disaster-recovery script for putting a chosen snapshot back as the live
+database (and its drive's archive mirror back as the live archive/
+directory), for when the live data itself is gone or corrupted. Never
+run automatically (unlike `backup.py`, no systemd timer for it) - see
+`deploy/README.md`'s "Disaster recovery: restoring from backup" section
+for the real procedure, including stopping the service first.
+
+**A real deployment bug, not a hypothetical: those two env vars were only
+ever set on `queue3d-backup.service` (the unit that actually writes
+backups), never on `queue3d.service` (the main app, which is what the
+System page's own process actually runs as).** Reported directly from the
+real deployment: both USB backup drives physically present and mounted,
+every scheduled backup succeeding, yet the dashboard's own "Disk space"
+section showed both as "not available." Root cause: `queue3d.service`'s
+environment never had `QUEUE3D_BACKUP_DIR_A`/`QUEUE3D_BACKUP_DIR_B` at
+all, so `backup_targets()` (app/backup.py) silently fell back to this
+app's own `data/backups/{a,b}` - a path that's never actually created on
+the real deployment (nothing ever writes a backup there), so
+`shutil.disk_usage()` on it raises `FileNotFoundError`, which
+`disk_mounts()` correctly reports as "not available" - just for
+completely the wrong directory, with no connection to whether the real
+USB drives were actually fine. Fixed by adding the same two `Environment=`
+lines `queue3d-backup.service` already had to `queue3d.service` as well -
+the dashboard only ever needs read access for `shutil.disk_usage()`
+(`backup.py`'s own `ReadWritePaths` already covers the one process that
+actually writes there), so no sandboxing permissions needed to change,
+just the missing environment.
 
 ## The job queue
 
@@ -695,6 +746,68 @@ available after upload" rather than vendoring Three.js's heavier
 moments later anyway, once the real, post-slice preview (always from
 the server's own converted `.stl`) is ready.
 
+### Automatic mesh repair
+
+`mesh_repair.repair_stl_bytes` runs once, centrally, in
+`routers/user.py`'s `_stl_bytes_from_upload` - the single chokepoint
+every upload already passes through (a direct `.stl`, a converted
+`.obj`/`.3mf`, or each file pulled out of a `.zip`), so a broken mesh
+gets one real chance to be fixed before it ever reaches the slicer.
+OrcaSlicer's CLI has no repair flag of its own (that's a GUI-only
+feature there, the "Fix through Netfabb" menu item) - without this, a
+broken upload's only outcome was a `slice_failed` job with no real path
+forward beyond re-exporting the model somewhere else first.
+
+Two tiers, cheapest first: `trimesh`'s own normal/winding fix plus
+small-hole fill (pure numpy/scipy/networkx) handles the common case - a
+few flipped faces, one or two small gaps. `pymeshfix` (a dedicated,
+compiled hole-filling algorithm) picks up anything trimesh's lighter
+repair couldn't close - larger or messier holes, the kind a genuinely
+bad scan or export actually produces. Never touches an already-correct
+mesh (checked directly, not assumed - an identical mesh in produces
+byte-identical output), and never raises or returns something worse
+than what came in: if both tiers fail to produce a valid, watertight
+result, the original bytes ship unchanged rather than whatever broken
+intermediate state the attempt left behind.
+
+**Two real bugs caught while building this, not anticipated in the
+original design:**
+
+Loading the uploaded STL bytes with `process=False` (trimesh's flag to
+skip its own cleanup pass) made `is_watertight` read `False` for
+essentially *every* mesh, regardless of whether the geometry was
+actually fine - confirmed directly against an already-good test cube,
+which came back reporting itself broken with volume `0`. The reason:
+STL as a format never shares vertex indices between triangles - every
+triangle stores its own independent copy of each vertex, even along a
+shared edge - so without trimesh's merge-duplicate-vertices step on
+load, adjacent triangles never register as actually connected.
+`process=True` (the default, not `False`) is required for a correct
+read, not just a style preference.
+
+Separately: a mesh that comes back watertight and the right shape can
+still have every normal pointing inward (a negative signed volume) -
+fatal for 3D printing specifically, since a slicer determines inside
+vs. outside from that same sign, so an inverted mesh can silently slice
+as a shell with material on the wrong side rather than failing loudly
+the way a non-watertight mesh does. Reproduced directly: repairing a
+deliberately broken sphere (a multi-triangle hole, several faces'
+winding flipped) via `pymeshfix` landed on a result that was watertight
+and the exact right volume *magnitude* - just negative. `fix_normals()`
+on a still-broken mesh doesn't reliably land on a globally outward-
+facing result once it's patched up, so this needed its own explicit
+check (`mesh.volume < 0` -> `mesh.invert()`), applied both after the
+repair tiers and as a cheap standalone check for a mesh that was
+already watertight but inverted to begin with - a real case some CAD/
+export tools produce on their own, with no hole to repair at all.
+
+**Verified live, not just in isolation:** a deliberately broken sphere
+(the same hole-plus-flipped-faces case above) was confirmed to fail
+OrcaSlicer directly first - `exit 156`, "didn't produce gcode" - before
+this existed, ruling out "OrcaSlicer would have tolerated it anyway."
+Uploaded through the real running app afterward, the same file came
+back `status='sliced', slice_error=None`.
+
 ### Restoring an archived job, and one-click reprint
 
 **Why this exists:** a `rejected`/`failed`/`done`/`expired` job had
@@ -1082,6 +1195,51 @@ on its base" case, but general-purpose: some rotation
 can resolve this class of failure when
 no amount of resizing or recentering-only ever could.
 
+**Third occurrence, much later: the "next concrete step" above actually
+built properly, with a real precondition check this time - and tested
+against the exact same `Flexi_Seal.stl` that made the earlier attempt
+worse.** `slicing/stl_to_3mf.py` gained `volume_centroid_xy()` (the
+signed-tetrahedron-decomposition formula) and `_is_watertight_consistent()`
+- a real edge-pairing check (every directed edge appears exactly once,
+with its exact reverse appearing exactly once elsewhere), not the
+"99.98% manifold... a small, real but minor defect, not a disqualifying
+one" judgment call the earlier attempt made. `center_vertices()` now
+tries the volume centroid first, falling back to the existing
+area-weighted surface centroid when the precondition isn't met.
+`app/static/preview.js` got the identical logic (`isWatertightConsistent()`/
+`volumeCentroidXY()`/`centroidXY()`) to stay in lockstep - verified by
+temporarily logging both implementations' output side by side in a real
+browser against the same uploaded model and confirming an exact
+floating-point match, on both a mesh where volume centroid applies and
+one where it falls back.
+
+Re-ran `Flexi_Seal.stl` itself through this new code, the actual
+question this needed answering: `_is_watertight_consistent()` correctly
+reports it as **not** meeting the precondition (the same real defect the
+earlier attempt chose to tolerate), so `volume_centroid_xy()` returns
+`None` and centering falls back to the unchanged, already-shipped
+surface centroid - confirmed by diffing the real pipeline's output
+against an unmodified checkout on the identical file: `xrel`, `yrel`,
+and `zrel` came out byte-for-byte identical (`0.18787388116763368`,
+`0.02045185087603743`, `1.0210084033613445`) either way. This specific
+regression can't recur - not because volume centroid is now smarter
+about it, but because the stricter precondition correctly declines to
+touch this mesh at all, same as it would have declined the first time
+if it had checked this rigorously then. The two repo test models
+(`testcube.stl`, `overhang_test.stl`) are both genuinely watertight and
+do take the new volume-centroid path, re-sliced successfully through
+the real pipeline with no regression.
+
+**Still true, and not something this closes:** the actual reason
+`Flexi_Seal.stl`-class models fail isn't centroid choice at all -
+`mbotmake`'s check measures where *infill* ends up post-slicing, which
+no pre-slicing centroid (surface or volume) can determine. Rotation
+remains the real fix for that failure class, exactly as the second
+occurrence above already concluded; this work only makes the centroid
+calculation itself more physically accurate where it's actually safe to
+use, and now provably can't make an already-marginal mesh worse by
+guessing wrong about its watertightness.
+
 ### What release does
 
 `jobs.release()` enforces the one-job-at-a-time rule, then calls
@@ -1094,20 +1252,20 @@ mid-upload) leaves the job `approved` and shows the admin a clear error
 instead, rather than claiming a print started that may not have.
 
 Pairing (`pair_printer.py`, needs someone physically at the printer's
-dial) saves an access token to `data/printer_auth.json`; `QUEUE3D_PRINTER_HOST`/
-`QUEUE3D_PRINTER_PORT` env vars override the printer's address if it's
-not at the default. **Not actually a one-time-ever step, despite how
-that reads** - see "Persistent printer connection" right below for why,
-and what that does and doesn't fix.
+dial) saves an access token to `data/printer_auth.json`. The printer's
+own address (`Settings.printer_host`/`printer_port`, defaulting to
+this deployment's real printer at `192.168.0.254:9999`) is an
+admin-configurable setting at `/admin/settings`, not an env var or a
+hardcoded value - it lives in the database, so it survives every
+redeploy the same way the rest of the app's own data does; see
+`deploy/README.md`'s "Printer pairing" section for the full setup.
+**Not actually a one-time-ever step, despite how that reads** - see
+"Persistent printer connection" right below for why, and what that
+does and doesn't fix.
 
-Not yet built: live print progress/status polling (the printer's own
-`get_system_information` exists in the protocol but isn't wired up - see
-`printer.py`'s `_dispatch` for where unsolicited status notifications
-would need to be consumed) and detecting completion automatically -
-`mark_done`/`mark_failed` are still a manual admin action for now.
-
-**A countdown from the original estimate, in place of that missing live
-status - explicitly not a substitute for it.** While a job
+**A countdown from the original estimate, alongside the live progress
+built below - a fallback for whenever a live reading isn't
+available, not a substitute for it.** While a job
 is `printing`, both dashboards show a live "~N min remaining" (or "~N
 min over the estimate" once it runs past zero, rather than freezing at
 0:00 or hiding - the estimate is already known to run off in practice,
@@ -1122,17 +1280,21 @@ spans live inside `_jobs_table.html`, which htmx replaces wholesale on
 its own polling cycle, and a `<script>` tag doesn't re-run just because
 it got swapped back in.
 
-**Worth remembering:** `released_at`
-comes back from SQLite as a tzinfo-*naive* datetime, even though it's
-always written as UTC (`datetime.now(timezone.utc)`) - same gotcha
-`event.at.strftime(... 'UTC')` already works around elsewhere in this
-app. A plain `{{ eta.isoformat() }}` in the template would silently omit
-the UTC offset, and a browser's `new Date(...)` parses an offset-less
-ISO string as *local* time, which would put every countdown off by
-however many hours from UTC, on every viewer's own clock, in a way that
-would never show up testing from a system already set to UTC. A passing render test
-alone (attribute present, page loads) would not have caught this, and it
-was not caught by simply trying it against the real printer once.
+**A real bug, found by testing, not assumed:** `released_at` does *not*
+reliably come back tzinfo-*naive* from SQLite, despite an earlier
+version of this code (and this very paragraph) assuming it always
+would. It's always written as UTC (`datetime.now(timezone.utc)`), but
+whether it comes back naive or aware on a later read turned out to
+depend on exactly how/when it's fetched - `.isoformat()` on an aware
+value already appends its own `+00:00`, and the template appends a
+literal `"Z"` on top of that for the browser's `Date()` to parse,
+producing an invalid double-marked string (`...+00:00Z`) that silently
+parsed as `Invalid Date` - surfacing as a literal "~NaNm over the
+estimate" once an admin actually watched a live countdown tick.
+`printing_eta()` now strips tzinfo unconditionally before doing the
+arithmetic, the same defensive pattern `local_time()` already uses
+elsewhere in this app for this identical ambiguity, rather than
+trusting which way a given read happens to come back.
 
 ### Live print progress
 
@@ -1196,11 +1358,10 @@ look at the raw shape again.
 **Correcting the fallback estimate itself, from real history.** Even
 with live progress now available, `printing_eta()`'s estimate-based
 countdown still matters as the fallback for whenever a live reading
-isn't. `_duration_correction_factor()` computes the median
-ratio of actual (`finished_at - released_at`) to estimated duration
-across past `done` jobs, and `printing_eta()` scales the current job's
-estimate by it. Deliberately narrow about what counts as a valid data
-point:
+isn't. `_duration_correction_factor()` computes the median ratio of
+actual to estimated duration across past `done` jobs, and
+`printing_eta()` scales the current job's estimate by it. Deliberately
+narrow about what counts as a valid data point:
 
 - Only `done` jobs, never `failed` ones - a failed print's duration says
   nothing about how long a full print takes; it could have been cut
@@ -1214,19 +1375,31 @@ point:
   running long needs correcting the other way, and assuming so on no
   evidence could make things worse, not better.
 
-**A known, accepted imprecision, not silently glossed over:**
-`finished_at` is when an admin clicked "Mark done," not necessarily
-the exact moment the printer itself actually finished - any delay
-between the two inflates every ratio computed from it. Precisely fixing
-this would mean capturing the printer's own `current_process.elapsed_time`
-(see `print_progress` above) at the moment of that click instead - not
-built here, since that reading has often been unavailable exactly when
-needed during this same investigation (the connection dying being the
-common case that motivated the printer status banner/pairing button in
-the first place). Still meaningfully better than trusting the raw,
-uncorrected slicer estimate outright - see README.md's Printer to-do
-list for capturing the printer's own elapsed time as a future
-refinement.
+**Each job's own "actual" duration prefers `Job.actual_duration_s` -
+the printer's own `current_process.elapsed_time` - over the
+`finished_at - released_at` wall-clock gap.** `finished_at` is when an
+admin clicked "Mark done" (or the automatic poller caught it), not
+necessarily the exact moment the printer itself actually finished - any
+delay between the two inflated every ratio computed from the wall-clock
+figure alone. `mark_finished()` now captures `current_process.elapsed_time`
+directly, whenever a reading is available and its `filename` matches
+this job's `makerbot_path`: the automatic-detection path
+(`check_and_finish_active_print`) passes through the very reading that
+already confirmed completion, rather than risking a second read moments
+later that might miss it entirely (the printer can clear
+`current_process` right as a print ends); the manual Mark done/Mark
+failed path takes its own fresh, best-effort one. Not every job ends up
+with `actual_duration_s` - a live read can still fail exactly when it
+matters most, the same reason that motivated the printer status
+banner/pairing button in the first place - so `_duration_correction_factor()`
+falls back to the wall-clock figure per job whenever it's missing,
+rather than requiring every single job to have it. Verified against
+`simulator/printer_simulator.py` (which reports a real `elapsed_time`
+in its own `current_process`, built alongside this specifically to test
+it): a job's `actual_duration_s` came back matching the simulator's own
+elapsed seconds exactly, confirmed distinct from the much larger
+wall-clock gap a deliberately unrealistic `duration_estimate_s` made
+obvious.
 
 **Applied everywhere a duration is shown, not just the live printing
 countdown.** Caught live: a job showed a 20-minute estimate at queue
@@ -1375,6 +1548,48 @@ process was started fresh specifically to exercise the failure path, and
 correctly got the clear "needs re-pairing" `PrinterError` rather than a
 confusing raw exception, since that process's connection attempt was
 inherently a second session against an already-spent token.
+
+### Automatic retry through a slow printer boot
+
+**Why this exists - a real, observed timing issue, not theoretical:**
+the printer's TCP/JSON-RPC port (9999) has been seen answering well
+before its HTTP pairing service (port 80, `/auth`) is actually ready -
+in one case by close to a minute, with `/auth` returning a plain 503
+the whole time it's still coming up. Since the printer is normally
+power-cycled rather than left running continuously (see "Persistent
+printer connection" above), pairing right after power-on used to fail
+outright on timing alone, with nothing actually wrong - the only fix
+was trying again by hand a minute later.
+
+`printer._auth_get()` now accepts a `retry_timeout`, retrying on any
+`URLError` - a connection refused/timeout (nothing listening yet) or
+an HTTPError like that 503 (listening, but not ready) both mean "try
+again shortly," not "pairing actually failed." `pair()` applies this
+only to its very first request (`response_type=code`): by the time any
+later call in the same flow runs, the HTTP service already proved
+itself reachable moments ago, so retrying those too would just mask a
+real failure for longer, not help. Default window is 90s - comfortably
+past the roughly-a-minute observed in practice, without hanging
+drastically long against a printer that's genuinely unreachable for an
+unrelated reason.
+
+Surfaced distinctly, not silently: `pair()` takes an `on_connecting`
+callback (alongside the existing `on_waiting`, for the already-separate
+"now waiting on a human to press the dial" phase), fired once a retry
+is actually underway - `pair_printer.py` prints a plain message
+explaining this is normal; the admin dashboard's "Pair printer" flow
+(`start_pairing()`/`_pairing_state["phase"]`) shows its own distinct
+banner instead of the generic "press the dial" one, which would have
+been actively misleading before anything's even reached the printer's
+screen yet.
+
+Verified against `simulator/printer_simulator.py`'s `--auth-startup-delay`
+(built alongside this fix specifically to test it - see that script's
+own README): confirmed pairing retries through and succeeds once the
+simulated service comes up, gives up cleanly with a clear error once a
+shorter retry window is deliberately exceeded, and - unchanged from
+before - pairs immediately with no retry at all when the service is
+already up, the overwhelmingly common case.
 
 ### Detecting a print started outside the app entirely
 
@@ -2420,6 +2635,114 @@ the coat/hat color varying between them - the same level of abstraction
 as Fil (a stick figure) or the turkey/snowman mascots, not an attempt at
 a realistic or specific-looking person.
 
+### The "Veterans Day" theme - a real photo instead of original artwork, and why that's fine here
+
+**Why this exists:** the same shared sidebar/full-width/bordered-section
+layout again, seasonal like Halloween/Thanksgiving/Winter but with a
+deliberately much narrower window (November 8-14, a flat seven days
+centered on the holiday's own fixed November 11th date) - "available
+during the week of the holiday," not weeks on either side of it the way
+the other three seasonal themes are.
+
+**Unlike every other seasonal theme here, the background behind the
+sidebar (`theme-veterans-poster.jpg`) isn't original artwork - it's the
+real official VA.gov Veterans Day poster**, used directly: a bugler
+silhouette against a dusk sky, the U.S. flag, every branch of the Armed
+Forces named down the side, both government seals. A federal government
+work like this is public domain under 17 U.S.C. § 105 - created by a
+federal employee as part of their official duties - which is exactly why
+using it directly, unlike a trademarked or copyrighted character, is
+fine; it's the inverse of the Fil-instead-of-a-licensed-character
+reasoning every other mascot/icon in this app otherwise follows, not an
+exception to it. The only edit made to the poster itself: its date text
+("November 11, 2023") painted over with the surrounding near-black
+background color, located by sampling actual pixel values rather than
+guessing at coordinates, so the poster reads as undated and the paint-
+over leaves no visible seam.
+
+**`background-size: contain`, not `cover` like every other photo/art
+sidebar background in this app** - the whole poster stays visible rather
+than getting cropped to fill a sidebar much narrower than the poster's
+own aspect ratio. That leaves empty space on one axis in a typical tall
+sidebar, which `background-repeat: no-repeat` has to guard against
+explicitly (a background image tiles into unused space by default under
+`contain`; `cover` never faces this because it never leaves any). The
+poster also needs a notably stronger scrim than this app's other photo/
+art sidebar backgrounds, which are already dark almost everywhere - this
+one has a genuinely bright sky band across its own top third, right
+where the page title and first nav links land.
+
+**The shared "Log out" button (every sidebar theme has one) needed its
+own override here, found by testing, not assumed:** every other sidebar
+theme's Log out button uses the shared `var(--section-title-bg)` red
+fill its own section titles use, which for this poster is close to the
+red in its own flag stripes - and because `contain` sizing means the
+poster can still reach a short nav list's last item rather than sit
+entirely above it, a solid-red button with no border was able to land on
+top of those stripes and blend into them. Fixed with this theme's own
+override: a navy fill plus a gold border, matching the poster's own gold
+accents, which reads clearly against the red stripes, the poster's sky,
+and the plain navy backdrop alike - not just one of them.
+
+### The "Valentine's Day" theme - a fifth seasonal theme, and the widest window yet
+
+**Why this exists:** the same shared sidebar/full-width/bordered-section
+layout again, seasonal like Halloween/Thanksgiving/Winter/Veterans Day,
+but with a wider window than any of them - a full week either side of
+February 14th (February 7-21, a flat fourteen days centered on the
+holiday's own fixed date), since the holiday itself falls on a weekend
+and the window needs to cover the school days around it, not just the
+days immediately adjacent the way a weekday holiday's own narrower
+window can. Veterans Day's own narrow seven-day window works because
+covering the holiday's own week was enough there; here the wider
+symmetric span is what actually reaches the surrounding school days.
+
+**The background scene (`theme-valentines-hearts.svg`) and mascot
+(`theme-valentines-bear.svg`) follow the same conventions every other
+original-artwork seasonal theme here already settled on, applied from
+the start rather than needing a second pass to find them:** a scatter of
+drifting hearts occupies the same top-of-the-sidebar slot Winter's
+snowflakes and Halloween's bats use; a heart-blossom tree (branches in
+the same bare-branch-line style Halloween/Thanksgiving's own flanking
+trees use, with clusters of heart "blossoms" at each tip instead of
+leaves) gets the same warm halo behind it Winter's cabin uses to read
+clearly against a saturated background; a low picket fence with a heart
+cutout in each picket occupies the same low-border slot Halloween's
+fence/Winter's rail fence use; and a teddy bear hugging a heart stands at
+the bottom of the window, the same slot/reasoning as the Thanksgiving
+turkey and Winter snowman - a bear has an obvious standing pose, so there
+was never an edge-gripping/hanging concept to consider for it the way
+there was for Fil or the Halloween spider.
+
+**The mailbox is the one new focal element, not reused from an earlier
+theme** - a classroom valentine-exchange mailbox, overflowing with
+envelopes (each with its own tiny heart seal), standing in the
+foreground in the same bottom-of-the-scene role Winter's frozen pond and
+skaters play. Given real, specific shape (a rounded body, a post, a base
+plate, a door cap, a flag on a rod) rather than a plain red blob, the
+same lesson Thanksgiving's own hay-bale/pumpkin fix already established
+for this app's artwork in general: a plain bumpy shape at this scale
+reads as "what even is that," not as the thing it's supposed to be.
+
+**The garland of heart bunting (`theme-valentines-garland.svg`) is its
+own small standalone banner over the content panel's top-right corner
+(`[data-theme="valentines"] main`'s own `background-image`), not part of
+the sidebar scene at all** - the one spot with no nav text in front of
+it to conflict with. These hearts are solid and saturated rather than
+soft and translucent like Winter's snowflakes/Halloween's bats, which
+read fine behind text precisely because they aren't. The sidebar's own
+scrim is also higher in both modes than Halloween/Thanksgiving/Winter's
+own (`0.35`/`0.6` alpha rather than their `0.15`/`0.5`), since this
+scene's sky reads pale pink almost everywhere, not just a bright top
+band the way Thanksgiving's own dusk scene does.
+
+**Deliberately just hearts and a card-exchange mailbox, nothing romantic
+beyond that** - the same "school-appropriate for everyone" bar every
+other seasonal theme here follows, applied to Valentine's Day's own
+obvious alternative (anything more explicitly romantic) the way Winter
+stays clear of Christmas/Hanukkah-specific imagery and Thanksgiving stays
+clear of Pilgrims/First-Thanksgiving imagery.
+
 ### Login rate-limiting
 
 **Why this exists:** PINs are short by design (low
@@ -2472,6 +2795,53 @@ password/PIN through normally and clears both fields - identical for
 both account types. The `3.3.0` migration applies
 cleanly against both a fresh database and an existing one,
 defaulting every existing account to `failed_login_attempts=0, locked_until=None`.
+
+### "Remember my name" on both login pages
+
+**Per-account, not a single site-wide switch** (`User.remember_me`/
+`Admin.remember_me`, schema `9.2.0`, default `True`) - one person on a
+shared device may not want their own name remembered on it
+even if others sharing that device do, which a single global toggle
+couldn't express. The preference itself lives on the account; its
+*effect* (a cookie) is still ordinary browser-local state like any
+cookie, not some account-wide "remember on every device" magic - it
+only ever gets set on whatever device someone actually logs in from.
+
+**Two long-lived, httponly cookies** (`queue3d_remembered_name`/
+`queue3d_remembered_admin_username` - separate, since the two login
+pages/account types never share state), applied by
+`auth.apply_remembered_name()` in two places: right after a successful
+login (so a *new* device starts remembering correctly), and right when
+the preference itself is saved on the settings page (so flipping it
+takes effect immediately on the device someone's actually sitting at,
+not just "next login there"). `max_age` is a full year - "remembered"
+should mean something, not quietly expire after the session cookie's
+own couple of weeks. No `secure` flag forced, matching the session
+cookie's own (`SessionMiddleware`'s) default - this app runs over plain
+HTTP in local dev and HTTPS in production alike, and forcing it here
+would silently stop the cookie working in dev.
+
+**Turning the preference off clears the cookie immediately, not just
+"stops updating it going forward"** - the more privacy-respecting
+behavior: an account holder who decides they don't want their name
+shown on a shared device's login page would reasonably expect that to
+take effect right away, not linger until the cookie's own year-long
+expiry or until someone else's login happens to overwrite it.
+`login_form()` (both routers) reads the cookie, when present, into the
+exact same `name`/`username` template variable a failed-login
+round-trip already populates - `user_login.html`/`admin_login.html`
+needed no changes at all for the actual prefill.
+
+**Never the PIN/password itself** - only ever the plain name/username
+already typed into the form, the one thing genuinely safe to persist
+client-side for this long.
+
+Verified live, both account types: no prefill before a first login;
+the cookie set correctly on login; the name/username prefilled on the
+next visit to that login page; turning the preference off clears the
+cookie immediately (confirmed via the response's own `Set-Cookie`, not
+inferred); and a later login with the preference off does not re-set
+it.
 
 ### Failure reasons shown to the user
 
@@ -4577,7 +4947,8 @@ calls (`app/printer.py`, `test-print/pairing.py`) trip bandit's B310
 check, which generically flags urlopen as an SSRF-style risk - a
 reasonable default, but a false positive here specifically, since `host`
 in both cases is always the printer's own LAN address from local
-config/env vars (`QUEUE3D_PRINTER_HOST`), never web request input. Marked
+config (an admin-configured setting, `Settings.printer_host`), never
+web request input. Marked
 `# nosec B310` right at each call, with a comment explaining why - not a
 blanket exemption for B310 everywhere, so a *new* urlopen call elsewhere
 in the codebase still fails the build until it's reviewed the same way.
