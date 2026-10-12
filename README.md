@@ -42,7 +42,7 @@ downloadable support bundle for offline diagnosis:
 
 Every account - user or admin - picks its own theme and light/dark mode
 independently, persisting across logins and devices. The screenshots above
-use the plain "Basic" theme; eight more ship alongside it, all sharing the
+use the plain "Basic" theme; nine more ship alongside it, all sharing the
 same sidebar-tabs-and-bordered-sections layout with their own palette (and
 in Fil's/the seasonal themes' case, an original mascot) on top:
 
