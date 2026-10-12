@@ -42,9 +42,9 @@ downloadable support bundle for offline diagnosis:
 
 Every account - user or admin - picks its own theme and light/dark mode
 independently, persisting across logins and devices. The screenshots above
-use the plain "Basic" theme; seven more ship alongside it, all sharing the
+use the plain "Basic" theme; eight more ship alongside it, all sharing the
 same sidebar-tabs-and-bordered-sections layout with their own palette (and
-in Fil's/the three seasonal themes' case, an original mascot) on top:
+in Fil's/the seasonal themes' case, an original mascot) on top:
 
 ![Console theme - a neutral gray and indigo sidebar layout](docs/screenshots/console.png)
 
@@ -52,7 +52,7 @@ in Fil's/the three seasonal themes' case, an original mascot) on top:
 
 ![Fil theme - an original filament-wire mascot peeking around the sidebar](docs/screenshots/fil.png)
 
-Three more are seasonal - selectable in the theme picker only during their
+Five more are seasonal - selectable in the theme picker only during their
 own date window (always selectable regardless of date at `127.0.0.1`, for
 development), reverting any account back to the default once their window
 closes rather than sitting year-round as permanent clutter:
@@ -62,6 +62,10 @@ closes rather than sitting year-round as permanent clutter:
 ![Thanksgiving theme - a harvest-dusk scene with a barn and a turkey standing at the bottom of the window](docs/screenshots/thanksgiving.png)
 
 ![Winter theme - a snowy-dusk scene with a log cabin, a frozen pond, and a snowman standing at the bottom of the window](docs/screenshots/winter.png)
+
+![Veterans Day theme - the real VA.gov Veterans Day poster behind the sidebar](docs/screenshots/veterans.png)
+
+![Valentine's Day theme - a heart-blossom tree, a garland of heart bunting, and a teddy bear hugging a heart standing at the bottom of the window](docs/screenshots/valentines.png)
 
 **BMMS** is the odd one out - not a generic option, but built for this
 app's actual deployment site, using the school's own colors and logo. It's
@@ -75,8 +79,8 @@ theme (if any) the person logging in has picked:
 ![The login page, showing the school's logo as a large letterhead above the form](docs/screenshots/bmms-login.png)
 
 See `app/README.md`'s "The 'Console'/'Savanna'/'Fil'/'BMMS'/'Halloween'/
-'Thanksgiving'/'Winter' theme" sections for the full design rationale
-behind each.
+'Thanksgiving'/'Winter'/'Veterans Day'/'Valentine's Day' theme" sections
+for the full design rationale behind each.
 
 ## Features
 
@@ -228,28 +232,31 @@ behind each.
   modes. See `app/README.md`'s "The 'Console' theme,"
   "The 'Savanna' theme," "The 'Fil' theme," and "The 'BMMS' theme"
   sections.
-- **"Halloween," "Thanksgiving," "Winter," and "Veterans Day" seasonal
-  themes** - the same sidebar layout again, each selectable in the
-  theme picker only during its own date window (September 15 - November
-  15 for Halloween, October 15 - November 30 for Thanksgiving, December
-  1 - January 15 for Winter, a much narrower November 8-14 for Veterans
-  Day - "available during the week of the holiday," rather than weeks on
-  either side of it like the other three) rather than sitting year-round
-  as permanent clutter, except always selectable regardless of the
-  current date when accessing via `127.0.0.1` so development/testing
-  doesn't require waiting for the actual season. An account that picks a
+- **"Halloween," "Thanksgiving," "Winter," "Veterans Day," and
+  "Valentine's Day" seasonal themes** - the same sidebar layout again,
+  each selectable in the theme picker only during its own date window
+  (September 15 - November 15 for Halloween, October 15 - November 30
+  for Thanksgiving, December 1 - January 15 for Winter, a much narrower
+  November 8-14 for Veterans Day - "available during the week of the
+  holiday," rather than weeks on either side of it - and February 7-21
+  for Valentine's Day, a full week either side of the holiday itself
+  since it falls on a weekend) rather than sitting year-round as
+  permanent clutter, except always selectable regardless of the current
+  date when accessing via `127.0.0.1` so development/testing doesn't
+  require waiting for the actual season. An account that picks a
   seasonal theme reverts to the default once its window closes, rather
-  than silently keeping it forever. Halloween/Thanksgiving/Winter are
-  deliberately generic seasons, not specific holidays beyond Halloween
-  and Thanksgiving themselves - Winter has no Christmas tree, menorah,
-  or other single-holiday imagery, the same "school-appropriate for
-  everyone" bar every one of these themes follows; Veterans Day is the
-  only one of the four backed by a real photo rather than original
-  artwork - the official VA.gov Veterans Day poster, public domain as a
-  U.S. federal government work, used directly with only its date text
-  removed. See `app/README.md`'s "The 'Halloween' theme," "The
-  'Thanksgiving' theme," "The 'Winter' theme," and "The 'Veterans Day'
-  theme" sections.
+  than silently keeping it forever. Halloween/Thanksgiving/Winter/
+  Valentine's Day are deliberately generic/non-romantic takes on their
+  own season or holiday, not anything that could exclude anyone - Winter
+  has no Christmas tree, menorah, or other single-holiday imagery, and
+  Valentine's Day is just hearts and a classroom card-exchange mailbox,
+  the same "school-appropriate for everyone" bar every one of these
+  themes follows; Veterans Day is the only one of the five backed by a
+  real photo rather than original artwork - the official VA.gov Veterans
+  Day poster, public domain as a U.S. federal government work, used
+  directly with only its date text removed. See `app/README.md`'s "The
+  'Halloween' theme," "The 'Thanksgiving' theme," "The 'Winter' theme,"
+  "The 'Veterans Day' theme," and "The 'Valentine's Day' theme" sections.
 - **Automatic completion detection** - a background poller notices a
   print finishing, failing, or being cancelled on its own (via the same
   printer status read as the live progress bar above) and records the
@@ -481,7 +488,7 @@ behind each.
 ## To do
 
 **Appearance**
-- Done - eight themes beyond Default: "Console" (sidebar nav,
+- Done - nine themes beyond Default: "Console" (sidebar nav,
   bordered/titled sections, full browser width), "Savanna" (the same
   layout with a desert-sunrise background photo), "Fil" (the same
   layout again with an original mascot instead of a photo - a Mickey
@@ -490,14 +497,17 @@ behind each.
   (the same layout built for this app's actual deployment site - Black
   Mountain Middle School's own maroon-and-gold colors and Raiders logo,
   also shown on both login pages regardless of theme), "Halloween,"
-  "Thanksgiving," "Winter," and "Veterans Day" (the same layout again,
-  all four seasonal rather than year-round, Veterans Day with a much
-  narrower one-week window than the other three - see Features' own
+  "Thanksgiving," "Winter," "Veterans Day," and "Valentine's Day" (the
+  same layout again, all five seasonal rather than year-round, Veterans
+  Day with a much narrower one-week window than Halloween/Thanksgiving/
+  Winter and Valentine's Day with a two-week window - a week either side
+  of the holiday itself, since it falls on a weekend - see Features' own
   bullet for the seasonal date windows and reversion behavior). All
-  eight ship both a light and dark palette - see `app/README.md`'s "The
+  nine ship both a light and dark palette - see `app/README.md`'s "The
   'Console' theme," "The 'Savanna' theme," "The 'Fil' theme," "The
   'BMMS' theme," "The 'Halloween' theme," "The 'Thanksgiving' theme,"
-  "The 'Winter' theme," and "The 'Veterans Day' theme" sections. Further
+  "The 'Winter' theme," "The 'Veterans Day' theme," and "The 'Valentine's
+  Day' theme" sections. Further
   themes beyond these remain open; everything must still ship as local
   static files, no CDN fonts or external image URLs (see "Deployment:
   zero internet access" - this app runs with none, ever).

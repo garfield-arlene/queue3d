@@ -2684,6 +2684,71 @@ override: a navy fill plus a gold border, matching the poster's own gold
 accents, which reads clearly against the red stripes, the poster's sky,
 and the plain navy backdrop alike - not just one of them.
 
+### The "Valentine's Day" theme - a fifth seasonal theme, and the widest window yet
+
+**Why this exists:** the same shared sidebar/full-width/bordered-section
+layout again, seasonal like Halloween/Thanksgiving/Winter/Veterans Day,
+but with a wider window than any of them - per the user, "the week before
+and week after the holiday since it falls on a weekend" (February 7-21, a
+flat fourteen days centered on the holiday's own fixed February 14th
+date). Veterans Day's own narrow seven-day window works precisely because
+"available during the week of the holiday" was the explicit ask there;
+here the ask was specifically to cover the school days on either side of
+a holiday that itself falls on a weekend, which needs the wider
+symmetric span instead.
+
+**The background scene (`theme-valentines-hearts.svg`) and mascot
+(`theme-valentines-bear.svg`) follow the same conventions every other
+original-artwork seasonal theme here already settled on, applied from
+the start rather than needing a second pass to find them:** a scatter of
+drifting hearts occupies the same top-of-the-sidebar slot Winter's
+snowflakes and Halloween's bats use; a heart-blossom tree (branches in
+the same bare-branch-line style Halloween/Thanksgiving's own flanking
+trees use, with clusters of heart "blossoms" at each tip instead of
+leaves) gets the same warm halo behind it Winter's cabin uses to read
+clearly against a saturated background; a low picket fence with a heart
+cutout in each picket occupies the same low-border slot Halloween's
+fence/Winter's rail fence use; and a teddy bear hugging a heart stands at
+the bottom of the window, the same slot/reasoning as the Thanksgiving
+turkey and Winter snowman - a bear has an obvious standing pose, so there
+was never an edge-gripping/hanging concept to consider for it the way
+there was for Fil or the Halloween spider.
+
+**The mailbox is the one new focal element, not reused from an earlier
+theme** - a classroom valentine-exchange mailbox, overflowing with
+envelopes (each with its own tiny heart seal), standing in the
+foreground in the same bottom-of-the-scene role Winter's frozen pond and
+skaters play. Given real, specific shape (a rounded body, a post, a base
+plate, a door cap, a flag on a rod) rather than a plain red blob, the
+same lesson Thanksgiving's own hay-bale/pumpkin fix already established
+for this app's artwork in general: a plain bumpy shape at this scale
+reads as "what even is that," not as the thing it's supposed to be.
+
+**The garland of heart bunting (`theme-valentines-garland.svg`) is its
+own small standalone banner over the content panel's top-right corner
+(`[data-theme="valentines"] main`'s own `background-image`), not part of
+the sidebar scene at all - found by testing, not assumed.** A first
+version strung it across the top of `theme-valentines-hearts.svg`
+instead, directly behind the header's own nav text, the same spot
+Winter's snowflakes/Halloween's bats already sit behind theirs. Those
+read fine there because they're soft and translucent; this garland's
+solid, saturated hearts didn't, and per the user, after seeing it live:
+"the white text on the pink background are difficult to read, especially
+with the heart banner behind it." Moving the garland to the content
+panel's own corner - a spot with no text in front of it to conflict with
+- fixed that outright rather than trying to tune contrast around it
+further; the sidebar's own scrim also went up in both modes at the same
+time (`0.15`/`0.5` alpha to `0.35`/`0.6`), since this scene's sky reads
+pale pink almost everywhere, not just a bright top band the way
+Thanksgiving's own dusk scene does.
+
+**Deliberately just hearts and a card-exchange mailbox, nothing romantic
+beyond that** - the same "school-appropriate for everyone" bar every
+other seasonal theme here follows, applied to Valentine's Day's own
+obvious alternative (anything more explicitly romantic) the way Winter
+stays clear of Christmas/Hanukkah-specific imagery and Thanksgiving stays
+clear of Pilgrims/First-Thanksgiving imagery.
+
 ### Login rate-limiting
 
 **Why this exists:** PINs are short by design (low
