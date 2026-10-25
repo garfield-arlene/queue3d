@@ -1,8 +1,9 @@
 #!/bin/bash
 # Run this on your Mac before ./deploy.sh, whenever you're about to deploy
 # or the TLS cert is due for renewal (every ~90 days - see deploy/README.md's
-# "TLS certificate" section). Does the two things you'd otherwise do by
-# hand each time: pulls the latest code, and fetches a fresh copy of the
+# "TLS certificate" section). Does the three things you'd otherwise do by
+# hand each time: pulls the latest code, refreshes deploy/cache/ (via
+# fetch_bundle_assets.sh) to match it, and fetches a fresh copy of the
 # certificate from wherever certbot actually issues it. deploy.sh itself
 # already handles the other half - copying cache/tls/*.pem onto the Pi and
 # installing them there on every run - so after this, ./deploy.sh <host> is
@@ -83,6 +84,17 @@ echo "Pulling the latest code ($(git branch --show-current))..."
 git pull --ff-only
 
 cd deploy
+
+# The pull above can bring in a new requirements.txt, and the Pi installs
+# Python packages only from deploy/cache/wheels - so the cache has to be
+# refreshed from the code just pulled, every time, not only when someone
+# remembers a dependency changed. A real field upgrade to 9.2.0 failed
+# on exactly that: a wheel cache last fetched for 8.x. Safe to re-run
+# every time - pip download skips wheels already there, and the
+# OrcaSlicer/.deb fetches skip anything already cached.
+echo "Refreshing the offline bundle (wheels, OrcaSlicer, .debs) for this code..."
+./fetch_bundle_assets.sh
+
 mkdir -p cache/tls
 
 echo "Fetching the TLS certificate from $CERT_HOST:$REMOTE_CERT_DIR ..."
