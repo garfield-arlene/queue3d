@@ -203,10 +203,14 @@ and the aarch64 OrcaSlicer AppImage was downloaded and extracted
 cleanly (confirmed `ARM aarch64` ELF, correct `AppRun`/`bin`/`lib`
 layout matching the x86_64 build). Neither could be executed to confirm
 full runtime behavior from this x86_64
-machine - that still needs the real Pi. Re-run this whenever
-`requirements.txt` or the pinned OrcaSlicer version changes; otherwise
-the cache persists between
-deploys and there's nothing to re-fetch.
+machine - that still needs the real Pi. `prep_deploy.sh` (see "TLS
+certificate" below) re-runs this automatically right after pulling the
+latest code, so the cache always matches the code being deployed -
+anything already cached is skipped, so it's cheap to repeat. Run it by
+hand only when deploying without `prep_deploy.sh`. Either way,
+`deploy.sh` checks every pin in `requirements.txt` against
+`deploy/cache/wheels/` before touching the Pi, and stops with the list
+of missing wheels if the cache is stale.
 
 Also populates `deploy/cache/debs/` with `dnsmasq` (arm64) and its full
 dependency closure, for `remote_install.sh`'s own offline `apt-get
@@ -278,8 +282,9 @@ through to `ssh`/`rsync`, so anything they'd accept works here too.)
 Syncs the app, bundled wheels, OrcaSlicer, and the TLS certificate to
 the Pi, then runs `remote_install.sh` there via `sudo` - creates the
 `queue3d` system user and venv if this is the first run, installs/
-upgrades Python dependencies from the bundled wheels only (no network),
-extracts OrcaSlicer, installs and enables the systemd unit (and the
+upgrades Python dependencies from the bundled wheels only (no network)
+*before* syncing the new code into place - so a dependency failure
+leaves the previous version's code and venv untouched - extracts OrcaSlicer, installs and enables the systemd unit (and the
 `queue3d-backup`/`queue3d-cleanup` timers - daily backup and
 draft-expiry cleanup, actually wired in and running rather than left as
 a "run manually, or wire into cron" note in each script's own
@@ -325,7 +330,8 @@ user already controls (a subdomain of an existing personal domain,
 `q3d.home.mygarfield.us`), then copied here.
 
 **`./prep_deploy.sh <cert-host> <remote-cert-dir>`** does this (and
-pulls the latest code first) in one step - run it on your Mac before
+pulls the latest code and refreshes `deploy/cache/` to match it first,
+via `fetch_bundle_assets.sh`) in one step - run it on your Mac before
 `./deploy.sh` whenever you're about to deploy, or the cert is due for
 renewal. Only two things it needs to know, and only two arguments it
 takes: `<cert-host>` is the machine that runs certbot - a *third*
