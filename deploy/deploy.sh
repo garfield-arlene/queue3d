@@ -42,6 +42,34 @@ if [ ! -d cache/wheels ] || [ -z "$(ls -A cache/wheels 2>/dev/null)" ]; then
   echo "deploy/cache/wheels is empty - run ./fetch_bundle_assets.sh on a machine with internet first." >&2
   exit 1
 fi
+# Not just "non-empty" - every pin in requirements.txt needs its exact
+# wheel here, since the Pi's pip runs --no-index and has nowhere else to
+# look. A real field upgrade to 9.2.0 got all the way through staging
+# and partway into remote_install.sh before pip found a cache last
+# refreshed for 8.x (idna 3.19 vs a 3.20 pin, and numpy/scipy/trimesh
+# missing outright). Checked here, before anything touches the Pi.
+# Names are compared normalized (lowercase, -/. -> _) since wheel
+# filenames and requirements.txt don't always agree on spelling
+# (Jinja2 vs jinja2, python-dotenv vs python_dotenv). Written for the
+# Mac's stock bash 3.2 - no associative arrays or ${var,,}.
+CACHED_WHEELS="$(for whl in cache/wheels/*.whl; do
+  base="$(basename "$whl")"
+  rest="${base#*-}"
+  echo "$(echo "${base%%-*}" | tr 'A-Z' 'a-z' | tr -- '-.' '__')==${rest%%-*}"
+done)"
+MISSING_WHEELS=""
+while IFS= read -r req || [ -n "$req" ]; do
+  req="$(echo "${req%%#*}" | tr -d '[:space:]')"
+  case "$req" in *==*) ;; *) continue ;; esac
+  want="$(echo "${req%%==*}" | tr 'A-Z' 'a-z' | tr -- '-.' '__')==${req#*==}"
+  echo "$CACHED_WHEELS" | grep -qxF "$want" || MISSING_WHEELS="$MISSING_WHEELS $req"
+done < ../app/requirements.txt
+if [ -n "$MISSING_WHEELS" ]; then
+  echo "deploy/cache/wheels doesn't match app/requirements.txt - missing:" >&2
+  for req in $MISSING_WHEELS; do echo "  $req" >&2; done
+  echo "Run ./prep_deploy.sh (or ./fetch_bundle_assets.sh) on a machine with internet first." >&2
+  exit 1
+fi
 if ! ls cache/OrcaSlicer-aarch64-*.AppImage >/dev/null 2>&1; then
   echo "No cached OrcaSlicer AppImage - run ./fetch_bundle_assets.sh first." >&2
   exit 1

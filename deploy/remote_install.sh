@@ -186,8 +186,27 @@ except Exception:
   fi
 fi
 
-echo "Syncing staged files into $APP_DIR..."
+# Python dependencies go in BEFORE the new code is synced over, not
+# after - read straight from the staged requirements.txt rather than the
+# installed copy. A real field upgrade (8.2.0 -> 9.2.0) died right here
+# on a stale wheel cache ("No matching distribution found for
+# idna==3.20"), and with the old order that left 9.2.0's code already on
+# disk next to 8.2.0's dependencies: still serving fine only because the
+# running process hadn't been restarted yet, and one reboot away from a
+# service that couldn't start at all. Failing here instead leaves the
+# old code and its old venv exactly as they were. deploy.sh also checks
+# the wheel cache against requirements.txt before anything leaves the
+# Mac, so this should now only ever be a second line of defense.
 mkdir -p "$APP_DIR/app" "$APP_DIR/slicing"
+if [ ! -d "$APP_DIR/app/.venv" ]; then
+  echo "Creating the virtualenv (first install)..."
+  python3 -m venv "$APP_DIR/app/.venv"
+fi
+
+echo "Installing/upgrading Python dependencies from the bundled wheels only (no network)..."
+"$APP_DIR/app/.venv/bin/pip" install --no-index --find-links="$STAGING_DIR/wheels" -r "$STAGING_DIR/app/requirements.txt"
+
+echo "Syncing staged files into $APP_DIR..."
 # Two separate calls, not one rsync given both source dirs at once -
 # exclude-pattern anchoring gets ambiguous across multiple sources in a
 # single call, and getting this wrong (deleting app/data, say) would be a
@@ -216,14 +235,6 @@ if [ -f "$APP_DIR/app/data/queue3d.db" ] && [ ! -f "$DATA_MOUNT/queue3d.db" ]; t
   cp -a "$APP_DIR/app/data/." "$DATA_MOUNT/"
   chown -R queue3d:queue3d "$DATA_MOUNT"
 fi
-
-if [ ! -d "$APP_DIR/app/.venv" ]; then
-  echo "Creating the virtualenv (first install)..."
-  python3 -m venv "$APP_DIR/app/.venv"
-fi
-
-echo "Installing/upgrading Python dependencies from the bundled wheels only (no network)..."
-"$APP_DIR/app/.venv/bin/pip" install --no-index --find-links="$STAGING_DIR/wheels" -r "$APP_DIR/app/requirements.txt"
 
 echo "Extracting OrcaSlicer..."
 ORCA_APPIMAGE=$(ls "$STAGING_DIR"/OrcaSlicer-aarch64-*.AppImage 2>/dev/null | head -1)
