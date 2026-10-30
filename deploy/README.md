@@ -269,6 +269,35 @@ each is handled correctly, plus the all-skipped edge case exits cleanly
 with nothing left to install rather than erroring on an empty argument
 list.
 
+Also populates `deploy/cache/debs-orcaslicer/` with OrcaSlicer's host
+libraries. The aarch64 OrcaSlicer AppImage bundles almost none of its
+own: `bin/orca-slicer` links against GTK3, WebKitGTK 4.1, GStreamer,
+libsoup3, libsecret and the OpenGL/Mesa stack, and expects the host to
+provide all of them. Raspberry Pi OS Lite has no desktop, so it has none
+of them. Every slice on the field install failed with `missing host
+OpenGL runtime library libOpenGL.so.0` from its first day on site until
+9.2.2. `fetch_bundle_assets.sh` names one package per group of
+libraries (`ORCASLICER_HOST_PACKAGES`, with how the list was derived),
+and `resolve_debs.py` resolves the full dependency closure - about 300
+packages, ~190MB - against the same archives Raspberry Pi OS itself
+uses: Debian trixie (plus its updates and security suites) and
+`archive.raspberrypi.com`, taking the highest version of each package
+across them, as apt does. Raspberry Pi's archive ships its own newer
+Mesa and GTK builds, which the closure has to match. The result is a
+small local apt repository (`Packages`, `Release`, `roots.txt`).
+`remote_install.sh` points apt at only that repository and installs the
+packages in `roots.txt` with `--no-upgrade`, so apt installs what's
+missing, upgrades an installed package only when something new needs a
+newer version of it, and otherwise leaves the Pi's packages alone.
+
+Verified in a network-blocked `debian:trixie` container: the same
+resolution for amd64 (`resolve_debs.py --arch amd64`) installed cleanly
+offline (250 new packages), a second run was a no-op, and the x86_64
+OrcaSlicer AppImage then sliced `slicing/models/testcube.stl` through
+`slice.py` with no display at all. The arm64 run on the real Pi is the
+final confirmation, which every deploy now performs itself (see step
+7).
+
 ### 6. Deploy
 
 ```bash
@@ -460,6 +489,15 @@ devices.
 
 ### 7. Confirm it's actually running
 
+`deploy.sh` already checks the essentials at the end of every run, and
+fails the deploy with the details if any of them don't pass: the app
+answers on its internal port, nginx serves it over https, dnsmasq
+answers the site's hostname, and a **real test slice** of
+`slicing/models/testcube.stl` succeeds. The test slice runs `slice.py`
+as the `queue3d` user inside the same systemd sandbox
+`queue3d.service` uses, so a pass means the app itself can slice, not
+just root from a shell. To look for yourself:
+
 ```bash
 ssh <hostname-or-ip>.local sudo systemctl status queue3d nginx
 ssh <hostname-or-ip>.local sudo systemctl list-timers queue3d-backup.timer queue3d-cleanup.timer
@@ -514,10 +552,19 @@ the Pi* - the Pi itself never needs internet again.
 
 ## Ongoing updates
 
-Once deployed, upgrading to a newer version of the app is exactly step
-4 (if `requirements.txt`/OrcaSlicer changed) followed by step 5 - `git
-pull` (or however you get the newer code onto your laptop) on your own
-machine, then `./deploy.sh <target>` again from the `deploy/` directory.
+Every upgrade is the same two commands, from `deploy/` on the Mac:
+
+1. **`./prep_deploy.sh <cert-host> <remote-cert-dir>`** - needs
+   internet, so run it before leaving for the site. Pulls the latest
+   code, refreshes `deploy/cache/` to match it (wheels, OrcaSlicer,
+   every `.deb`), and fetches the current TLS certificate.
+2. **`./deploy.sh q3d.local`** - on the site's network. Checks the
+   cache against the code before touching the Pi, then installs,
+   restarts, and checks the result, test slice included (see step 7).
+   It asks for your sudo password on the Pi, and at the end offers an
+   optional printer check (see "Printer pairing" below) that skips
+   itself after 30 seconds if nobody answers.
+
 Nothing on the Pi side changes about this process whether it's the
 first deploy or the fiftieth.
 
@@ -579,6 +626,16 @@ for the full account of what is and isn't fixed by the app's own
 persistent-connection handling. The admin dashboard's own "Pair
 printer" button does the same thing, no server access needed, for every
 pairing after this first one.
+
+**After every deploy**, `remote_install.sh` asks whether to test the
+printer - never automatically, and the question skips itself after 30
+seconds, so a quick deploy can be left unattended. Answering yes runs
+an unauthenticated handshake against the configured address, which
+spends no pairing token and prints the printer's name and firmware. It
+then asks whether to re-pair right away: the deploy's restart just
+ended the app's printer session, so the next release needs a re-pair
+either way - here (someone presses the dial) or later from the admin
+dashboard.
 
 ## If an upgrade goes wrong: rolling back
 

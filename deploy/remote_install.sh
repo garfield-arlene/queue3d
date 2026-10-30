@@ -198,6 +198,48 @@ fi
 # the wheel cache against requirements.txt before anything leaves the
 # Mac, so this should now only ever be a second line of defense.
 mkdir -p "$APP_DIR/app" "$APP_DIR/slicing"
+
+# OrcaSlicer's host libraries (GTK3, WebKitGTK 4.1, GStreamer, the
+# OpenGL/Mesa stack) - its aarch64 AppImage bundles almost none of its
+# own, and Raspberry Pi OS Lite has no desktop, so none of them are here
+# to begin with. Without them every slice fails ("missing host OpenGL
+# runtime library libOpenGL.so.0"), which is exactly how the field
+# install ran from its first day on site until 9.2.2. Staged by
+# fetch_bundle_assets.sh/resolve_debs.py as a small local apt repository
+# (see resolve_debs.py for why a repository, not a plain list of .debs):
+# apt is pointed at *only* that repository - its own lists, cache and
+# sources, nothing from the Pi's real configuration - and asked for just
+# the packages in roots.txt. --no-upgrade leaves those alone if they're
+# already installed; apt still upgrades a dependency when something
+# being installed genuinely needs a newer one, and otherwise touches
+# nothing. A no-op once everything's in. Placed before the code sync for
+# the same reason as pip below: a failure here leaves the previous
+# version untouched.
+ORCA_DEBS="$STAGING_DIR/debs-orcaslicer"
+if [ ! -f "$ORCA_DEBS/Packages" ] || [ ! -f "$ORCA_DEBS/roots.txt" ]; then
+  echo "ERROR: $ORCA_DEBS is missing or incomplete - deploy.sh should have" >&2
+  echo "synced deploy/cache/debs-orcaslicer/ here. Run ./fetch_bundle_assets.sh" >&2
+  echo "on a machine with internet, then redeploy." >&2
+  exit 1
+fi
+echo "Installing OrcaSlicer's host libraries from the staged packages (offline, no network needed)..."
+APT_TMP="$(mktemp -d)"
+mkdir -p "$APT_TMP/lists/partial" "$APT_TMP/cache/archives/partial"
+echo "deb [trusted=yes] file:$ORCA_DEBS ./" > "$APT_TMP/sources.list"
+APT_LOCAL=(
+  -o Dir::Etc::SourceList="$APT_TMP/sources.list"
+  -o Dir::Etc::SourceParts=-
+  -o Dir::State::Lists="$APT_TMP/lists"
+  -o Dir::Cache="$APT_TMP/cache"
+  -o APT::Get::List-Cleanup=0
+  -o APT::Sandbox::User=root
+)
+apt-get "${APT_LOCAL[@]}" update -qq
+# shellcheck disable=SC2046 - one package name per line, word-splitting intended
+DEBIAN_FRONTEND=noninteractive apt-get "${APT_LOCAL[@]}" install -y -q --no-install-recommends --no-upgrade \
+  $(cat "$ORCA_DEBS/roots.txt")
+rm -rf "$APT_TMP"
+
 if [ ! -d "$APP_DIR/app/.venv" ]; then
   echo "Creating the virtualenv (first install)..."
   python3 -m venv "$APP_DIR/app/.venv"
@@ -424,8 +466,31 @@ sleep 3
 # is the problem) and through nginx on 80 (the thing anyone on the
 # network actually reaches) - reporting exactly which one failed rather
 # than one combined pass/fail is worth the extra few lines here.
-APP_OK=0; PROXY_OK=0; DNS_OK=0
+APP_OK=0; PROXY_OK=0; DNS_OK=0; SLICE_OK=0
 systemctl is-active --quiet queue3d && curl -sf -o /dev/null http://127.0.0.1:8000/login && APP_OK=1
+# A real test slice, every deploy - the page loading says nothing about
+# whether slicing works, which is how the field install went from its
+# first day on site until 9.2.2 with every slice failing while each
+# deploy still reported success. Runs the same slice.py the app does,
+# as the same user, inside the same systemd sandbox queue3d.service
+# applies (ProtectSystem=strict, no home directory, private /tmp), so
+# a pass here means the app itself can slice - not just root, from a
+# shell. The output lands in the throwaway private /tmp and is gone
+# when the run ends. Slicing testcube.stl takes well under a minute.
+SLICE_LOG="$(mktemp)"
+echo "Running a test slice (slicing/models/testcube.stl)..."
+if systemd-run --quiet --wait --pipe --collect \
+    -p User=queue3d -p Group=queue3d \
+    -p WorkingDirectory="$APP_DIR/app" \
+    -p Environment=QUEUE3D_DATA_DIR="$DATA_MOUNT" \
+    -p NoNewPrivileges=true -p PrivateTmp=true \
+    -p ProtectSystem=strict -p ProtectHome=true \
+    -p ReadWritePaths="$DATA_MOUNT" \
+    "$APP_DIR/app/.venv/bin/python3" "$APP_DIR/slicing/slice.py" \
+    "$APP_DIR/slicing/models/testcube.stl" /tmp/deploy-test-slice.makerbot \
+    </dev/null >"$SLICE_LOG" 2>&1; then
+  SLICE_OK=1
+fi
 # -k: even with a real, publicly-trusted certificate now, this check
 # still deliberately connects via 127.0.0.1 rather than the real
 # hostname - the cert is issued for that hostname specifically, not this
@@ -448,14 +513,20 @@ else
   systemctl is-active --quiet dnsmasq && DNS_OK=1
 fi
 
-if [ "$APP_OK" -eq 1 ] && [ "$PROXY_OK" -eq 1 ] && [ "$DNS_OK" -eq 1 ]; then
-  echo "queue3d is up and reachable through nginx at https://<host>/."
+if [ "$APP_OK" -eq 1 ] && [ "$PROXY_OK" -eq 1 ] && [ "$DNS_OK" -eq 1 ] && [ "$SLICE_OK" -eq 1 ]; then
+  rm -f "$SLICE_LOG"
+  echo "queue3d is up and reachable through nginx at https://<host>/, and slicing works."
 else
   echo "" >&2
   echo "WARNING: something is not right after this deploy:" >&2
   [ "$APP_OK" -eq 1 ] || echo "  - queue3d itself is not running/responding on its internal port" >&2
   [ "$PROXY_OK" -eq 1 ] || echo "  - nginx is not proxying https to it successfully" >&2
   [ "$DNS_OK" -eq 1 ] || echo "  - dnsmasq is not answering q3d.home.mygarfield.us correctly (check 'systemctl status dnsmasq' - port 53 may already be in use by something else)" >&2
+  if [ "$SLICE_OK" -ne 1 ]; then
+    echo "  - the test slice failed - the app can't slice anything. Its output:" >&2
+    tail -n 25 "$SLICE_LOG" | sed 's/^/      /' >&2
+  fi
+  rm -f "$SLICE_LOG"
   if [ -n "${BACKUP_DIR:-}" ]; then
     echo "This was an upgrade - the previous working version was backed up to:" >&2
     echo "  $BACKUP_DIR" >&2
@@ -467,4 +538,54 @@ else
   systemctl --no-pager status nginx || true
   systemctl --no-pager status dnsmasq || true
   exit 1
+fi
+
+# Optional printer check - asked, never automatic, and skipped on its own
+# if nobody answers within 30 seconds, so a quick deploy can be walked
+# away from. Two separate steps, because they cost different things:
+#
+# 1. Reachability: an unauthenticated JSON-RPC handshake against the
+#    printer address set on the admin settings page. Spends nothing -
+#    no pairing token involved - and shows the printer's own name and
+#    firmware, proving the address is right and the printer is up.
+# 2. Re-pairing: a pairing token is good for exactly one session (see
+#    printer.py), and the restart above just ended the app's session -
+#    so until someone re-pairs, the next release fails asking for it.
+#    Re-pairing now needs a person at the printer to press its dial;
+#    skipping it here is fine, an admin can do the same from the
+#    dashboard later. An authenticated "status read" is deliberately
+#    not offered as a test: it would spend the fresh token itself and
+#    leave the app needing yet another re-pair.
+ask() {
+  local answer=""
+  [ -t 0 ] || return 1
+  read -r -t 30 -p "$1 [y/N] " answer || echo
+  [[ "$answer" =~ ^[Yy] ]]
+}
+as_app() {
+  sudo -u queue3d env QUEUE3D_DATA_DIR="$DATA_MOUNT" "$APP_DIR/app/.venv/bin/python3" "$@"
+}
+echo
+if ask "Test the printer connection now? (doesn't print anything; skipped after 30s)"; then
+  if (cd "$APP_DIR/app" && as_app -c "
+import sys
+from printer import _MakerBotClient, printer_host, printer_port
+host = printer_host()
+if not host:
+    sys.exit('No printer address set - set it on the admin settings page first.')
+try:
+    with _MakerBotClient(host, printer_port()) as client:
+        info = client.handshake()
+except Exception as e:
+    sys.exit(f'Could not reach the printer at {host}: {e}')
+print(f\"Printer reachable at {host}: {info.get('machine_name', '?')}, firmware {info.get('firmware_version', '?')}\")
+"); then
+    if ask "Re-pair now, so releases work right away? (someone must press the printer's dial)"; then
+      (cd "$APP_DIR/app" && as_app pair_printer.py) || echo "Pairing didn't complete - an admin can re-pair from the dashboard later." >&2
+    else
+      echo "Skipped - re-pair from the admin dashboard before the next release."
+    fi
+  fi
+else
+  echo "Printer check skipped. Remember: the next release needs a re-pair from the admin dashboard first."
 fi
