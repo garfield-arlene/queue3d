@@ -6,8 +6,10 @@
 # the Pi ever touching the network: prebuilt wheels for its exact
 # architecture and Python version (not this machine's own - pip's own
 # cross-platform download support fetches the *target's* wheels, verified
-# working for every dependency this app has, no source builds needed), and
-# the matching aarch64 OrcaSlicer AppImage.
+# working for every dependency this app has, no source builds needed), the
+# matching aarch64 OrcaSlicer AppImage, and the .deb packages the Pi needs
+# but Raspberry Pi OS Lite doesn't ship (dnsmasq, and OrcaSlicer's host
+# libraries).
 #
 # deploy/cache/ is gitignored (large binaries, nothing to diff meaningfully)
 # but persists between runs - re-running this only re-fetches what actually
@@ -178,5 +180,31 @@ for path in "${DNSMASQ_DEBS[@]}"; do
   fi
   curl -sL -o "$dest" "$DEB_MIRROR/$path"
 done
+
+# OrcaSlicer's host libraries. The "Ubuntu2404" aarch64 AppImage bundles
+# only zlib/lzma/expat/mspack (lib/orca-runtime/) and expects the host
+# to provide everything else bin/orca-slicer links against - GTK3,
+# WebKitGTK 4.1, GStreamer, libsoup3, libsecret, the GL/EGL/GLX/OpenGL/
+# GLU stack, Wayland, X11 - none of which Raspberry Pi OS Lite has. One
+# Debian package per group of sonames in bin/orca-slicer's (and
+# lib/orca-runtime/'s) DT_NEEDED list, minus what the AppImage bundles
+# and minus libc6/libgcc-s1 (always present). Re-derive this whenever
+# ORCASLICER_VERSION changes: `readelf -d` on those files, then map each
+# soname to its trixie package. Headless slicing needs no display, Xvfb
+# or GPU driver - just these libraries loadable. resolve_debs.py turns
+# this list into its full dependency closure (about 300 packages,
+# ~190MB) as a local apt repository - see that script for how, and
+# remote_install.sh for how it's installed.
+ORCASLICER_HOST_PACKAGES=(
+  libatk1.0-0t64 libcairo-gobject2 libcairo2 libdbus-1-3 libegl1
+  libfontconfig1 libgdk-pixbuf-2.0-0 libgl1 libglib2.0-0t64 libglu1-mesa
+  libglx0 libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 libgtk-3-0t64
+  libharfbuzz0b libice6 libjavascriptcoregtk-4.1-0 libopengl0
+  libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 libsecret-1-0
+  libsm6 libsoup-3.0-0 libstdc++6 libwayland-client0 libwayland-egl1
+  libwayland-server0 libwebkit2gtk-4.1-0 libx11-6 libxext6 libxkbcommon0
+)
+echo "Resolving OrcaSlicer's host libraries (arm64) for offline install on the Pi..."
+python3 resolve_debs.py cache/debs-orcaslicer "${ORCASLICER_HOST_PACKAGES[@]}"
 
 echo "Done. deploy/cache/ is ready for deploy.sh."
