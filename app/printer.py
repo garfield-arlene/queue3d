@@ -46,6 +46,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlmodel import Session
@@ -170,6 +171,14 @@ class _MakerBotClient:
         self._stop = False
         self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
         self._reader_thread.start()
+
+    def is_alive(self) -> bool:
+        """True while the socket is open and the reader thread is still
+        running. The reader thread exits as soon as the printer closes the
+        socket or a recv() fails, so this tells "the connection is gone"
+        apart from "one request didn't get a reply in time" - only the
+        first one spends the session's token."""
+        return self._sock is not None and self._reader_thread is not None and self._reader_thread.is_alive()
 
     def close(self):
         self._stop = True
@@ -600,20 +609,55 @@ class _PersistentConnection:
         # got as far as authenticating - a network problem instead,
         # printer off/unplugged, wrong host - re-pairing wouldn't help).
         self._last_error = "unknown"
+        # (UTC time, reason) of the last time an authenticated connection
+        # was dropped, so the "needs re-pairing" error on the next attempt
+        # can say what actually ended the session.
+        self._last_drop: tuple[datetime, str] | None = None
+
+    def _drop(self, reason: str) -> None:
+        """Closes the current connection for good. Its token is spent, so
+        the next call needs a fresh pairing. Must be called with
+        self._lock held."""
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+        self._last_error = "needs_pairing"
+        self._last_drop = (datetime.now(timezone.utc), reason)
+
+    def _keep_or_drop(self, client: "_MakerBotClient", error: Exception) -> None:
+        """After a failed request on an authenticated connection: keep it
+        if the socket is still up, drop it only if it's actually gone.
+        A timeout or a JSON-RPC error reply leaves the session usable,
+        and dropping it anyway spends a token that still worked - the
+        auto-finish poller asks for status every 15 seconds for the whole
+        print, so one slow reply used to cost a re-pairing."""
+        # TimeoutError is itself an OSError subclass, hence the exclusion.
+        socket_error = isinstance(error, OSError) and not isinstance(error, TimeoutError)
+        if socket_error or not client.is_alive():
+            self._drop(f"{type(error).__name__}: {error}")
 
     def _connected_client(self) -> "_MakerBotClient":
         """Returns a live, authenticated client - the existing one if a
         cheap health check still passes, otherwise a fresh connection.
         Must be called with self._lock held."""
+        if self._client is not None and not self._client.is_alive():
+            self._drop("the printer closed the connection")
         if self._client is not None:
-            try:
-                self._client.request("handshake", {}, timeout=5)
-                return self._client
-            except Exception:
-                # Dead (printer rebooted, network dropped, etc.) - drop it
-                # and fall through to reconnect rather than fail here.
-                self._client.close()
-                self._client = None
+            # A slow handshake reply gets one longer retry before the
+            # connection is given up on; any reply at all, even an error,
+            # means the session is still there.
+            for timeout in (5, 20):
+                try:
+                    self._client.request("handshake", {}, timeout=timeout)
+                    return self._client
+                except _MakerBotError:
+                    return self._client
+                except TimeoutError as e:
+                    if timeout == 20:
+                        self._drop(f"health check got no reply: {e}")
+                except OSError as e:
+                    self._drop(f"health check failed: {e}")
+                    break
 
         host = printer_host()
         if not host:
@@ -645,11 +689,15 @@ class _PersistentConnection:
             # printer rejecting authentication) from a network-level
             # failure (can't even reach it) for connection_status().
             self._last_error = "needs_pairing" if isinstance(e, _MakerBotError) else "unreachable"
+            dropped = ""
+            if self._last_drop is not None:
+                at, why = self._last_drop
+                dropped = f" The previous connection was dropped at {at:%Y-%m-%d %H:%M:%S} UTC ({why})."
             raise PrinterError(
                 f"Couldn't establish a connection to the printer - if one was "
                 f"already established and this is a reconnect, the printer's "
                 f"pairing tokens are only good for one session, so this needs "
-                f"re-pairing (run pair_printer.py again): {e}"
+                f"re-pairing (run pair_printer.py again): {e}.{dropped}"
             )
         self._client = client
         self._last_error = "unknown"  # healthy now; stale on the *next* failure, not before
@@ -660,24 +708,16 @@ class _PersistentConnection:
             client = self._connected_client()
             try:
                 _upload_and_print(client, makerbot_path)
-            except PrinterError:
-                # An error here could mean the connection itself died
-                # mid-upload (not just the printer rejecting the request)
-                # - drop it so the *next* call reconnects fresh instead of
-                # repeatedly retrying against a socket already known bad.
-                # _connected_client() already got this client past
-                # authentication once, successfully - the token it used is
-                # now spent (see this module's docstring), so reconnecting
-                # will need a fresh one regardless of what actually went
-                # wrong just now. Recording that here, not only on an
-                # auth failure during _connected_client() itself, is what
-                # this status is actually for: telling the dashboard "the
-                # next real attempt will need a re-pair" as soon as that's
-                # true, not only once something has already tried and
-                # failed a *second* time to discover it.
-                self._client.close()
-                self._client = None
-                self._last_error = "needs_pairing"
+            except PrinterError as e:
+                # Unlike a status read (see _keep_or_drop), a failure
+                # partway through an upload leaves the wire in an unknown
+                # state - some of a put_raw's raw bytes may already be on
+                # it - so this connection can't be trusted for the next
+                # request and is always dropped. Its token is spent (see
+                # this module's docstring), so marking needs_pairing here
+                # tells the dashboard "the next real attempt will need a
+                # re-pair" as soon as that's true.
+                self._drop(f"print upload failed: {e}")
                 raise
 
     def capture_photo(self) -> bytes:
@@ -686,13 +726,10 @@ class _PersistentConnection:
             try:
                 return client.capture_one_frame()
             except (_MakerBotError, OSError, TimeoutError) as e:
-                # Same reasoning as send_print_job's except clause above -
-                # this client was already successfully authenticated by
-                # _connected_client(), so its (now spent) token won't work
-                # for the reconnect this failure forces either.
-                self._client.close()
-                self._client = None
-                self._last_error = "needs_pairing"
+                # A frame that didn't arrive in time leaves the session
+                # itself intact - the reader thread's grace-period window
+                # (see capture_one_frame) keeps discarding any late frames.
+                self._keep_or_drop(client, e)
                 raise PrinterError(f"Couldn't capture a photo from the printer's camera: {e}")
 
     def system_information(self) -> dict:
@@ -701,10 +738,7 @@ class _PersistentConnection:
             try:
                 return client.get_system_information()
             except (_MakerBotError, OSError, TimeoutError) as e:
-                # Same reasoning as capture_photo's except clause above.
-                self._client.close()
-                self._client = None
-                self._last_error = "needs_pairing"
+                self._keep_or_drop(client, e)
                 raise PrinterError(f"Couldn't read the printer's status: {e}")
 
     def close(self) -> None:
@@ -807,6 +841,7 @@ def start_pairing() -> bool:
             save_access_token(token)
             with _connection._lock:
                 _connection._last_error = "unknown"  # untested-but-fresh, not a known failure
+                _connection._last_drop = None
             with _pairing_lock:
                 # A genuine, real success - distinct from connection_status()
                 # still reporting "unknown" right afterward (see this

@@ -60,6 +60,48 @@ MODEL_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+class ModelTooLargeError(ValueError):
+    """The placed model doesn't fit the profile's build volume. Raised
+    before OrcaSlicer runs, since its own message for this ("Nothing to
+    be sliced... no object is fully inside the print volume") doesn't
+    say how big the model is or what to change."""
+
+
+def check_fits_build_volume(vertices, settings, scale_factor=1.0):
+    """Raises ModelTooLargeError if the already rotated, scaled and
+    centered vertices fall outside the profile's printable_area (bed
+    corners as "XxY" strings) or above its printable_height - the same
+    test OrcaSlicer applies, on the same coordinates it will receive."""
+    corners = [tuple(float(n) for n in c.split("x")) for c in settings["printable_area"]]
+    bed_x0, bed_x1 = min(c[0] for c in corners), max(c[0] for c in corners)
+    bed_y0, bed_y1 = min(c[1] for c in corners), max(c[1] for c in corners)
+    bed_z = float(settings["printable_height"])
+
+    xs, ys, zs = zip(*vertices)
+    x0, x1, y0, y1, z0, z1 = min(xs), max(xs), min(ys), max(ys), min(zs), max(zs)
+    if x0 >= bed_x0 and x1 <= bed_x1 and y0 >= bed_y0 and y1 <= bed_y1 and z1 <= bed_z:
+        return
+
+    # Placement is centroid-based (see center_vertices()), not bounding-
+    # box-centered, so a model can be narrower than the bed and still
+    # hang off one side. Scaling is about the same origin, so every bound
+    # scales proportionally and the largest scale that fits is the
+    # tightest of these ratios.
+    ratios = [bed_z / z1]
+    for lo, hi, bed_lo, bed_hi in ((x0, x1, bed_x0, bed_x1), (y0, y1, bed_y0, bed_y1)):
+        if hi > 0:
+            ratios.append(bed_hi / hi)
+        if lo < 0:
+            ratios.append(bed_lo / lo)
+    percent = math.floor(min(ratios) * scale_factor * 100)
+    raise ModelTooLargeError(
+        f"This model is {x1 - x0:.0f} x {y1 - y0:.0f} x {z1 - z0:.0f} mm at this scale and "
+        f"orientation, which doesn't fit on the printer's {bed_x1 - bed_x0:.0f} x {bed_y1 - bed_y0:.0f} "
+        f"x {bed_z:.0f} mm build volume. Scale it to {percent}% of its original size or less, "
+        f"rotate it, or split it into smaller pieces."
+    )
+
+
 def parse_stl(path):
     """Return (vertices, triangles) - vertices deduplicated, triangles as
     index triples. Handles both ASCII and binary STL."""
@@ -391,10 +433,12 @@ def build_3mf(
     if scale_factor != 1.0:
         vertices = [(x * scale_factor, y * scale_factor, z * scale_factor) for x, y, z in vertices]
     vertices = center_vertices(vertices, triangles)
-    model_xml = build_model_xml(vertices, triangles)
 
     with open(settings_path, "r") as f:
         settings = json.load(f)
+    check_fits_build_volume(vertices, settings, scale_factor)
+    model_xml = build_model_xml(vertices, triangles)
+
     if overrides:
         settings.update(overrides)
     settings_text = json.dumps(settings, indent=4)
