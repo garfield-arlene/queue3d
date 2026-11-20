@@ -20,9 +20,19 @@ STL --[stl_to_3mf.py]--> .3mf project --[OrcaSlicer --slice]--> gcode --[mbotmak
    it looks like a CLI-mode limitation rather than anything wrong with our
    profile. A self-contained `.3mf` (geometry + settings bundled together,
    the same shape a human saves from the GUI) sidesteps it entirely.
+   It also checks the placed model against the profile's `printable_area`
+   and `printable_height` and raises `ModelTooLargeError` if it doesn't
+   fit, with the model's size and the largest scale that would fit.
+   OrcaSlicer's own message for this ("Nothing to be sliced... no object
+   is fully inside the print volume") gives neither.
 2. **OrcaSlicer** (`tools/squashfs-root/`, vendored AppImage, extracted so it
    runs without FUSE) slices that project headlessly: `--slice 0` on the
-   `.3mf`, gcode lands in `--outputdir` as `plate_1.gcode`.
+   `.3mf`, gcode lands in `--outputdir` as `plate_1.gcode`. It runs with
+   the temp directory as its working directory, because it writes its
+   warnings and errors to `00000.log` in the current directory and aborts
+   (exit -6) if it can't - which is what happens under the service's
+   read-only `/opt/queue3d/app`. When a slice fails, `slice.py` prints
+   that log, since it usually holds OrcaSlicer's actual reason.
 3. **`mbotmake`** (vendored from `charely6/mbotmake`, one bugfix applied -
    see below) converts that gcode into `.makerbot` - a zip of `meta.json`
    (machine/extruder identity, temps, bounding box) + `print.jsontoolpath`
