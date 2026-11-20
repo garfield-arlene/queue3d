@@ -69,7 +69,7 @@
           </td>
           <td class="muted">
             {% if job.status.value == 'submitted' %}
-              <progress></progress> slicing&hellip;
+              <progress></progress> {{ slice_progress(job.id) or "slicing" }}&hellip;
             {% elif job.status.value == 'sliced' %}
               sliced - not yet submitted to the queue
               {% if row.duration_display %} - est. {{ row.duration_display }} print{% endif %}
@@ -86,7 +86,7 @@
                 - <span data-countdown-eta="{{ row.eta.isoformat() }}Z"></span>
               {% endif %}
             {% elif job.status.value == 'rejected' %}
-              {{ job.admin_note or "no note given" }}
+              not printed - {{ job.admin_note or "no note given" }}
             {% elif job.status.value == 'slice_failed' %}
               couldn't slice this file - open Edit to adjust settings and
               re-slice, or re-export and re-upload from here
@@ -138,7 +138,15 @@
                 <button type="submit">Delete</button>
               </form>
             {% endif %}
-            {% if job.status.value in ('rejected', 'failed', 'expired', 'done') %}
+            {# The same restore either way - a copy of the model as a new
+               draft, opened in the editor. Worded for what the submitter
+               is doing: an admin sending back a rejected or failed job
+               says what to change in the note shown in Details. #}
+            {% if job.status.value in ('rejected', 'failed') %}
+              <form method="post" action="/jobs/{{ job.id }}/restore{{ qs }}" style="display:inline">
+                <button type="submit">Fix and resubmit</button>
+              </form>
+            {% elif job.status.value in ('expired', 'done') %}
               <form method="post" action="/jobs/{{ job.id }}/restore{{ qs }}" style="display:inline">
                 <button type="submit">Restore &amp; edit</button>
               </form>

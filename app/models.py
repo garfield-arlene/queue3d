@@ -363,7 +363,7 @@ class Job(SQLModel, table=True):
     # True once a human has ever deliberately set this job's rotation -
     # typing a value, drag-rotating, or Snap to surface - as opposed to
     # whatever a fresh upload's own automatic rotation-retry sweep left it
-    # at (see jobs.AUTO_ROTATE_CANDIDATES). Sticky for the rest of this
+    # at (see jobs.rotation_candidates_for). Sticky for the rest of this
     # job's life once set: a re-slice that doesn't touch rotation at all
     # (toggling supports, say) still must not silently sweep away an
     # orientation someone already chose on purpose, even across a page

@@ -6,6 +6,8 @@ boundary consistent instead of reaching across directories with sys.path
 hacks. It also means slicing/ stays fully independent and runnable/
 testable on its own, which it already was."""
 
+import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -15,6 +17,14 @@ from supports import write_support_preview
 
 SLICING_DIR = Path(__file__).resolve().parent.parent / "slicing"
 SLICE_SCRIPT = SLICING_DIR / "slice.py"
+
+# The longest one slice may run before it's stopped. A model's first
+# slice gets all of it; the automatic rotation retries in jobs.py pass
+# less (see AUTO_ROTATE_BUDGET_S there).
+SLICE_TIMEOUT_S = 600
+# Starts the detail returned for a slice that ran out of time, so callers
+# can tell a timeout from a slicer failure.
+TIMEOUT_MESSAGE = "Slicing timed out"
 
 
 def run_slice(
@@ -27,6 +37,7 @@ def run_slice(
     rotate_x: float = 0.0,
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
+    timeout_s: float = SLICE_TIMEOUT_S,
 ) -> tuple[bool, str]:
     """Returns (success, detail) - detail is the slicer's own output either
     way, useful as slice_error on failure.
@@ -42,6 +53,9 @@ def run_slice(
     models.Job.scale_factor/rotate_x and stl_to_3mf.build_3mf's own
     docstring for the full ordering and why it has to match the client
     preview exactly.
+
+    timeout_s: how long this slice may run before it's stopped. On a
+    timeout, detail starts with TIMEOUT_MESSAGE.
     """
     with tempfile.TemporaryDirectory(prefix="queue3d-pipeline-") as tmp:
         gcode_path = Path(tmp) / "intermediate.gcode"
@@ -71,26 +85,34 @@ def run_slice(
         # terminal in normal dev/deployment use - so that `input()` blocks
         # forever waiting for a keystroke nobody will ever type, instead
         # of raising EOFError immediately the way it does when stdin is
-        # already closed/empty. The 600s timeout below still eventually
-        # fires either way, but only kills this direct child - the
-        # blocked grandchild (mbotmake) would otherwise leak indefinitely
-        # rather than exiting with it. Confirmed live: a real job got
-        # stuck this way; killing the process tree by hand was the only
-        # way to unwedge it before this fix existed.
-        result = subprocess.run(
+        # already closed/empty.
+        #
+        # start_new_session puts slice.py, OrcaSlicer and mbotmake in one
+        # process group of their own, so a timeout kills all three.
+        # subprocess.run's own timeout kills only slice.py, then waits
+        # for its output pipe to close - which a still-running OrcaSlicer
+        # holds open, so the wait never ends and the job stays
+        # 'submitted' for good.
+        proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             text=True,
-            timeout=600,
+            start_new_session=True,
         )
-        output = result.stdout or ""
-        success = result.returncode == 0 and output_makerbot_path.exists()
+        try:
+            output, _ = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            output, _ = proc.communicate()
+            return False, f"{TIMEOUT_MESSAGE} after {timeout_s:.0f} seconds and was stopped.\n\n{output or ''}".rstrip()
+        output = output or ""
+        success = proc.returncode == 0 and output_makerbot_path.exists()
 
         if success and supports_json_path is not None and gcode_path.exists():
             write_support_preview(gcode_path, supports_json_path)
 
     if success:
         return True, output
-    return False, output or f"slice.py exited {result.returncode} with no output"
+    return False, output or f"slice.py exited {proc.returncode} with no output"

@@ -990,6 +990,30 @@ afterward. (This predates the slice/submit
 split below, which is why the end state here is `sliced` rather than
 `queued`.)
 
+### Slicing one model at a time
+
+A real field session left one of two near-simultaneous uploads of the
+same large model at `submitted` for good. `jobs.slice_and_update` now
+only queues the slice: `slice_queue.py` runs them on one background
+thread of its own, one at a time, in upload order. Two OrcaSlicer runs no
+longer compete for the Pi's memory, and waiting slices don't hold
+threads the web server needs for page requests.
+
+- **What a `submitted` row says.** "waiting to slice - 2 models ahead of
+  it" while queued, "slicing" while running, and which rotation retry is
+  running if the first attempt failed (`slice_queue.describe`, a Jinja
+  global as `slice_progress`). Shown on the dashboard and the edit page.
+- **Timeouts stop the whole slice.** `pipeline.run_slice` starts
+  `slice.py` in a process group of its own and kills the group on a
+  timeout. `subprocess.run`'s own timeout killed only `slice.py`, then
+  waited for its output pipe to close, which a still-running OrcaSlicer
+  held open - so a hung slice never ended and its job never left
+  `submitted`.
+- **Interrupted slices fail at startup.** The queue is in memory, so a
+  restart empties it. `jobs.fail_interrupted_slices()` runs at startup
+  and marks every job still `submitted` as `slice_failed` ("interrupted
+  because the app restarted"), so it can be re-sliced from its edit page.
+
 ### A real silent-upload-failure incident: XHR eating its own flash message
 
 **What happened:** a real `.3mf` upload was reported as producing
@@ -2764,6 +2788,27 @@ obvious alternative (anything more explicitly romantic) the way Winter
 stays clear of Christmas/Hanukkah-specific imagery and Thanksgiving stays
 clear of Pilgrims/First-Thanksgiving imagery.
 
+### Marking a print done or failed
+
+- **One click counts.** `jobs.mark_finished` takes several seconds (a
+  printer read and a photo). A real failed print got marked failed three
+  times by repeated clicks, each logging its own `failed` and taking its
+  own photo. It now claims the job with a single conditional update
+  (`printing` -> `done`/`failed`) before the slow part, and any other
+  click gets "This job was already marked failed." The buttons also
+  lock and say "Saving..." as soon as they're clicked.
+- **Marking a job doesn't stop the printer.** If the printer is still
+  printing a job's file after it's been marked done or failed, the admin
+  dashboard says so - "cancel it on the printer's own screen" - instead
+  of reporting a print started outside the app, and the activity log
+  records a `still_printing` event on that job.
+- **Sending a job back.** The reject and "Mark failed" reason boxes
+  suggest fixes ("Turn on supports and resubmit.", "Scale it down and
+  resubmit.", and so on), and any text can still be typed. The submitter
+  sees the reason on their dashboard next to a **Fix and resubmit**
+  button, which is the existing restore: a copy of the model as a new
+  draft, opened in the editor.
+
 ### Login rate-limiting
 
 **Why this exists:** PINs are short by design (low
@@ -4020,14 +4065,26 @@ motivated suggesting a rotation on a slicing error, then attempting
 rotation automatically on one instead of just suggesting it - retrying
 every reasonable rotation rather than stopping at the first one tried.
 
-`jobs.AUTO_ROTATE_CANDIDATES` is a fixed, bounded set of 11 rotations -
-quarter/eighth turns about Z (every real fix observed across all three
-investigated models landed here), plus the four ways to lay the model
-on one of its other faces (±90° about X or Y) - not an exhaustive
-multi-axis grid, which would multiply the real per-attempt cost
-(a full OrcaSlicer+`mbotmake` run each, genuinely minutes for a large
-model) combinatorially for a search with no particular reason to
-expect a better answer than a simpler sweep would find.
+Which rotations are retried depends on the failure
+(`jobs.rotation_candidates_for()`):
+
+- **Setup problems** (a missing system library, an unwritable file, a
+  slice that timed out) aren't retried at all - rotating can't fix them.
+- **"Too big for the bed"** retries 90° and 45° about Z (onto the bed's
+  long axis, or its diagonal), then lying on its side about X or Y.
+  An orientation that still doesn't fit fails `slice.py`'s size check in
+  seconds, before OrcaSlicer starts.
+- **Any other slicer failure** retries lying it on each of its four
+  sides (±90° about X or Y). Turning about Z slices the same layers, so
+  it can't change these. The 45° Z turns that fixed the models above got
+  past `mbotmake`'s bed-centering check, which is now a warning.
+
+The retries share a **3-minute limit** (`AUTO_ROTATE_BUDGET_S`), after the
+first attempt: each gets only the time left, and one doesn't start with
+less time left than the first attempt took. While they run, the job's
+row says which one ("trying another orientation (2 of 4)"). If none
+works, the failure says how many were tried, and whether the limit
+stopped it.
 `jobs._slice_with_rotation_retry()` tries the orientation actually
 requested first, and only sweeps
 the candidates if that fails *and* `Job.rotation_manual` is still
@@ -4048,9 +4105,8 @@ fall back to a candidate. If every candidate also fails, the *original*
 requested orientation's own failure is what gets reported (not
 whichever candidate happened to run last) - the one the user actually
 asked for is the most relevant thing to show - and the `slice_failed`
-page's own hint text was updated to say a broad rotation sweep was
-already tried automatically, so a user doesn't waste time manually
-retrying rotations the app already ruled out.
+page's own hint text says which rotations were already tried
+automatically, so a user doesn't waste time retrying them by hand.
 
 Uploading the Flexi_Seal model fresh (rotation
 defaulting to 0/0/0, deliberately not pre-rotated) and letting the real
@@ -4070,7 +4126,7 @@ chosen orientation failed the printer's own bed-centering check
 stuck-slicing incident" and the Flexi_Seal investigation elsewhere in
 this file already cover) - and the job came back lying on its side
 again anyway, `Job.rotate_x/y/z` silently reset to whatever candidate
-in `AUTO_ROTATE_CANDIDATES` happened to pass that check first. Every
+in the retry list happened to pass that check first. Every
 further attempt at a different upright orientation met the identical
 fate.
 
@@ -4080,7 +4136,7 @@ this on purpose."** `_slice_with_rotation_retry()`'s own docstring
 always claimed "respecting an explicit user choice, not second-guessing
 it," but the code only ever honored that for the *first* attempt at
 whatever orientation was requested - the instant that attempt failed,
-it swept every `AUTO_ROTATE_CANDIDATES` entry regardless of whether the
+it swept every retry candidate regardless of whether the
 requested orientation came from a genuinely untouched upload or from
 someone deliberately dragging/snapping it into place, silently landing
 on and saving whichever candidate happened to pass the bed-centering
@@ -5023,6 +5079,20 @@ never ends up duplicated. Verified directly: a job with no slice error
 at all, referenced only by a feedback report, showed up in the
 downloaded bundle's `models/` folder alongside every job that qualified
 the older way.
+
+**The job dropdown shows each job's number** (`#14 planeTRJ.stl
+(failed, ...)`), so duplicate uploads of the same file can be told
+apart. **"When did this happen" can't be in the future** - the input's
+`max` is the current time in the display timezone, and the server
+rejects a later one too. A real report came in with a time nine days
+after it was submitted.
+
+**The bundle includes the service journal** (`journal.txt`, the last 14
+days of `queue3d` and its backup/cleanup timers): the app's own output
+and tracebacks, which the database doesn't record.
+`deploy/remote_install.sh` adds the `queue3d` user to the
+`systemd-journal` group so it can read it; if it can't, `journal.txt`
+says why instead.
 
 **`job_id` is a real FK, but `job_filename` is also snapshotted alongside
 it at submission time** - the same "stay readable even if the thing it

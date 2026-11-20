@@ -42,7 +42,17 @@
     a slicing error, for offline bugfixing with no internet access.
   </p>
 
-  {% if untracked_print %}
+  {% if untracked_print and untracked_print.job and untracked_print.job.status.value in ('done', 'failed') %}
+    {# Marking a job done or failed here records it - it doesn't stop
+       the printer. A real failed print kept printing after "Mark
+       failed" and showed up as a print nobody had released. #}
+    <p class="error">
+      <a href="/admin/jobs/{{ untracked_print.job.id }}/log">Job #{{ untracked_print.job.id }}</a>
+      ("{{ untracked_print.job.original_filename }}") is marked {{ untracked_print.job.status.value }} here, but
+      the printer is still printing it. Marking a job here doesn't stop the printer - cancel it on the
+      printer's own screen. Releasing another job is blocked until it stops.
+    </p>
+  {% elif untracked_print %}
     <p class="error">
       The printer itself reports it's actively printing
       {% if untracked_print.job %}

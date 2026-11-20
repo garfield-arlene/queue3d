@@ -87,7 +87,7 @@
                 <button type="submit">Approve</button>
               </form>
               <form method="post" action="/admin/jobs/{{ job.id }}/reject{{ qs }}" style="display:inline">
-                <input type="text" name="note" placeholder="reason" required size="16">
+                <input type="text" name="note" placeholder="reason" required size="16" list="fix-hints">
                 <button type="submit">Reject</button>
               </form>
             {% elif job.status.value == 'approved' %}
@@ -95,15 +95,21 @@
                 <button type="submit">Release to printer</button>
               </form>
               <form method="post" action="/admin/jobs/{{ job.id }}/reject{{ qs }}" style="display:inline">
-                <input type="text" name="note" placeholder="reason" required size="16">
+                <input type="text" name="note" placeholder="reason" required size="16" list="fix-hints">
                 <button type="submit">Reject</button>
               </form>
             {% elif job.status.value == 'printing' %}
-              <form method="post" action="/admin/jobs/{{ job.id }}/mark_done{{ qs }}" style="display:inline">
+              {# Saving takes a few seconds (a printer read and a photo), so
+                 the button locks as soon as it's clicked - a real job got
+                 marked failed three times by repeated clicks. jobs.mark_finished
+                 refuses a repeat on its own too. #}
+              <form method="post" action="/admin/jobs/{{ job.id }}/mark_done{{ qs }}" style="display:inline"
+                    onsubmit="lockSubmit(this)">
                 <button type="submit">Mark done</button>
               </form>
-              <form method="post" action="/admin/jobs/{{ job.id }}/mark_failed{{ qs }}" style="display:inline">
-                <input type="text" name="reason" placeholder="reason" required size="16">
+              <form method="post" action="/admin/jobs/{{ job.id }}/mark_failed{{ qs }}" style="display:inline"
+                    onsubmit="lockSubmit(this)">
+                <input type="text" name="reason" placeholder="reason" required size="16" list="fix-hints">
                 <button type="submit">Mark failed</button>
               </form>
             {% elif job.status.value == 'slice_failed' %}
@@ -119,5 +125,23 @@
         </tr>
       {% endfor %}
     </table>
+    {# Suggestions for the reject/fail reason boxes above - the submitter
+       sees this text next to a "Fix and resubmit" button (see
+       _jobs_table.html), so these say what to change. Any other text
+       can still be typed. #}
+    <datalist id="fix-hints">
+      <option value="Turn on supports and resubmit.">
+      <option value="Scale it down and resubmit.">
+      <option value="Rotate it so a large flat side is on the bed, then resubmit.">
+      <option value="Too long to print - scale it down to under 3 hours and resubmit.">
+      <option value="Didn't stick to the bed - rotate it so more of it touches the bed, then resubmit.">
+    </datalist>
+    <script>
+      function lockSubmit(form) {
+        const button = form.querySelector("button[type=submit]");
+        button.disabled = true;
+        button.textContent = "Saving\u2026";
+      }
+    </script>
   {% endif %}
 </div>

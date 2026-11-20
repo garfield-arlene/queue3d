@@ -29,7 +29,7 @@ from auth import (
 from backup import get_backup_history, get_last_successful_backup, is_stale
 from backup import manifest as backup_manifest
 from db import get_session
-from feedback import create_feedback, list_feedback
+from feedback import FUTURE_OCCURRED_AT_ERROR, create_feedback, list_feedback, occurred_at_is_future
 from filters import (
     apply_user_filters,
     event_filter_params,
@@ -1427,6 +1427,8 @@ def admin_submit_feedback(
     job = None
     if not description:
         error = "Describe what you were doing and what went wrong before submitting."
+    elif occurred_at_is_future(occurred_at):
+        error = FUTURE_OCCURRED_AT_ERROR
     elif job_id:
         job = session.get(Job, int(job_id))
         if job is None:

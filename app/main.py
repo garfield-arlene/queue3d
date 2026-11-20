@@ -6,7 +6,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from auth import AuthRedirect, get_session_secret_key
 from db import engine, init_db
-from jobs import start_auto_finish_poller, start_disk_space_poller
+from jobs import fail_interrupted_slices, start_auto_finish_poller, start_disk_space_poller
 from models import Settings
 from printer import close_connection
 from sysmetrics import start_metrics_sampler
@@ -50,6 +50,8 @@ async def auth_redirect_handler(request: Request, exc: AuthRedirect):
 @app.on_event("startup")
 def on_startup():
     init_db()
+    # Before anything can queue a new slice - see its own docstring.
+    fail_interrupted_slices()
     # Primes templates_env's in-process display-timezone cache from
     # whatever's actually stored - see that module's local_time() for
     # why this is a plain module-level global rather than a DB read per

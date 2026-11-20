@@ -22,13 +22,12 @@ support bundle" - plus the model file for any job a report references,
 even one that never itself recorded a slice error (a report can be
 about anything, not just a failed slice).
 
-NOT included, and worth being explicit about why: a persistent
-application log file. This app doesn't currently write one - its own
-progress output goes straight to whatever terminal `uvicorn` happens to
-be running in, not a file, so there's nothing on disk to collect here
-yet. If/when the real deployment runs this under systemd, its journal
-would be the natural next thing to add here - not attempted now since
-that setup doesn't exist to test against.
+Also the last two weeks of the service's systemd journal (journal.txt):
+the app's own output, warnings and tracebacks, which the database
+doesn't record. A job stuck 'submitted' in a real field bundle left no
+trace anywhere else. Reading it needs the queue3d user in the
+systemd-journal group, which deploy/remote_install.sh sets up; without
+it, or off the Pi, journal.txt says why it's empty instead.
 
 Contains real user names and job filenames, and the database's stored
 (hashed, not plaintext) PIN/password secrets - the same information an
@@ -39,6 +38,8 @@ assumed harmless.
 """
 
 import os
+import shutil
+import subprocess
 import tarfile
 import tempfile
 from datetime import datetime, timezone
@@ -68,6 +69,8 @@ def _manifest_text(job_count: int, event_count: int, feedback_count: int) -> str
         f"                     ({event_count} events)\n"
         f"  feedback.txt     - every user/admin-submitted feedback report,\n"
         f"                     most recent first ({feedback_count} report(s))\n"
+        f"  journal.txt      - the service's systemd journal for the last\n"
+        f"                     {JOURNAL_DAYS} days (the app's own output and errors)\n"
         f"  models/          - the model the slicer was given (an STL; .obj\n"
         f"                     and .3mf uploads are stored converted) for\n"
         f"                     every job that ever recorded a slice error\n"
@@ -80,6 +83,27 @@ def _manifest_text(job_count: int, event_count: int, feedback_count: int) -> str
         f"an admin already has on the live server, not anything newly\n"
         f"exposed.\n"
     )
+
+
+JOURNAL_DAYS = 14
+_JOURNAL_UNITS = ("queue3d", "queue3d-backup", "queue3d-cleanup")
+
+
+def _journal_text() -> str:
+    journalctl = shutil.which("journalctl")
+    if journalctl is None:
+        return "(journalctl isn't available here, so there's no service journal to include)\n"
+    cmd = [journalctl, "--no-pager", "-o", "short-iso", "--since", f"-{JOURNAL_DAYS} days"]
+    for unit in _JOURNAL_UNITS:
+        cmd += ["-u", unit]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"(couldn't read the service journal: {e})\n"
+    text = result.stdout
+    if result.stderr.strip():
+        text += f"\n(journalctl exited {result.returncode}: {result.stderr.strip()})\n"
+    return text or "(the service journal is empty)\n"
 
 
 def _activity_log_text(events) -> str:
@@ -158,11 +182,15 @@ def build_support_bundle(session: Session) -> Path:
         feedback_path = tmp / "feedback.txt"
         feedback_path.write_text(_feedback_text(reports))
 
+        journal_path = tmp / "journal.txt"
+        journal_path.write_text(_journal_text())
+
         with tarfile.open(out_path, "w:gz") as tar:
             tar.add(manifest_path, arcname="manifest.txt")
             tar.add(db_path, arcname="database.db")
             tar.add(log_path, arcname="activity_log.txt")
             tar.add(feedback_path, arcname="feedback.txt")
+            tar.add(journal_path, arcname="journal.txt")
             for job in jobs_for_models.values():
                 if job.stl_path and Path(job.stl_path).exists():
                     safe_name = Path(job.original_filename).name  # strip any path component

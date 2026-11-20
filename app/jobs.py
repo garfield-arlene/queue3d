@@ -10,12 +10,12 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlmodel import Session, select
+from sqlmodel import Session, select, update
 
 from db import engine
 from filters import apply_event_filters, apply_job_filters
 from models import Admin, Color, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES, User
-from pipeline import run_slice
+from pipeline import TIMEOUT_MESSAGE, run_slice
 from printer import PrinterError, capture_photo, send_print_job, system_information
 from storage import (
     archive_paths,
@@ -28,6 +28,7 @@ from storage import (
     scratch_paths,
     scratch_stl_path,
 )
+import slice_queue
 import sysmetrics
 
 
@@ -973,32 +974,69 @@ def release(session: Session, job: Job, admin: Admin) -> Job:
     return job
 
 
-# A bounded, "what a person would reasonably try by hand" set of rotations
-# to attempt automatically after a slice fails at whatever orientation was
-# already requested - not exhaustive, and not a fine-grained search. Per
-# the user, after two separate real models (a Flexi_Seal gasket, an F-35
-# fighter jet model) were BOTH fixed by nothing more than rotating - one
-# needing 45 degrees about Z, the other 45 or 60 - with no smarter
-# centering/scaling logic able to fix either: quarter/eighth turns about Z
-# (where both real fixes observed so far actually landed) plus laying the
-# model on each of its other four faces via a 90-degree turn about X or Y.
-# Each entry costs one full OrcaSlicer+mbotmake run (real minutes for a
-# large/complex model) - kept to 11 candidates deliberately, not an
-# exhaustive multi-axis grid, which would multiply that cost combinatorially
-# for a search with no reason to believe it would find anything a simpler
-# sweep wouldn't.
-AUTO_ROTATE_CANDIDATES = [
-    (0.0, 0.0, 45.0), (0.0, 0.0, 90.0), (0.0, 0.0, 135.0), (0.0, 0.0, 180.0),
-    (0.0, 0.0, 225.0), (0.0, 0.0, 270.0), (0.0, 0.0, 315.0),
-    (90.0, 0.0, 0.0), (-90.0, 0.0, 0.0), (0.0, 90.0, 0.0), (0.0, -90.0, 0.0),
-]
+# Rotations to try automatically after a slice fails at the requested
+# orientation, chosen by what the failure was. Rotation only helps in two
+# ways:
+#
+# - A model too big for the bed at one orientation can fit at another.
+#   Turning it about Z changes its footprint (90 degrees swaps its length
+#   onto the bed's long axis, 45 lays it along the diagonal); laying it
+#   on its side trades height for footprint. A candidate that still
+#   doesn't fit fails slice.py's size check within seconds, before
+#   OrcaSlicer ever starts.
+# - Any other slicer failure can only change with a different face on the
+#   bed, since turning about Z slices the same layers. So: each of the
+#   four sides.
+#
+# This used to be one list of 11 for every failure, including Z turns of
+# 180-315 degrees that only mirror 0-135 and can't change anything. The
+# 45-degree Z turns that fixed real models (a Flexi_Seal gasket, an F-35)
+# got past mbotmake's bed-centering check, which is now a warning and no
+# longer fails a slice (see slicing/mbotmake/mbotmake).
+SIZE_ROTATE_CANDIDATES = [(0.0, 0.0, 90.0), (0.0, 0.0, 45.0), (90.0, 0.0, 0.0), (0.0, 90.0, 0.0)]
+FACE_ROTATE_CANDIDATES = [(90.0, 0.0, 0.0), (-90.0, 0.0, 0.0), (0.0, 90.0, 0.0), (0.0, -90.0, 0.0)]
+
+# How long the retries may take in total, after the first attempt. A
+# student's whole lunch period is about 20 minutes, and
+# the old sweep could take that long. Each retry gets only the time
+# left, and one doesn't start without at least as long as the first
+# attempt took.
+AUTO_ROTATE_BUDGET_S = 180
+
+# A failure whose output contains one of these is about the setup, not
+# the model's shape, so rotating can't help and isn't tried: a missing
+# system library, an unwritable file, a slice that ran out of time.
+_NOT_SHAPE_FAILURE_MARKERS = (
+    "missing host",
+    "filesystem_error",
+    "Input/output error",
+    "Permission denied",
+    "Read-only file system",
+    TIMEOUT_MESSAGE,
+)
+# slice.py's ModelTooLargeError, and OrcaSlicer's own wording if
+# anything reaches it out of bounds.
+_SIZE_FAILURE_MARKERS = ("doesn't fit on the printer's", "fully inside the print volume")
 
 
-def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, support_style, scratch_supports, scale_factor, rotate_x, rotate_y, rotate_z, rotation_deliberate=False):
+def rotation_candidates_for(detail: str) -> list[tuple[float, float, float]]:
+    """Which rotations to retry after a failure with this output - see
+    SIZE_ROTATE_CANDIDATES/FACE_ROTATE_CANDIDATES above. Empty when
+    rotating can't help."""
+    if any(marker in detail for marker in _NOT_SHAPE_FAILURE_MARKERS):
+        return []
+    if any(marker in detail for marker in _SIZE_FAILURE_MARKERS):
+        return SIZE_ROTATE_CANDIDATES
+    return FACE_ROTATE_CANDIDATES
+
+
+def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, support_style, scratch_supports, scale_factor, rotate_x, rotate_y, rotate_z, rotation_deliberate=False, on_progress=None):
     """Tries the requested orientation first, then - only if that fails
     *and* the caller says nothing about the requested orientation was
-    actually deliberate - sweeps AUTO_ROTATE_CANDIDATES above, stopping
-    at the first success. Returns (success, detail, used_rotate_x,
+    actually deliberate - retries the rotations rotation_candidates_for()
+    picks for that failure, stopping at the first success or when
+    AUTO_ROTATE_BUDGET_S runs out. on_progress(text), if given, is
+    called before each retry with what to show the user. Returns (success, detail, used_rotate_x,
     used_y, used_z, auto_rotated) - auto_rotated is True only when a
     candidate other than the originally-requested rotation is what
     actually worked, so the caller can record what really got sliced
@@ -1048,15 +1086,12 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
     app/README.md's "A real silently-overridden-orientation incident"
     for the full story, including both earlier attempts this replaces.
 
-    Deliberately does NOT try to detect "is this the kind of failure
-    rotation could plausibly fix" from the error text first when the
-    sweep *does* run (the untouched-default case) - broad and simple
-    ("attempt rotation... until all reasonable rotations have been
-    tried") rather than narrowly gated to one known failure signature.
-    A failure rotation genuinely can't fix (a corrupt file, say) just
-    burns through the same candidates and reports the original failure
-    back - wasted time, but not wrong, and no worse than a user
-    manually trying the same thing by hand."""
+    Which rotations are retried depends on the failure (see
+    rotation_candidates_for). This used to retry every failure the same
+    way, a corrupt file or a missing library included - a field install
+    with a setup problem ran 11 full slices per upload before reporting
+    an error rotation could never have fixed."""
+    started = time.monotonic()
     success, detail = run_slice(
         stl_path,
         scratch_makerbot,
@@ -1068,6 +1103,7 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
         rotate_y=rotate_y,
         rotate_z=rotate_z,
     )
+    first_attempt_s = time.monotonic() - started
     if success:
         return success, detail, rotate_x, rotate_y, rotate_z, False
 
@@ -1098,9 +1134,16 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
         return False, note + detail, rotate_x, rotate_y, rotate_z, False
 
     original_detail = detail
-    for rx, ry, rz in AUTO_ROTATE_CANDIDATES:
-        if (rx, ry, rz) == (rotate_x, rotate_y, rotate_z):
-            continue  # already tried above as the requested orientation
+    candidates = [c for c in rotation_candidates_for(detail) if c != (rotate_x, rotate_y, rotate_z)]
+    deadline = time.monotonic() + AUTO_ROTATE_BUDGET_S
+    tried = 0
+    for attempt, (rx, ry, rz) in enumerate(candidates, start=1):
+        remaining = deadline - time.monotonic()
+        if remaining < first_attempt_s:
+            break
+        tried = attempt
+        if on_progress:
+            on_progress(f"didn't slice as uploaded - trying another orientation ({attempt} of {len(candidates)})")
         success, detail = run_slice(
             stl_path,
             scratch_makerbot,
@@ -1111,6 +1154,7 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
             rotate_x=rx,
             rotate_y=ry,
             rotate_z=rz,
+            timeout_s=remaining,
         )
         if success:
             return success, detail, rx, ry, rz, True
@@ -1118,6 +1162,12 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
     # Every candidate failed - report the ORIGINAL requested orientation's
     # own failure back, not whichever candidate happened to run last; it's
     # the one the user actually asked for and the most relevant to show.
+    if tried:
+        note = f"Also tried {tried} other orientation{'s' if tried != 1 else ''} automatically"
+        if tried < len(candidates):
+            note += f" (stopped at the {AUTO_ROTATE_BUDGET_S // 60}-minute limit)"
+        note += ", and none of them sliced. Try rotating it yourself in the editor.\n\n"
+        original_detail = note + original_detail
     return False, original_detail, rotate_x, rotate_y, rotate_z, False
 
 
@@ -1146,16 +1196,38 @@ def slice_and_update(
     rotate_z: float = 0.0,
     resubmit_to_queue: bool = False,
 ) -> None:
+    """Queues this job's slice and returns at once - slicing runs one model
+    at a time, in upload order (see slice_queue.py), via
+    _slice_and_update_now below. Called as a FastAPI BackgroundTask from
+    routers/user.py's upload, re-slice and restore handlers."""
+    slice_queue.submit(
+        job_id,
+        lambda: _slice_and_update_now(
+            job_id, stl_path, enable_supports, support_style,
+            scale_factor, rotate_x, rotate_y, rotate_z, resubmit_to_queue,
+        ),
+    )
+
+
+def _slice_and_update_now(
+    job_id: int,
+    stl_path: Path,
+    enable_supports: bool,
+    support_style: str | None,
+    scale_factor: float = 1.0,
+    rotate_x: float = 0.0,
+    rotate_y: float = 0.0,
+    rotate_z: float = 0.0,
+    resubmit_to_queue: bool = False,
+) -> None:
     """Runs slicing for a draft and records the outcome as 'sliced' (ready
     to preview and, if the user wants, submit) or 'slice_failed' - never
     'queued' directly any more, now that slicing and submitting are split;
     see submit_draft below for the separate, explicit action that actually
-    puts a job in the queue. Called as a FastAPI `BackgroundTask`, both
-    from routers/user.py's upload handler (the first slice) and its
-    reslice handler (any later one, same uploaded file, new settings), so
-    neither request blocks on however long slicing takes. Opens its own
-    Session - the request's is already closed by the time a background
-    task runs (see db.py's per-request get_session).
+    puts a job in the queue. Runs on slice_queue's worker thread, queued
+    by slice_and_update above, so no request blocks on however long
+    slicing takes. Opens its own Session - the request's is long closed
+    by the time this runs (see db.py's per-request get_session).
 
     Output goes to scratch/, not queue/ - a draft's files stay in scratch/
     for as long as it's a draft, however many times it gets re-sliced;
@@ -1188,7 +1260,7 @@ def slice_and_update(
     user would ever see them.
 
     If slicing fails at the requested orientation *and* `job.rotation_manual`
-    is False, automatically sweeps AUTO_ROTATE_CANDIDATES above before
+    is False, automatically retries other rotations (see rotation_candidates_for) before
     giving up, since real models have repeatedly been fixed by nothing
     more than rotating. If a candidate other than the one requested is
     what actually worked, job.rotate_x/y/z are updated to reflect what
@@ -1222,6 +1294,7 @@ def slice_and_update(
                 rotate_y,
                 rotate_z,
                 job.rotation_manual,
+                on_progress=lambda note: slice_queue.set_note(job.id, note),
             )
         except Exception as e:
             success, detail, auto_rotated = False, f"Unexpected error while slicing: {e}", False
@@ -1282,6 +1355,24 @@ def slice_and_update(
 
         session.add(job)
         session.commit()
+
+
+def fail_interrupted_slices() -> int:
+    """Marks every job still 'submitted' as 'slice_failed', returning how
+    many. Called once at startup (main.py), before anything can queue a
+    slice: slicing state lives only in memory (see slice_queue.py), so a
+    'submitted' job at that point is one a restart or crash interrupted,
+    and it would otherwise show "slicing" forever. A slice_failed draft
+    can be re-sliced from its edit page."""
+    with Session(engine) as session:
+        stuck = session.exec(select(Job).where(Job.status == JobStatus.submitted)).all()
+        for job in stuck:
+            job.status = JobStatus.slice_failed
+            job.slice_error = "Slicing was interrupted because the app restarted before it finished. Open Edit and re-slice it."
+            session.add(job)
+            log_event(session, job.id, "system", "slice_failed", detail="interrupted by an app restart")
+        session.commit()
+        return len(stuck)
 
 
 MIN_SCALE_FACTOR = 0.01  # 1% - below this, a model isn't meaningfully printable any more
@@ -1479,8 +1570,27 @@ def mark_finished(
     the whole "wrap this job up" sequence, not just the instant this
     function happened to start - see _duration_correction_factor above,
     which this timestamp directly feeds."""
+    if job.status in (JobStatus.done, JobStatus.failed):
+        raise JobActionError(f"This job was already marked {job.status.value}.")
     _require_status(job, JobStatus.printing)
-    job.status = JobStatus.done if success else JobStatus.failed
+    # Claims the job before the slow part below (a fresh printer read
+    # and a photo, several seconds): only one caller can move it off
+    # 'printing', and the status is saved at once. Checking `job.status`
+    # alone let three "Mark failed" clicks within 23 seconds on a real
+    # job each pass, each logging its own 'failed' and taking its own
+    # photo - every one of them had loaded the job before the first
+    # finished. The automatic poller goes through here too.
+    new_status = JobStatus.done if success else JobStatus.failed
+    claimed = session.exec(
+        update(Job)
+        .where(Job.id == job.id, Job.status == JobStatus.printing)
+        .values(status=new_status)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    session.commit()
+    session.refresh(job)
+    if claimed != 1:
+        raise JobActionError(f"This job was already marked {job.status.value}.")
     if not success and reason:
         job.failure_reason = reason
     move_job_to_archive(job)
@@ -1600,15 +1710,27 @@ def _log_untracked_print_once(session: Session) -> None:
     if current is not None:
         if not _untracked_print_logged:
             _untracked_print_logged = True
-            log_event(
-                session, None, "system", "untracked_print_detected",
-                detail=(
-                    f"Printer reports actively printing "
-                    f"{current.get('filename') or 'an unknown file'!r} with no "
-                    "matching queue job - likely started directly from the "
-                    "printer's own controls, not released through the app."
-                ),
-            )
+            job = current.get("job")
+            if job is not None and job.status in (JobStatus.done, JobStatus.failed):
+                # Marked finished here while the printer kept going - see
+                # admin_dashboard.html's banner for this same case.
+                log_event(
+                    session, job.id, "system", "still_printing",
+                    detail=(
+                        f"Marked {job.status.value}, but the printer is still printing "
+                        "it - it has to be cancelled on the printer itself."
+                    ),
+                )
+            else:
+                log_event(
+                    session, None, "system", "untracked_print_detected",
+                    detail=(
+                        f"Printer reports actively printing "
+                        f"{current.get('filename') or 'an unknown file'!r} with no "
+                        "matching queue job - likely started directly from the "
+                        "printer's own controls, not released through the app."
+                    ),
+                )
             session.commit()
     else:
         _untracked_print_logged = False

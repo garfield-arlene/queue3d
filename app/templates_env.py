@@ -16,6 +16,7 @@ from sqlmodel import Session
 
 from db import engine
 from models import Admin, User
+from slice_queue import describe as slice_progress
 from sysmetrics import svg_polyline_points
 from themes import DEFAULT_MODE, LOGGED_OUT_THEME, effective_theme, is_theme_selectable
 from version import APP_VERSION
@@ -28,6 +29,9 @@ templates.env.globals["APP_VERSION"] = APP_VERSION
 # SVG points) with nothing route-specific about it. See its own
 # docstring in sysmetrics.py.
 templates.env.globals["svg_polyline_points"] = svg_polyline_points
+# What a still-'submitted' job is doing right now (waiting its turn, or
+# which rotation retry is running) - see slice_queue.describe.
+templates.env.globals["slice_progress"] = slice_progress
 
 
 def _signed_in_account(request):
@@ -228,3 +232,13 @@ def local_time(dt: datetime | None, fmt: str = "%Y-%m-%d %H:%M %Z") -> str:
 
 
 templates.env.filters["local_time"] = local_time
+
+
+def local_now_input() -> str:
+    """The current time in the display timezone, in the format an
+    <input type="datetime-local"> takes - its `max`, so a feedback form's
+    "when did this happen" can't be set in the future."""
+    return datetime.now(_utc.utc).astimezone(_display_timezone).strftime("%Y-%m-%dT%H:%M")
+
+
+templates.env.globals["local_now_input"] = local_now_input

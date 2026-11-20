@@ -17,7 +17,7 @@ from auth import (
     verify_secret,
 )
 from db import get_session
-from feedback import create_feedback, list_feedback
+from feedback import FUTURE_OCCURRED_AT_ERROR, create_feedback, list_feedback, occurred_at_is_future
 from filters import filtered_redirect, job_filter_params, job_filters_from_query_params
 from jobs import (
     JobActionError,
@@ -342,6 +342,8 @@ def submit_feedback(
     job = None
     if not description:
         error = "Describe what you were doing and what went wrong before submitting."
+    elif occurred_at_is_future(occurred_at):
+        error = FUTURE_OCCURRED_AT_ERROR
     elif job_id:
         job = session.get(Job, int(job_id))
         if job is None or job.user_id != user.id:
