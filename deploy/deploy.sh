@@ -38,6 +38,77 @@ TARGET="$1"
 # permanent install to /opt/queue3d.
 STAGING_DIR=/tmp/queue3d-deploy-staging
 
+# The last thing every run prints is one large SUCCESS or FAIL, so the
+# outcome can be read at a glance instead of pieced together from
+# scrollback. SUCCESS needs the final check at the bottom of this script
+# to pass: queue3d running on the Pi and serving this checkout's own
+# app/VERSION. A field deploy once looked clean and left the Pi on the
+# previous version, which nothing here caught. Any other way out - a
+# failed check below, remote_install.sh failing, ssh dropping, Ctrl-C -
+# lands in on_exit and prints FAIL.
+EXPECTED_VERSION="$(tr -d '[:space:]' < ../app/VERSION)"
+SOURCE_DESC="$(git describe --tags --always --dirty 2>/dev/null || echo "not a git checkout")"
+PREVIOUS_VERSION=""
+RESULT_SHOWN=0
+if [ -t 1 ]; then
+  GREEN=$'\033[1;32m'; RED=$'\033[1;31m'; RESET=$'\033[0m'
+else
+  GREEN=""; RED=""; RESET=""
+fi
+
+show_success() {
+  RESULT_SHOWN=1
+  echo
+  echo "$GREEN"
+  cat <<'EOF'
+   #####   #     #   #####    #####   #######   #####    #####
+  #     #  #     #  #     #  #     #  #        #     #  #     #
+  #        #     #  #        #        #        #        #
+   #####   #     #  #        #        #####     #####    #####
+        #  #     #  #        #        #              #        #
+  #     #  #     #  #     #  #     #  #        #     #  #     #
+   #####    #####    #####    #####   #######   #####    #####
+EOF
+  echo "$RESET"
+  echo "  queue3d $EXPECTED_VERSION is running on $TARGET."
+  echo "  Before: ${PREVIOUS_VERSION:-(fresh install)}   Now: $EXPECTED_VERSION   Deployed from: $SOURCE_DESC"
+  if [ "$PREVIOUS_VERSION" = "$EXPECTED_VERSION" ]; then
+    echo "  Note: the Pi was already on $EXPECTED_VERSION before this deploy."
+  fi
+  echo
+}
+
+# Arguments: one reason each.
+show_fail() {
+  RESULT_SHOWN=1
+  echo
+  echo "$RED"
+  cat <<'EOF'
+  #######     #     ###  #
+  #          # #     #   #
+  #         #   #    #   #
+  #####    #     #   #   #
+  #        #######   #   #
+  #        #     #   #   #
+  #        #     #  ###  #######
+EOF
+  echo "$RESET"
+  local reason
+  for reason in "$@"; do
+    echo "  - $reason"
+  done
+  echo "  Target: $TARGET   Before: ${PREVIOUS_VERSION:-unknown}   Expected: $EXPECTED_VERSION   Deployed from: $SOURCE_DESC"
+  echo
+}
+
+on_exit() {
+  local status=$?
+  if [ "$RESULT_SHOWN" -eq 0 ]; then
+    show_fail "deploy.sh stopped before finishing (exit status $status) - see the messages above."
+  fi
+}
+trap on_exit EXIT
+
 if [ ! -d cache/wheels ] || [ -z "$(ls -A cache/wheels 2>/dev/null)" ]; then
   echo "deploy/cache/wheels is empty - run ./fetch_bundle_assets.sh on a machine with internet first." >&2
   exit 1
@@ -96,7 +167,9 @@ if [ ! -f cache/tls/fullchain.pem ] || [ ! -f cache/tls/privkey.pem ]; then
 fi
 
 echo "Staging files on $TARGET:$STAGING_DIR ..."
-ssh "$TARGET" "mkdir -p $STAGING_DIR"
+# Also reads the version installed now (empty on a fresh install), for
+# the before/after line in the final report.
+PREVIOUS_VERSION="$(ssh "$TARGET" "mkdir -p $STAGING_DIR && { cat /opt/queue3d/app/VERSION 2>/dev/null || true; }" | tr -d '[:space:]')"
 
 # --info=progress2 (a single running total for the whole transfer, not a
 # per-file line) plus --no-i-r (computes the full file list up front, so
@@ -181,3 +254,33 @@ ssh -t "$TARGET" "sudo bash $STAGING_DIR/remote_install.sh"
 
 echo "Done. Cleaning up the staging directory..."
 ssh "$TARGET" "rm -rf $STAGING_DIR"
+
+# Final check, independent of everything remote_install.sh reported: ask
+# the running app which version it is. Every page's footer reads
+# "queue3d v<VERSION>" from the VERSION file loaded at startup, so this
+# is what the restarted process is actually serving, not just what was
+# copied to disk.
+echo "Final check: confirming $TARGET is serving queue3d $EXPECTED_VERSION ..."
+read -r -d '' REMOTE_CHECK <<'EOF' || true
+echo "state=$(systemctl is-active queue3d)"
+echo "version=$(curl -sk --max-time 15 https://127.0.0.1/login | grep -o 'queue3d v[^<]*' | head -1 | sed 's/^queue3d v//')"
+EOF
+FINAL_CHECK="$(ssh "$TARGET" "$REMOTE_CHECK" || true)"
+RUNNING_STATE="$(echo "$FINAL_CHECK" | sed -n 's/^state=//p')"
+RUNNING_VERSION="$(echo "$FINAL_CHECK" | sed -n 's/^version=//p' | tr -d '[:space:]')"
+FAILURES=()
+if [ -z "$FINAL_CHECK" ]; then
+  FAILURES+=("Couldn't run the final check on $TARGET over ssh.")
+else
+  [ "$RUNNING_STATE" = "active" ] || FAILURES+=("The queue3d service is '${RUNNING_STATE:-unknown}', not 'active'.")
+  if [ -z "$RUNNING_VERSION" ]; then
+    FAILURES+=("https://127.0.0.1/login on the Pi didn't answer with a queue3d version.")
+  elif [ "$RUNNING_VERSION" != "$EXPECTED_VERSION" ]; then
+    FAILURES+=("The Pi is serving queue3d $RUNNING_VERSION, but this checkout is $EXPECTED_VERSION.")
+  fi
+fi
+if [ "${#FAILURES[@]}" -gt 0 ]; then
+  show_fail "${FAILURES[@]}"
+  exit 1
+fi
+show_success
