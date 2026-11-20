@@ -68,11 +68,12 @@ def _manifest_text(job_count: int, event_count: int, feedback_count: int) -> str
         f"                     ({event_count} events)\n"
         f"  feedback.txt     - every user/admin-submitted feedback report,\n"
         f"                     most recent first ({feedback_count} report(s))\n"
-        f"  models/          - the original upload for every job that ever\n"
-        f"                     recorded a slice error (whether it ultimately\n"
-        f"                     failed or an automatic rotation fixed it), or\n"
-        f"                     that a feedback report above referenced\n"
-        f"                     ({job_count} file(s))\n"
+        f"  models/          - the model the slicer was given (an STL; .obj\n"
+        f"                     and .3mf uploads are stored converted) for\n"
+        f"                     every job that ever recorded a slice error\n"
+        f"                     (whether it ultimately failed or an automatic\n"
+        f"                     rotation fixed it), or that a feedback report\n"
+        f"                     above referenced ({job_count} file(s))\n"
         f"\n"
         f"Contains real user names, job filenames, feedback text, and the\n"
         f"database's stored (hashed) PIN/password secrets - the same access\n"
@@ -165,6 +166,11 @@ def build_support_bundle(session: Session) -> Path:
             for job in jobs_for_models.values():
                 if job.stl_path and Path(job.stl_path).exists():
                     safe_name = Path(job.original_filename).name  # strip any path component
-                    tar.add(job.stl_path, arcname=f"models/{job.id}_{safe_name}")
+                    # Named for the stored file's real format: an uploaded
+                    # .3mf or .obj is kept converted to STL, so its
+                    # original extension would mislabel the file.
+                    stored_suffix = Path(job.stl_path).suffix
+                    arcname = f"models/{job.id}_{Path(safe_name).stem}{stored_suffix}"
+                    tar.add(job.stl_path, arcname=arcname)
 
     return out_path

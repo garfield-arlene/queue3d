@@ -1121,6 +1121,20 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
     return False, original_detail, rotate_x, rotate_y, rotate_z, False
 
 
+def _head_and_tail(text: str, limit: int) -> str:
+    """Shortens text to about `limit` characters by cutting the middle.
+    A slice failure's detail starts with this app's own explanation
+    (e.g. the deliberate-orientation note above) and ends with the
+    slicer's actual error, so keeping only the tail cut the explanation
+    off mid-word while the middle is mostly traceback."""
+    if len(text) <= limit:
+        return text
+    marker = "\n[...]\n"
+    head = (limit - len(marker)) * 2 // 5
+    tail = limit - len(marker) - head
+    return text[:head] + marker + text[-tail:]
+
+
 def slice_and_update(
     job_id: int,
     stl_path: Path,
@@ -1263,8 +1277,8 @@ def slice_and_update(
                 log_event(session, job.id, actor, "queued", detail="automatic - rejoined the queue after a re-slice, with a fresh wait time")
         else:
             job.status = JobStatus.slice_failed
-            job.slice_error = detail[-4000:]  # cap - slicer output can be long
-            log_event(session, job.id, actor, "slice_failed", detail=job.slice_error[-1000:])
+            job.slice_error = _head_and_tail(detail, 4000)  # cap - slicer output can be long
+            log_event(session, job.id, actor, "slice_failed", detail=_head_and_tail(job.slice_error, 1000))
 
         session.add(job)
         session.commit()

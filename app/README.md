@@ -888,8 +888,10 @@ has actually needed, not guessed at:** a safe, consistent copy of the
 whole database (`backup.py`'s own `backup_database()` - the exact same
 online-backup-API copy the automated backup feature already uses, not
 a raw file read that could grab a half-written page mid-write, reused
-rather than reimplemented), the original model file for every job that
-ever recorded a `slice_error` (whether it ultimately failed outright or
+rather than reimplemented), the model file the slicer was given for
+every job that ever recorded a `slice_error` (an uploaded `.3mf` or
+`.obj` is stored converted to STL, so the bundle names that file with
+`.stl` rather than its upload's extension; whether it ultimately failed outright or
 an automatic rotation retry fixed it - kept either way, since a
 "fixed by auto-rotation" job's file is exactly the kind of thing worth
 double-checking later), and the full activity log as plain text. The
@@ -1517,6 +1519,25 @@ fix is internal to `printer.py`.
   fresh one is connected+authenticated in its place - which will itself
   fail if the *previous* session already spent the saved token, correctly
   surfacing as "this needs re-pairing," not a confusing raw exception.
+- A connection is only dropped when it's actually gone: the socket
+  errored, or the reader thread exited because the printer closed it.
+  A request that times out, or gets a JSON-RPC error reply, leaves the
+  session in place - dropping it would spend a token that still works.
+  The health-check `handshake` gets 5 seconds, then one more try with
+  20, before the connection is given up on. Through 9.2.2, any failed
+  status read or health check dropped the connection, and the
+  auto-finish poller reads status every 15 seconds for the whole
+  print, so one slow reply cost a re-pairing. On 2026-11-03 the field
+  install's connection was dropped partway through a print: the print
+  had to be marked done by hand and its photo couldn't be taken. Nothing
+  recorded why, which the next point addresses.
+- When a connection is dropped, the time and reason are kept, and the
+  next "needs re-pairing" error includes them ("The previous connection
+  was dropped at ... UTC (...)"), so the activity log and support bundle
+  show what ended the session. A successful pairing clears it.
+- A failed print upload still always drops the connection: part of a
+  `put_raw`'s raw bytes may already be on the wire, so the next request
+  can't be trusted to line up.
 - `self._lock` (an `RLock`) is held for the full duration of one logical
   operation (health-check-then-do-the-real-thing), not just around
   individual `request()` calls - coarser than true request/response

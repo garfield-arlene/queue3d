@@ -40,7 +40,7 @@ SUPPORT_STYLE_TYPE = {
 }
 
 sys.path.insert(0, str(HERE))
-from stl_to_3mf import build_3mf  # noqa: E402
+from stl_to_3mf import ModelTooLargeError, build_3mf  # noqa: E402
 
 
 def slice_stl(
@@ -119,6 +119,14 @@ def slice_stl(
             # OrcaSlicer slice the exact placement we handed it, matching
             # what the browser preview shows.
             [str(ORCASLICER), "--outputdir", str(tmp), "--arrange", "0", "--orient", "0", "--slice", "0", str(project_3mf)],
+            # OrcaSlicer writes its warnings and errors to 00000.log in
+            # the current directory. The service runs from
+            # /opt/queue3d/app, which ProtectSystem=strict makes
+            # read-only, and OrcaSlicer aborts (exit -6) when that write
+            # fails - turning any warning, even on a model that would
+            # otherwise slice, into a crash. The temp dir is writable and
+            # cleaned up with everything else.
+            cwd=tmp,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
@@ -134,6 +142,11 @@ def slice_stl(
 
         gcode_path = tmp / "plate_1.gcode"
         if not gcode_path.exists():
+            # OrcaSlicer's own reason for a failed slice usually goes to
+            # its log file, not stdout (see cwd above).
+            orca_log = tmp / "00000.log"
+            if orca_log.exists() and orca_log.read_text(errors="replace").strip():
+                print(orca_log.read_text(errors="replace").strip())
             raise RuntimeError(f"OrcaSlicer didn't produce gcode (exit {result.returncode}). See output above.")
 
         if gcode_out_path:
@@ -179,17 +192,23 @@ def main():
     parser.add_argument("--rotate-y", type=float, default=0.0, help="Degrees to rotate about the Y axis, applied second")
     parser.add_argument("--rotate-z", type=float, default=0.0, help="Degrees to rotate about the Z axis, applied third")
     args = parser.parse_args()
-    slice_stl(
-        args.stl,
-        args.output,
-        enable_supports=args.enable_supports,
-        support_style=args.support_style,
-        gcode_out_path=args.gcode_out,
-        scale_factor=args.scale,
-        rotate_x=args.rotate_x,
-        rotate_y=args.rotate_y,
-        rotate_z=args.rotate_z,
-    )
+    try:
+        slice_stl(
+            args.stl,
+            args.output,
+            enable_supports=args.enable_supports,
+            support_style=args.support_style,
+            gcode_out_path=args.gcode_out,
+            scale_factor=args.scale,
+            rotate_x=args.rotate_x,
+            rotate_y=args.rotate_y,
+            rotate_z=args.rotate_z,
+        )
+    except ModelTooLargeError as e:
+        # A plain message, not a traceback - this output is what the
+        # user sees on their job (see app/pipeline.py's run_slice).
+        print(e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
