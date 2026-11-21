@@ -28,12 +28,12 @@
       <select name="job_id">
         <option value="">&mdash; not related to a specific job &mdash;</option>
         {% for job in jobs %}
-          <option value="{{ job.id }}">{{ job.original_filename }} ({{ job_owners[job.id] }}, {{ job.status.value }}, {{ job.created_at | local_time('%Y-%m-%d') }})</option>
+          <option value="{{ job.id }}">#{{ job.id }} {{ job.original_filename }} ({{ job_owners[job.id] }}, {{ job.status.value }}, {{ job.created_at | local_time('%Y-%m-%d') }})</option>
         {% endfor %}
       </select>
     </label>
     <label>Approximately when did this happen?<br>
-      <input type="datetime-local" name="occurred_at">
+      <input type="datetime-local" name="occurred_at" max="{{ local_now_input() }}">
     </label>
     <p class="muted">Both are optional, but help narrow down what to look for.</p>
     <button type="submit">Submit feedback</button>

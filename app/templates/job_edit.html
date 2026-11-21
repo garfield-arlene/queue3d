@@ -32,16 +32,16 @@
   {% if flash_error %}<p class="error">{{ flash_error }}</p>{% endif %}
 
   {% if job.status.value == 'submitted' %}
-    <p><progress></progress> slicing&hellip;</p>
+    <p><progress></progress> {{ slice_progress(job.id) or "slicing" }}&hellip;</p>
   {% elif job.status.value == 'slice_failed' %}
     <p class="error">Couldn't slice this file. Adjust settings and re-slice below, or re-export and re-upload from the dashboard.</p>
     <p class="muted">
-      Many slicing failures come from a model's own shape or orientation,
-      not its size - this already automatically tried rotating it a
-      handful of likely ways (quarter/eighth turns, and standing it on
-      each of its other faces) before giving up, so if that didn't help,
-      a manual angle outside that set, or a support-style change, is more
-      likely to than trying the same rotations again by hand.
+      Many slicing failures come from a model's own shape or orientation.
+      Unless you set the orientation yourself, this already tried laying
+      it on each of its sides (or, if it was too big for the bed, turning
+      it to fit) for up to 3 minutes before giving up - the technical
+      details below say which. If that didn't help, try scaling it down,
+      a different angle of your own, or a different support style.
     </p>
     {% if job.slice_error %}
       <details class="tech-detail">

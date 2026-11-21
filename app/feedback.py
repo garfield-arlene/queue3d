@@ -7,7 +7,7 @@ living in either one, the same reasoning jobs.py's own shared functions
 already follow.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from datetime import timezone as _utc
 
 from sqlmodel import Session, select
@@ -35,6 +35,19 @@ def parse_occurred_at(s: str | None) -> datetime | None:
         return None
     tz = templates_env.get_display_timezone()
     return naive.replace(tzinfo=tz).astimezone(_utc.utc)
+
+
+FUTURE_OCCURRED_AT_ERROR = "\"When did this happen\" can't be in the future - pick the time it actually happened, or leave it blank."
+
+
+def occurred_at_is_future(s: str | None) -> bool:
+    """True for an "Occurred" time later than now. The form's own `max`
+    stops this in the browser (see templates_env.local_now_input); this is
+    the server-side check behind it. A real report came in with a time
+    nine days after it was submitted. A minute of slack covers the form
+    being filled in during the current minute."""
+    occurred = parse_occurred_at(s)
+    return occurred is not None and occurred > datetime.now(_utc.utc) + timedelta(minutes=1)
 
 
 def create_feedback(

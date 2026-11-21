@@ -496,7 +496,18 @@ answers the site's hostname, and a **real test slice** of
 `slicing/models/testcube.stl` succeeds. The test slice runs `slice.py`
 as the `queue3d` user inside the same systemd sandbox
 `queue3d.service` uses, so a pass means the app itself can slice, not
-just root from a shell. To look for yourself:
+just root from a shell.
+
+The very last thing `deploy.sh` prints is a large **SUCCESS** or
+**FAIL**. SUCCESS needs one more check after everything above: the
+restarted app has to be serving this checkout's own `app/VERSION` (read
+from the version footer on its login page), with the version before and
+after shown underneath. Anything else - a failed check, the install
+stopping partway, ssh dropping, the Pi serving a different version -
+ends in FAIL, with the reasons listed under it. If the before and after
+versions match on an upgrade you expected to change something, the
+Mac's checkout wasn't on the release: re-run `prep_deploy.sh` from
+`main`. To look for yourself:
 
 ```bash
 ssh <hostname-or-ip>.local sudo systemctl status queue3d nginx
@@ -561,9 +572,9 @@ Every upgrade is the same two commands, from `deploy/` on the Mac:
 2. **`./deploy.sh q3d.local`** - on the site's network. Checks the
    cache against the code before touching the Pi, then installs,
    restarts, and checks the result, test slice included (see step 7).
-   It asks for your sudo password on the Pi, and at the end offers an
-   optional printer check (see "Printer pairing" below) that skips
-   itself after 30 seconds if nobody answers.
+   It asks for your sudo password on the Pi, offers an optional
+   printer check (see "Printer pairing" below) that skips itself after
+   30 seconds if nobody answers, and ends with a large SUCCESS or FAIL.
 
 Nothing on the Pi side changes about this process whether it's the
 first deploy or the fiftieth.
