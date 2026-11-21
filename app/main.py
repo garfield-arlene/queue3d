@@ -11,7 +11,7 @@ from models import Settings
 from printer import close_connection
 from sysmetrics import start_metrics_sampler
 from routers import admin, help, jobs, user
-from templates_env import set_display_timezone
+from templates_env import set_display_timezone, set_print_time_thresholds
 
 # docs_url/redoc_url disabled: FastAPI's built-in interactive docs load
 # their JS/CSS from cdn.jsdelivr.net by default, which is a dead link on a
@@ -64,6 +64,7 @@ def on_startup():
     with Session(engine) as session:
         settings = session.get(Settings, 1) or Settings()
         set_display_timezone(settings.display_timezone)
+        set_print_time_thresholds(settings.print_time_good_hours, settings.print_time_ask_hours)
     # Notices a print finishing/failing/being cancelled on its own and
     # records it automatically (see jobs.check_and_finish_active_print) -
     # closes the gap between a print actually ending and an admin
