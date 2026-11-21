@@ -418,6 +418,12 @@ just run once per file found. Zero changes needed to slicing, the 3D
 preview, or support generation - the entire feature is upload-time
 extraction plus a loop.
 
+**The files in a zip are sliced in order of format: `.stl` first, then
+`.obj`, then `.3mf`** (`storage.ZIP_FORMAT_ORDER`), keeping zip order
+within each. Slices run one at a time (see "Slicing one model at a
+time"), and a download often has the same model in several formats - the
+`.stl` is the most dependable and the one worth having ready first.
+
 **`.obj` is converted to a real `.stl` immediately on upload, not taught
 to the rest of the pipeline as a second format** - `app/mesh.py`'s
 `parse_obj()`/`write_stl_binary()` (no third-party mesh library, matching
@@ -1013,6 +1019,26 @@ threads the web server needs for page requests.
   restart empties it. `jobs.fail_interrupted_slices()` runs at startup
   and marks every job still `submitted` as `slice_failed` ("interrupted
   because the app restarted"), so it can be re-sliced from its edit page.
+- **Any draft can be deleted.** A zip often has the same model in
+  several formats and only one is wanted, so Delete now shows on sliced
+  drafts and on ones still waiting to slice, not just failed ones. A
+  draft that's slicing right now can't be deleted until it finishes
+  (`slice_queue.withdraw`).
+
+### Print-time stoplight
+
+Every queued, approved or (on the user's dashboard) sliced row on the
+user's dashboard, the admin queue and the admin's old-jobs page is
+tinted by its estimated print time, with a coloured edge and a badge
+under its status: **green** under 2 hours, **yellow** 2-3 hours ("ask
+first"), **red** over 3 hours ("too long"). A legend above each of those
+tables (`_time_legend.html`) says what the colours mean. It uses the
+corrected estimate (`jobs.corrected_duration_estimate_s`), the same one
+shown as the print time, since the slicer's own runs about 40% short on
+this printer. The thresholds are `PRINT_TIME_GOOD_S` and
+`PRINT_TIME_ASK_S` in `templates_env.py`; the colours are fixed rather
+than per theme, so they mean the same thing everywhere.
+
 
 ### A real silent-upload-failure incident: XHR eating its own flash message
 

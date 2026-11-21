@@ -56,6 +56,25 @@ def describe(job_id: int) -> str | None:
     return None
 
 
+def is_slicing(job_id: int) -> bool:
+    """True while this job's slice is the one running."""
+    with _lock:
+        return job_id == _current
+
+
+def withdraw(job_id: int) -> bool:
+    """Takes a job that hasn't started slicing yet out of the line, for
+    deleting it. False if it's slicing right now - that slice can't be
+    stopped part way, so the job has to wait until it finishes."""
+    with _lock:
+        if job_id == _current:
+            return False
+        for item in list(_waiting):
+            if item[0] == job_id:
+                _waiting.remove(item)
+        return True
+
+
 def _run() -> None:
     global _current
     while True:

@@ -263,7 +263,7 @@ ssh "$TARGET" "rm -rf $STAGING_DIR"
 echo "Final check: confirming $TARGET is serving queue3d $EXPECTED_VERSION ..."
 read -r -d '' REMOTE_CHECK <<'EOF' || true
 echo "state=$(systemctl is-active queue3d)"
-echo "version=$(curl -sk --max-time 15 https://127.0.0.1/login | grep -o 'queue3d v[^<]*' | head -1 | sed 's/^queue3d v//')"
+echo "version=$(curl -sk --max-time 15 https://127.0.0.1/login | grep -o '<footer>queue3d v[^<]*' | head -1 | sed 's/^<footer>queue3d v//')"
 EOF
 FINAL_CHECK="$(ssh "$TARGET" "$REMOTE_CHECK" || true)"
 RUNNING_STATE="$(echo "$FINAL_CHECK" | sed -n 's/^state=//p')"

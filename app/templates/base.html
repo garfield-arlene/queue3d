@@ -445,6 +445,27 @@
     button { font-size: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
     .error { color: var(--error); }
     .muted { opacity: 0.7; font-size: 0.9rem; }
+    /* Print-time stoplight: the whole row's background is the colour
+       code, readable at a glance (legend: _time_legend.html; badge under
+       the status: _time_light.html). Fixed colours, the same on every
+       theme - green/yellow/red has to mean the same thing everywhere.
+       Strong but translucent, so they read on light and dark themes
+       alike. !important and opacity: 1 because themes style table cells
+       and .muted cells are drawn at reduced opacity, which faded the
+       colour in those columns. */
+    tr.time-row > td { opacity: 1 !important; }
+    tr.time-row-good > td { background: rgba(30, 160, 70, 0.38) !important; }
+    tr.time-row-ask > td { background: rgba(240, 180, 0, 0.45) !important; }
+    tr.time-row-long > td { background: rgba(225, 45, 35, 0.38) !important; }
+    tr.time-row-good > td:first-child { box-shadow: inset 8px 0 0 #1e8e3e; }
+    tr.time-row-ask > td:first-child { box-shadow: inset 8px 0 0 #d99a00; }
+    tr.time-row-long > td:first-child { box-shadow: inset 8px 0 0 #c5221f; }
+    .time-light { display: inline-block; margin-top: 0.3rem; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; color: #fff; }
+    .time-light-good { background: #1e8e3e; }
+    .time-light-ask { background: #b07d00; }
+    .time-light-long { background: #c5221f; }
+    .time-legend { margin: 0.5rem 0; }
+    .time-legend .time-light { margin: 0 0.25rem 0 0; }
     /* The school logo and its surrounding centered layout on the two
        login pages (admin_login.html, user_login.html) - a plain rule,
        not theme-gated like .bmms-logo above, since it's meant to show

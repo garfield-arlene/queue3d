@@ -632,10 +632,11 @@ def delete_own_job(session: Session, job: Job, user: User) -> None:
     slice_failed, per the user's own follow-up ask: a draft that never
     successfully sliced has nothing worth keeping around and no "submit"
     option either, so re-slicing or waiting out the existing draft-expiry
-    cleanup were the only ways to get rid of one before this. Deliberately
-    NOT extended to a plain sliced draft (successfully sliced, not yet
-    submitted) - that one wasn't part of this ask, and already has its
-    own path forward (submit it, or keep iterating on settings).
+    cleanup were the only ways to get rid of one before this. Also a
+    sliced draft, and a 'submitted' one still waiting its turn to slice:
+    a zip often holds the same model in several formats, and a user
+    wants to keep one and drop the rest. A draft that's slicing right
+    now can't be deleted until it finishes (see slice_queue.withdraw).
 
     Also rejected, per the user - "I don't want to keep rejected jobs
     around" - the same genuine no-undo delete, not another "Restore &
@@ -655,11 +656,15 @@ def delete_own_job(session: Session, job: Job, user: User) -> None:
     No "submitted by" clause in the log detail unlike delete_old_job()'s -
     the actor label (user:<name>) already says who, since here the actor
     and the submitter are always the same person."""
+    if job.status == JobStatus.submitted and not slice_queue.withdraw(job.id):
+        raise JobActionError(f"{job.original_filename} is slicing right now - delete it once it finishes.")
     _delete_job_genuinely(
         session,
         job,
         f"user:{user.name}",
         job.original_filename,
+        JobStatus.submitted,
+        JobStatus.sliced,
         JobStatus.queued,
         JobStatus.approved,
         JobStatus.slice_failed,

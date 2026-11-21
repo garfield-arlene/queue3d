@@ -515,6 +515,7 @@ def _old_jobs_context(session: Session, admin: Admin, action_error: str | None =
             {
                 "job": job,
                 "user_name": user.name if user else "?",
+                "duration_estimate_s": estimate_s,
                 "duration_display": format_duration(estimate_s) if estimate_s else None,
                 "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
             }

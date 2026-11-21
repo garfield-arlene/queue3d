@@ -25,11 +25,13 @@
   {% if not rows %}
     <p class="muted">Nothing submitted yet.</p>
   {% else %}
+    {% include "_time_legend.html" %}
     <table>
       <tr><th>File</th><th>Color</th><th>Status</th><th>Date</th><th>Details</th><th></th><th>Actions</th></tr>
       {% for row in rows %}
         {% set job = row.job %}
-        <tr>
+        {% set time_level = print_time_level(row.duration_estimate_s) if job.status.value in ('sliced', 'queued', 'approved') else none %}
+        <tr{% if time_level %} class="time-row time-row-{{ time_level }}"{% endif %}>
           <td>{{ job.original_filename }}</td>
           <td>
             {{ job.color_name or "Any available" }}
@@ -45,7 +47,7 @@
               {% endif %}
             {% endif %}
           </td>
-          <td>{{ job.status.value }}</td>
+          <td>{{ job.status.value }}{% include "_time_light.html" %}</td>
           <td class="muted">
             {# The one timestamp that actually means something for this
                row's *current* status - unlike the admin queue/finished
@@ -132,7 +134,13 @@
               <form method="post" action="/jobs/{{ job.id }}/submit{{ qs }}" style="display:inline">
                 <button type="submit">Submit to queue</button>
               </form>
-            {% elif job.status.value in ('queued', 'approved', 'slice_failed', 'rejected') %}
+            {% endif %}
+            {# Every draft can be deleted too, not just a failed one - a zip
+               often holds the same model in several formats, and only one
+               is wanted. Not while it's slicing (see slice_queue.withdraw);
+               a draft still waiting its turn can go. #}
+            {% if job.status.value in ('sliced', 'queued', 'approved', 'slice_failed', 'rejected')
+                  or (job.status.value == 'submitted' and not is_slicing(job.id)) %}
               <form method="post" action="/jobs/{{ job.id }}/delete{{ qs }}" style="display:inline"
                     onsubmit="return confirm('Permanently delete {{ job.original_filename }}? This cannot be undone.')">
                 <button type="submit">Delete</button>

@@ -17,6 +17,7 @@ from sqlmodel import Session
 from db import engine
 from models import Admin, User
 from slice_queue import describe as slice_progress
+from slice_queue import is_slicing
 from sysmetrics import svg_polyline_points
 from themes import DEFAULT_MODE, LOGGED_OUT_THEME, effective_theme, is_theme_selectable
 from version import APP_VERSION
@@ -32,6 +33,31 @@ templates.env.globals["svg_polyline_points"] = svg_polyline_points
 # What a still-'submitted' job is doing right now (waiting its turn, or
 # which rotation retry is running) - see slice_queue.describe.
 templates.env.globals["slice_progress"] = slice_progress
+templates.env.globals["is_slicing"] = is_slicing
+
+# Print-time "stoplight" on queue rows, from the corrected estimate (see
+# jobs.corrected_duration_estimate_s - the slicer's own estimate runs
+# about 40% short on this printer): green under 2 hours, yellow up to 3,
+# red past that.
+PRINT_TIME_GOOD_S = 2 * 3600
+PRINT_TIME_ASK_S = 3 * 3600
+PRINT_TIME_LABELS = {"good": "under 2 h", "ask": "2-3 h - ask first", "long": "over 3 h - too long"}
+
+
+def print_time_level(seconds) -> str | None:
+    """"good", "ask" or "long" for a print estimate in seconds, or None
+    with no estimate."""
+    if not isinstance(seconds, (int, float)) or seconds <= 0:
+        return None
+    if seconds < PRINT_TIME_GOOD_S:
+        return "good"
+    if seconds <= PRINT_TIME_ASK_S:
+        return "ask"
+    return "long"
+
+
+templates.env.globals["print_time_level"] = print_time_level
+templates.env.globals["PRINT_TIME_LABELS"] = PRINT_TIME_LABELS
 
 
 def _signed_in_account(request):
