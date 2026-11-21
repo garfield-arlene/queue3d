@@ -55,6 +55,17 @@
       view - out of the way there, not shown in both places at once.
       Doesn't apply to a job that's already printing.
     </p>
+    <label>Print-time colours: green under this many hours<br>
+      <input type="number" name="print_time_good_hours" min="0.25" max="48" step="0.25" value="{{ '%g' % settings.print_time_good_hours }}" required>
+    </label>
+    <label>Yellow up to this many hours, red above it<br>
+      <input type="number" name="print_time_ask_hours" min="0.25" max="48" step="0.25" value="{{ '%g' % settings.print_time_ask_hours }}" required>
+    </label>
+    <p class="muted">
+      Queue rows are coloured by their estimated print time, so it's
+      clear at a glance which prints fit and which need changing. Uses
+      the same corrected estimate shown as each job's print time.
+    </p>
     <label>Printer IP address<br>
       <input type="text" name="printer_host" value="{{ settings.printer_host }}" required>
     </label>

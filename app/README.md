@@ -907,21 +907,25 @@ the zip upload cap) started from knowing a job's exact settings/status/
 history, and without the real model file alongside it, none of those
 could have been reproduced or diagnosed at all.
 
-**Deliberately not included, and documented plainly rather than
-silently left out: a persistent application log file.** This app's own
-progress output goes straight to whatever terminal `uvicorn` happens to
-be running in, not a file - there's nothing on disk to collect yet. If
-the real deployment eventually runs this under systemd, its journal
-would be the natural next thing to add here; not attempted now since
-that setup doesn't exist yet to test against.
+**The service journal is included** (`journal.txt`) - see "Feedback and
+the support bundle" below.
 
-**A real design question resolved rather than glossed over: this
-bundle contains real user names, job filenames, and the database's
-stored (hashed, not plaintext) PIN/password secrets.** Not a new
-exposure - an admin generating this already has that same access on the
-live server - but worth being explicit about in both the bundle's own
-`manifest.txt` and here, rather than assumed harmless without saying so,
-since the file is meant to leave the device once generated.
+**No real names leave the site in it** (`pseudonyms.py`). Every user and
+admin appears as a code like `user-3f9a2c`, and every model filename as
+one like `file-81bc04.stl` - in the database copy, the activity log,
+feedback, the journal, and anywhere they turn up in free text, URL-encoded
+forms included. Model files are named `models/job-<id>.stl`. PIN and
+password hashes are blanked in the database copy, which is then VACUUMed
+so the old values don't linger in free pages. The codes are an HMAC with
+a secret kept only on the Pi (`data/bundle_pseudonym_key` on the data
+drive, never in the database), so the same person gets the same code in
+every bundle, and nobody off site can turn a code back into a name.
+**Admin > Support bundle codes** (`/admin/support-bundle/codes`, linked
+from the dashboard) lists each account's code, on the Pi only. Scrubbing
+free text is best effort - a name that isn't an account can't be
+recognised - so the feedback forms ask people not to type names.
+Checked against the Nov 11 field database: none of its account names,
+filenames or password hashes appear anywhere in the bundle.
 
 `GET /admin/support-bundle` builds the bundle into a fresh temp file
 and streams it back as a real file download (`Content-Disposition:
@@ -1032,12 +1036,18 @@ user's dashboard, the admin queue and the admin's old-jobs page is
 tinted by its estimated print time, with a coloured edge and a badge
 under its status: **green** under 2 hours, **yellow** 2-3 hours ("ask
 first"), **red** over 3 hours ("too long"). A legend above each of those
-tables (`_time_legend.html`) says what the colours mean. It uses the
+tables (`_time_legend.html`) says what the colours mean. The edit page shows the same
+estimate, coloured the same way, next to the filament amount - so a
+student can see a print is too long and scale it down before
+submitting, rather than finding out in the queue. It's hidden while a
+re-slice is running or after a failed one, when it would be out of date. It uses the
 corrected estimate (`jobs.corrected_duration_estimate_s`), the same one
 shown as the print time, since the slicer's own runs about 40% short on
-this printer. The thresholds are `PRINT_TIME_GOOD_S` and
-`PRINT_TIME_ASK_S` in `templates_env.py`; the colours are fixed rather
-than per theme, so they mean the same thing everywhere.
+this printer. The thresholds are admin settings (green under 2 hours
+and yellow up to 3 by default - `Settings.print_time_good_hours`/
+`print_time_ask_hours`, schema 9.3.0), and the legend and badges follow
+them. The colours are fixed rather than per theme, so they mean the same
+thing everywhere.
 
 
 ### A real silent-upload-failure incident: XHR eating its own flash message
@@ -2833,7 +2843,10 @@ clear of Pilgrims/First-Thanksgiving imagery.
   resubmit.", and so on), and any text can still be typed. The submitter
   sees the reason on their dashboard next to a **Fix and resubmit**
   button, which is the existing restore: a copy of the model as a new
-  draft, opened in the editor.
+  draft, opened in the editor. The copy remembers its source
+  (`Job.restored_from_job_id`, schema 9.3.0, filled in from the log for
+  drafts restored earlier), and its edit page repeats the reason under
+  "What to change".
 
 ### Login rate-limiting
 
@@ -3648,7 +3661,7 @@ gains a `--scale` CLI flag, `pipeline.run_slice()` and
 `jobs.slice_and_update()`/`start_reslice()` each gain a `scale_factor`
 parameter) rather than becoming a second, parallel pipeline.
 
-**Bounded** (`MIN_SCALE_FACTOR`/`MAX_SCALE_FACTOR`, 1%-1000%) and
+**Bounded** (`MIN_SCALE_FACTOR`/`MAX_SCALE_FACTOR`, 1%-10000%) and
 validated in `start_reslice()` before anything about the job changes -
 an out-of-range value is rejected with a clear message and the job's
 previous state (status, scale) is left completely untouched, same
@@ -3674,10 +3687,19 @@ displayed, so a new exported function (originally `setPreviewScale(factor)`,
 later folded into the combined `applyTransform()` once rotation joined it
 - see "Rotate and snap to surface" below) can always compute fresh from
 the true original size - repeated scale changes never compound - and a
-new `autoFitScale()` computes the largest factor
-(capped at 1, so this only ever shrinks an oversized model, never grows
-one that already fits) that would bring the *original* geometry within
-the build plate on all three axes at once. The one-click "Auto-resize
+new `autoFitScale()` computes the largest factor (up to the 10000% cap)
+that would bring the *original* geometry within the build plate on all
+three axes at once - shrinking an oversized model or enlarging a small
+one. It used to be capped at 100%, so on a small model the button reset
+the scale to 100%: a real 1.2 mm `ratatouille.stl` that needed enlarging
+just snapped back to its original size.
+
+**A model under 5 mm in every direction gets a "This model is very
+small" note** on the edit page, since that's almost always a file saved
+in centimetres or inches, read as millimetres. Its two buttons scale the
+model ×10 (centimetres) or ×25.4 (inches). The scale cap is 10000% for
+the same reason - the drag handles, the scale field, auto-fit and
+`jobs.start_reslice()` all use the same bounds. The one-click "Auto-resize
 to fit build plate" button in `job_edit.html` just calls that and
 applies the result; the scale number field re-renders live on every
 keystroke via the same function. The **read-only "View 3D" page for an
@@ -3938,7 +3960,7 @@ keeping proportions" should never actually show a negative or
 astronomical result regardless of what the widget's own math allows.
 Fixed by clamping the committed result in `commitGizmoTransform()` to
 the exact same `MIN_SCALE_FACTOR`/`MAX_SCALE_FACTOR` bounds
-`jobs.start_reslice()` already enforces server-side (1%-1000%),
+`jobs.start_reslice()` already enforces server-side (1%-10000%),
 falling back to the pre-drag scale entirely for a non-finite or
 non-positive result rather than clamping a meaningless number into
 range. Verified directly: the same degenerate near-origin drag that

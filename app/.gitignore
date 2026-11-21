@@ -8,3 +8,4 @@ data/archive/
 data/backups/
 __pycache__/
 *.pyc
+data/bundle_pseudonym_key

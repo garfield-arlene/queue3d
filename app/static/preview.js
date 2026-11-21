@@ -22,6 +22,12 @@ const BED_HEIGHT_MM = 165;
 // bed's own largest dimension rather than an arbitrary small constant -
 // see that function's own comment for why.
 const BED_RADIUS_MM = Math.max(BED_WIDTH_MM, BED_DEPTH_MM, BED_HEIGHT_MM);
+// Scale bounds - the same as jobs.py's MIN_SCALE_FACTOR/MAX_SCALE_FACTOR
+// and job_edit.html's scale field, so the drag handles, auto-fit, the
+// field and the server all agree. 100x (10000%) because a model exported
+// in the wrong units can be ~1 mm across and need that much.
+const MIN_SCALE = 0.01;
+const MAX_SCALE = 100.0;
 
 const loader = new STLLoader();
 let scene, camera, renderer, controls, container, infoEl;
@@ -34,6 +40,9 @@ let resizeObserver = null;
 // fresh into renderGeometry() on every (re)scale rather than mutated in
 // place, so repeated scale changes never compound.
 let rawGeometry = null;
+// Size in mm of what's currently displayed (after rotation and scale), or
+// null before anything has loaded - see displayedSize().
+let displayedSizeMm = null;
 
 // On-canvas rotate/resize handles (Three.js's own TransformControls addon -
 // the "handles" a user drags directly, as opposed to typing into the
@@ -325,6 +334,7 @@ function renderGeometry(geometry) {
         return;
     }
 
+    displayedSizeMm = { x: size.x, y: size.y, z: size.z };
     geometry.computeVertexNormals();
 
     // Center the model on the bed in X/Y and drop it so its lowest point
@@ -517,8 +527,6 @@ function commitGizmoTransform() {
     // server-side (MIN_SCALE_FACTOR/MAX_SCALE_FACTOR) - a negative or
     // astronomical scale is never something "resize while keeping
     // proportions" should show, let alone let through to a re-slice.
-    const MIN_SCALE = 0.01;
-    const MAX_SCALE = 10.0;
     if (!Number.isFinite(scale) || scale <= 0) scale = gizmoBaseline.scale;
     scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 
@@ -602,6 +610,12 @@ export function disableGizmo() {
  * centroid already sits at the bounding-box middle), so nothing changes
  * for the common case - only the asymmetric one this was blind to.
  */
+/** The displayed model's size in mm ({x, y, z}, after the current
+ * rotation and scale), or null if nothing's loaded. */
+export function displayedSize() {
+    return displayedSizeMm;
+}
+
 export function autoFitScale(rotateX = 0, rotateY = 0, rotateZ = 0) {
     if (!rawGeometry) return 1;
     const geometry = rawGeometry.clone();
@@ -619,8 +633,12 @@ export function autoFitScale(rotateX = 0, rotateY = 0, rotateZ = 0) {
     const halfExtentY = Math.max(Math.abs(box.min.y - centroid.y), Math.abs(box.max.y - centroid.y));
     if (![halfExtentX, halfExtentY].every(Number.isFinite)) return 1;
 
+    // Enlarges as well as shrinks: the largest scale that fits. This used
+    // to be capped at 1 (100%), so on a model smaller than the plate the
+    // button reset the scale to 100% - a real 1.2 mm model that needed
+    // enlarging just snapped back to its original size.
     return Math.min(
-        1,
+        MAX_SCALE,
         (BED_WIDTH_MM / 2) / halfExtentX,
         (BED_DEPTH_MM / 2) / halfExtentY,
         BED_HEIGHT_MM / size.z

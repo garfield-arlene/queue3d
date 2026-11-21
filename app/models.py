@@ -256,6 +256,13 @@ class Settings(SQLModel, table=True):
     # by network), but kept admin-configurable alongside the host rather
     # than a separate, inconsistent mechanism just for this one field.
     printer_port: int = Field(default=9999)
+    # The print-time "stoplight" on queue rows (see templates_env.
+    # print_time_level): green under print_time_good_hours, yellow up to
+    # print_time_ask_hours, red past that. Measured against the corrected
+    # estimate (jobs.corrected_duration_estimate_s). Defaults are what a
+    # site admin first asked for, sized to a school lunch period.
+    print_time_good_hours: float = Field(default=2.0)
+    print_time_ask_hours: float = Field(default=3.0)
 
 
 class Color(SQLModel, table=True):
@@ -422,6 +429,12 @@ class Job(SQLModel, table=True):
     # feature exists at all), in which case that wall-clock figure
     # remains the fallback, not dead code.
     actual_duration_s: float | None = Field(default=None)
+    # The job this draft was copied from by "Restore & edit" / "Fix and
+    # resubmit" (jobs.restore_job), so its edit page can repeat why that
+    # one was rejected or failed - the student is fixing exactly that.
+    # Not a foreign key: the source job can be deleted afterwards, and
+    # the edit page just stops showing the note then.
+    restored_from_job_id: int | None = Field(default=None)
     # Why a 'failed' job failed - shown to the submitter, not just an
     # admin (see jobs.mark_finished). Always set automatically when the
     # background poller detects the failure itself ("cancelled at the

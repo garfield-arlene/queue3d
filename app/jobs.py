@@ -715,6 +715,7 @@ def restore_job(session: Session, job: Job, user: User) -> Job:
         rotate_y=job.rotate_y,
         rotate_z=job.rotate_z,
         color_name=job.color_name,
+        restored_from_job_id=job.id,
     )
     session.add(new_job)
     session.commit()
@@ -1381,7 +1382,7 @@ def fail_interrupted_slices() -> int:
 
 
 MIN_SCALE_FACTOR = 0.01  # 1% - below this, a model isn't meaningfully printable any more
-MAX_SCALE_FACTOR = 10.0  # 1000% - generous, but not unbounded
+MAX_SCALE_FACTOR = 100.0  # 10000% - a model exported in the wrong units can be ~1 mm across
 
 
 def start_reslice(

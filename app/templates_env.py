@@ -37,11 +37,18 @@ templates.env.globals["is_slicing"] = is_slicing
 
 # Print-time "stoplight" on queue rows, from the corrected estimate (see
 # jobs.corrected_duration_estimate_s - the slicer's own estimate runs
-# about 40% short on this printer): green under 2 hours, yellow up to 3,
-# red past that.
-PRINT_TIME_GOOD_S = 2 * 3600
-PRINT_TIME_ASK_S = 3 * 3600
-PRINT_TIME_LABELS = {"good": "under 2 h", "ask": "2-3 h - ask first", "long": "over 3 h - too long"}
+# about 40% short on this printer): green under the "good" threshold,
+# yellow up to the "ask" one, red past that. The thresholds are admin
+# settings (models.Settings.print_time_good_hours/print_time_ask_hours),
+# cached here the same way as the display timezone below: primed at
+# startup (main.py) and updated whenever an admin saves new ones.
+_print_time_good_h = 2.0
+_print_time_ask_h = 3.0
+
+
+def set_print_time_thresholds(good_hours: float, ask_hours: float) -> None:
+    global _print_time_good_h, _print_time_ask_h
+    _print_time_good_h, _print_time_ask_h = good_hours, ask_hours
 
 
 def print_time_level(seconds) -> str | None:
@@ -49,15 +56,27 @@ def print_time_level(seconds) -> str | None:
     with no estimate."""
     if not isinstance(seconds, (int, float)) or seconds <= 0:
         return None
-    if seconds < PRINT_TIME_GOOD_S:
+    hours = seconds / 3600
+    if hours < _print_time_good_h:
         return "good"
-    if seconds <= PRINT_TIME_ASK_S:
+    if hours <= _print_time_ask_h:
         return "ask"
     return "long"
 
 
+def print_time_labels() -> dict[str, str]:
+    """What each level means, for the badges and the legend above each
+    table, from the current thresholds."""
+    good, ask = f"{_print_time_good_h:g} h", f"{_print_time_ask_h:g} h"
+    return {
+        "good": f"under {good}",
+        "ask": f"{_print_time_good_h:g}-{ask} - ask first",
+        "long": f"over {ask} - too long",
+    }
+
+
 templates.env.globals["print_time_level"] = print_time_level
-templates.env.globals["PRINT_TIME_LABELS"] = PRINT_TIME_LABELS
+templates.env.globals["print_time_labels"] = print_time_labels
 
 
 def _signed_in_account(request):

@@ -741,8 +741,41 @@ def edit_draft(
             "flash_error": flash_error,
             "colors": _colors_for_job(session, job),
             "filament": filament_status(session, job),
+            "print_estimate": _print_estimate(session, job),
+            "sent_back": _sent_back_reason(session, job),
         },
     )
+
+
+def _print_estimate(session: Session, job: Job) -> dict | None:
+    """The corrected print-time estimate for the edit page - shown with
+    the filament amount so a student can tell whether to keep editing
+    (scale it down, say) before submitting. Only for a job whose sliced
+    file matches its current settings: while it's re-slicing, or after a
+    failed slice, the old number would be misleading."""
+    if job.status not in (JobStatus.sliced, JobStatus.queued, JobStatus.approved):
+        return None
+    seconds = corrected_duration_estimate_s(session, job)
+    if not seconds:
+        return None
+    return {"seconds": seconds, "display": format_duration(seconds)}
+
+
+def _sent_back_reason(session: Session, job: Job) -> dict | None:
+    """For a draft made by "Fix and resubmit": the job it was copied from
+    and the admin's reason that one was rejected or failed, so the edit
+    page can repeat what to change. None for anything else, or once the
+    source job is gone."""
+    if job.restored_from_job_id is None:
+        return None
+    source = session.get(Job, job.restored_from_job_id)
+    if source is None or source.user_id != job.user_id:
+        return None
+    if source.status == JobStatus.rejected and source.admin_note:
+        return {"job": source, "verb": "rejected", "reason": source.admin_note}
+    if source.status == JobStatus.failed and source.failure_reason:
+        return {"job": source, "verb": "print failed", "reason": source.failure_reason}
+    return None
 
 
 @router.post("/jobs/{job_id}/color")
