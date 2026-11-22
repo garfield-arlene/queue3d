@@ -390,6 +390,12 @@ class Job(SQLModel, table=True):
     # rotation and scale, the same way in the preview and the slicer.
     offset_x: float = Field(default=0.0)
     offset_y: float = Field(default=0.0)
+    # Printed on a raft: a few removable layers under the model, wider than
+    # it, so a model with no flat bottom (a ship's round hull) sits up off
+    # the plate on a steady base, with supports filling in under its curve
+    # instead of the first layer squashing it flat. See slicing/slice.py's
+    # RAFT_LAYERS.
+    raft_enabled: bool = Field(default=False)
 
     # When this row was created (upload time) - NOT when it joined the
     # queue, which may be much later or never (see queued_at below). Used

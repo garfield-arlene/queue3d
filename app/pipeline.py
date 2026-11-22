@@ -52,6 +52,7 @@ def run_slice(
     output_makerbot_path: Path,
     enable_supports: bool = False,
     support_style: str | None = None,
+    raft: bool = False,
     supports_json_path: Path | None = None,
     scale_factor: float = 1.0,
     rotate_x: float = 0.0,
@@ -64,7 +65,9 @@ def run_slice(
     """Returns (success, detail) - detail is the slicer's own output either
     way, useful as slice_error on failure.
 
-    If enable_supports and supports_json_path are both given, also asks
+    raft: print it on a raft (models.Job.raft_enabled).
+
+    If supports_json_path is given, also asks
     slice.py to preserve the intermediate gcode (normally thrown away once
     it's converted to .makerbot) and extracts a simplified support-geometry
     preview from it - see supports.py for why that has to come from the
@@ -89,6 +92,8 @@ def run_slice(
             cmd.append("--enable-supports")
         if support_style:
             cmd += ["--support-style", support_style]
+        if raft:
+            cmd.append("--raft")
         if supports_json_path is not None:
             cmd += ["--gcode-out", str(gcode_path)]
         if scale_factor != 1.0:

@@ -91,8 +91,9 @@
   {% endif %}
 
   <p class="muted">
-    Orange lines are generated support material (simplified - not the
-    exact print path, just roughly where supports will be).
+    Orange lines are generated support material, and the raft if it has
+    one (simplified - not the exact print path, just roughly where they'll
+    be).
   </p>
     <p class="muted" id="snap-hint" hidden>
       Point at the model above: the highlighted face is the one that will
@@ -122,7 +123,7 @@
       import { previewUrl, applyTransform, autoFitScale, centerOnPlateOffset, computeSnapRotation, fitTurnOnPlate, showSnapTarget, clearSnapTarget, displayedSize, enableGizmo, disableGizmo } from "/static/preview.js";
       const container = document.getElementById("preview-container");
       const info = document.getElementById("preview-info");
-      const supportsUrl = {% if job.supports_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
+      const supportsUrl = {% if job.supports_enabled or job.raft_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
       const scaleInput = document.getElementById("scale-percent");
       const rotateXInput = document.getElementById("rotate-x");
       const rotateYInput = document.getElementById("rotate-y");
@@ -406,6 +407,14 @@
         {% endfor %}
       </select>
     </label>
+    <label><input type="checkbox" name="raft" {% if job.raft_enabled %}checked{% endif %}> Print on a raft</label>
+    <p class="muted">
+      A raft is a few layers printed under the model and a little wider
+      than it, which snap off afterwards. Use it when the model has no flat
+      bottom to sit on - for example a ball, a boat's hull or a rounded
+      base. It lifts the model off the plate onto a steady base. Turn on
+      supports too, so the curved underside is held up and keeps its shape.
+    </p>
     <label>Scale (%, keeps the model's proportions)<br>
       <input type="number" id="scale-percent" name="scale_percent" min="1" max="10000" step="0.01"
              value="{{ (job.scale_factor * 100) | round(2) }}">

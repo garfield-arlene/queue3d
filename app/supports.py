@@ -16,6 +16,8 @@ import json
 from pathlib import Path
 
 SUPPORT_TYPES = {"Support", "Support interface"}
+# Extrusion types that aren't the model itself - everything else is.
+NOT_MODEL_TYPES = SUPPORT_TYPES | {"Support transition", "Skirt", "Brim", "Custom", "Prime tower", "Wipe tower"}
 
 # Show every real layer whenever the total fits under this budget - only
 # thin things out as a last resort for a pathologically support-dense
@@ -37,12 +39,19 @@ def _parse_gcode_axis_value(token: str) -> float:
     return float(token[1:])
 
 
-def extract_support_segments(gcode_path) -> list[list[float]]:
-    """Returns a list of [x1, y1, z1, x2, y2, z2] segments for every
-    extrusion move gcode tagged as support material or support interface."""
+def extract_support_preview(gcode_path) -> tuple[list[list[float]], float]:
+    """(segments, model lift). Segments are [x1, y1, z1, x2, y2, z2] for
+    every extrusion move gcode tagged as support material or support
+    interface. The lift is how far above the
+    plate the slicer put the model's underside: 0 normally, the raft's
+    height when it's printed on one (models.Job.raft_enabled) - the top of
+    the last layer printed before any of the model is."""
     pos = {"X": 0.0, "Y": 0.0, "Z": 0.0, "E": 0.0}
     in_support = False
+    is_model = False
     layers: dict[float, list] = {}
+    layer_tops: set[float] = set()
+    first_model_z = None
 
     with open(gcode_path, "r", errors="replace") as f:
         for line in f:
@@ -51,7 +60,9 @@ def extract_support_segments(gcode_path) -> list[list[float]]:
                 continue
 
             if line.startswith(";TYPE:"):
-                in_support = line[len(";TYPE:") :].strip() in SUPPORT_TYPES
+                feature = line[len(";TYPE:") :].strip()
+                in_support = feature in SUPPORT_TYPES
+                is_model = feature not in NOT_MODEL_TYPES
                 continue
 
             code = line.split(";", 1)[0].strip()
@@ -72,6 +83,11 @@ def extract_support_segments(gcode_path) -> list[list[float]]:
                     extruding = value > pos["E"]
                 pos[axis] = value
 
+            if extruding:
+                layer_tops.add(round(pos["Z"], 3))
+                if is_model and first_model_z is None:
+                    first_model_z = round(pos["Z"], 3)
+
             if in_support and extruding:
                 # Group by layer (Z), not just appended to one flat list -
                 # downsampling has to drop whole layers, not individual
@@ -87,7 +103,8 @@ def extract_support_segments(gcode_path) -> list[list[float]]:
                     [prev["X"], prev["Y"], prev["Z"], pos["X"], pos["Y"], pos["Z"]]
                 )
 
-    return _select_whole_layers(layers)
+    below = [z for z in layer_tops if first_model_z is not None and z < first_model_z]
+    return _select_whole_layers(layers), max(below, default=0.0)
 
 
 def _select_whole_layers(layers: dict) -> list[list[float]]:
@@ -113,10 +130,13 @@ def _select_whole_layers(layers: dict) -> list[list[float]]:
 
 
 def write_support_preview(gcode_path, output_json_path) -> int:
-    """Writes the extracted segments to output_json_path. Returns the
-    segment count (0 means no supports were generated for this job - the
-    file is still written, as an empty list, so callers don't need to
-    special-case "no supports" vs "preview not generated yet")."""
-    segments = extract_support_segments(gcode_path)
-    Path(output_json_path).write_text(json.dumps(segments))
+    """Writes {"segments": [...], "model_lift": mm} to output_json_path
+    (preview.js draws the model raised by model_lift, onto its raft).
+    Returns the segment count (0 means no supports were generated for this
+    job - the file is still written, with an empty list, so callers don't
+    need to special-case "no supports" vs "preview not generated yet").
+    Files written before 9.6.0 are a bare list of segments; preview.js
+    reads both."""
+    segments, model_lift = extract_support_preview(gcode_path)
+    Path(output_json_path).write_text(json.dumps({"segments": segments, "model_lift": model_lift}))
     return len(segments)

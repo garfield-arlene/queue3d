@@ -4273,6 +4273,32 @@ silver and green with their size printed on top, unlike the model
 (amber), and they're never part of what's sliced. Whether they're shown
 is remembered per browser (`localStorage`, `queue3d.sizeReference`).
 
+### Printing on a raft
+
+A model with no flat bottom - a ship's round hull - touches the plate
+along one thin line, so it rocks and the first layer squashes that line
+flat. **Print on a raft** (edit page, `Job.raft_enabled`, schema 9.6.0)
+slices it on OrcaSlicer's raft: `slice.py --raft` sets `raft_layers` to
+`RAFT_LAYERS` (3), 0.9 mm of base a little wider than the model
+(`raft_expansion`), with the model starting `raft_contact_distance`
+(0.1 mm) above it so it snaps off. With supports on as well, the supports
+under the hull stand on the raft instead of on separate feet. On the
+Stalwart-class DDG (job 42's settings: 27.4%, tree_slim supports) the
+first layer went from a 23 x 151 mm spread of support feet plus a tiny
+hull contact to a solid 27 x 155 mm raft, with the hull starting 1.0 mm
+up; about 2 g of filament and 12 minutes more. OrcaSlicer can't slice a
+model floating in mid-air - it always drops it onto the plate - so a raft
+is how a model is raised.
+
+The raft is drawn in the preview with the supports: gcode tags raft
+layers as `Support`/`Support interface`, so `supports.py` already picks
+them up, and its JSON is generated whenever supports *or* a raft is on.
+That file is now `{"segments": [...], "model_lift": mm}` (a bare list
+before 9.6.0, still read): `model_lift` is the top of the last layer
+printed before any of the model, and `preview.js` draws the model that
+far up so it sits on its raft instead of inside it. Restore and Reprint
+copy the setting.
+
 ### A real silently-overridden-orientation incident
 
 **What happened:** a model sliced lying on its side by default; the

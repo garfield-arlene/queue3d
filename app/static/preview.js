@@ -41,6 +41,10 @@ let currentMesh = null;
 // handles appear on the model itself rather than at the middle of the
 // plate - see renderGeometry.
 const meshHome = new THREE.Vector3();
+// How far above the plate the slicer put the model's underside - the
+// raft's height when it's printed on one (models.Job.raft_enabled), 0
+// otherwise. Comes with the supports (see showSupports).
+let modelLift = 0;
 let currentSupports = null;
 let resizeObserver = null;
 // The model exactly as loaded/parsed, before any scaling - kept around so
@@ -530,7 +534,7 @@ function renderGeometry(geometry, offset = { x: 0, y: 0 }) {
     // Stored relative to the middle of its outline and positioned there,
     // so the move/rotate/resize handles sit on the model. Rotation and
     // scale stay baked into the vertices; only this translation isn't.
-    meshHome.set((placedBox.min.x + placedBox.max.x) / 2, (placedBox.min.y + placedBox.max.y) / 2, 0);
+    meshHome.set((placedBox.min.x + placedBox.max.x) / 2, (placedBox.min.y + placedBox.max.y) / 2, modelLift);
     geometry.translate(-meshHome.x, -meshHome.y, 0);
     currentMesh = new THREE.Mesh(geometry, material);
     currentMesh.position.copy(meshHome);
@@ -603,6 +607,7 @@ function renderGeometry(geometry, offset = { x: 0, y: 0 }) {
 
 function showModel(geometry) {
     rawGeometry = geometry.clone();
+    modelLift = 0;
     renderGeometry(geometry);
 }
 
@@ -1269,14 +1274,22 @@ export function clearSnapTarget() {
 
 const SUPPORT_TUBE_RADIUS = 0.3; // mm - roughly a support strand's width
 
-function showSupports(segments) {
+function showSupports(data) {
     if (currentSupports) {
         scene.remove(currentSupports);
         currentSupports.geometry.dispose();
         currentSupports.material.dispose();
         currentSupports = null;
     }
-    if (!segments || segments.length === 0) return;
+    // {segments, model_lift}, or (written before 9.6.0) just the segments.
+    const segments = Array.isArray(data) ? data : (data && data.segments) || [];
+    modelLift = (!Array.isArray(data) && data && Number(data.model_lift)) || 0;
+    if (currentMesh) {
+        // Up onto the raft, so it sits where the slicer put it.
+        meshHome.z = modelLift;
+        currentMesh.position.z = modelLift;
+    }
+    if (segments.length === 0) return;
 
     // Support segments come from the slicer's own gcode coordinates (see
     // app/supports.py), which are relative to the bed origin the same way

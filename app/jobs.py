@@ -712,6 +712,7 @@ def restore_job(session: Session, job: Job, user: User) -> Job:
         status=JobStatus.submitted,
         supports_enabled=job.supports_enabled,
         support_style=job.support_style,
+        raft_enabled=job.raft_enabled,
         scale_factor=job.scale_factor,
         rotate_x=job.rotate_x,
         rotate_y=job.rotate_y,
@@ -773,6 +774,7 @@ def reprint_job(session: Session, job: Job, user: User) -> Job:
         status=JobStatus.queued,
         supports_enabled=job.supports_enabled,
         support_style=job.support_style,
+        raft_enabled=job.raft_enabled,
         scale_factor=job.scale_factor,
         rotate_x=job.rotate_x,
         rotate_y=job.rotate_y,
@@ -1045,7 +1047,7 @@ def rotation_candidates_for(detail: str) -> list[tuple[float, float, float]]:
     return FACE_ROTATE_CANDIDATES
 
 
-def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, support_style, scratch_supports, scale_factor, rotate_x, rotate_y, rotate_z, rotation_deliberate=False, on_progress=None, offset_x=0.0, offset_y=0.0):
+def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, support_style, scratch_supports, scale_factor, rotate_x, rotate_y, rotate_z, rotation_deliberate=False, on_progress=None, offset_x=0.0, offset_y=0.0, raft=False):
     """Tries the requested orientation first, then - only if that fails
     *and* the caller says nothing about the requested orientation was
     actually deliberate - retries the rotations rotation_candidates_for()
@@ -1115,7 +1117,8 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
         scratch_makerbot,
         enable_supports=enable_supports,
         support_style=support_style,
-        supports_json_path=scratch_supports if enable_supports else None,
+        raft=raft,
+        supports_json_path=scratch_supports if enable_supports or raft else None,
         scale_factor=scale_factor,
         rotate_x=rotate_x,
         rotate_y=rotate_y,
@@ -1175,7 +1178,8 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
             scratch_makerbot,
             enable_supports=enable_supports,
             support_style=support_style,
-            supports_json_path=scratch_supports if enable_supports else None,
+            raft=raft,
+            supports_json_path=scratch_supports if enable_supports or raft else None,
             scale_factor=scale_factor,
             rotate_x=rx,
             rotate_y=ry,
@@ -1323,6 +1327,7 @@ def _slice_and_update_now(
                 on_progress=lambda note: slice_queue.set_note(job.id, note),
                 offset_x=job.offset_x,
                 offset_y=job.offset_y,
+                raft=job.raft_enabled,
             )
         except Exception as e:
             success, detail, auto_rotated = False, f"Unexpected error while slicing: {e}", False
@@ -1333,7 +1338,9 @@ def _slice_and_update_now(
             job.makerbot_path = str(scratch_makerbot)
             job.duration_estimate_s = read_makerbot_duration_s(scratch_makerbot)
             job.filament_grams = read_makerbot_filament_g(scratch_makerbot)
-            if enable_supports and scratch_supports.exists():
+            # A raft is drawn from the same file as supports, and it's
+            # where the preview learns how far the raft lifts the model.
+            if (enable_supports or job.raft_enabled) and scratch_supports.exists():
                 job.supports_path = str(scratch_supports)
             else:
                 job.supports_path = None  # clear a stale one from a previous re-slice attempt
@@ -1437,6 +1444,7 @@ def start_reslice(
     auto_orient: bool = False,
     offset_x: float = 0.0,
     offset_y: float = 0.0,
+    raft: bool = False,
 ) -> tuple[Path, bool]:
     """Resets a draft to re-slice the same already-uploaded file with new
     settings - the whole point of splitting slicing from submitting: a
@@ -1514,6 +1522,7 @@ def start_reslice(
     job.rotate_z = rotate_z
     job.offset_x = offset_x
     job.offset_y = offset_y
+    job.raft_enabled = raft
     job.rotation_manual = False if auto_orient else (job.rotation_manual or rotation_touched)
     job.status = JobStatus.submitted
     job.slice_error = None
@@ -1521,6 +1530,7 @@ def start_reslice(
     style_detail = (
         f"supports={enable_supports}"
         + (f" style={support_style}" if support_style else "")
+        + (" raft" if raft else "")
         + (f" scale={scale_factor:.2f}" if scale_factor != 1.0 else "")
         + (
             f" rotate=({rotate_x:.1f},{rotate_y:.1f},{rotate_z:.1f})"

@@ -858,6 +858,7 @@ def reslice(
     auto_orient: bool = Form(False),
     offset_x: float = Form(0.0),
     offset_y: float = Form(0.0),
+    raft: bool = Form(False),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
@@ -880,7 +881,8 @@ def reslice(
     rotate_x/y/z are already in degrees, applied in that order - see
     models.Job.rotate_x's own docstring for why the order matters.
     offset_x/offset_y: mm the model was moved on the plate ("Center on
-    plate" or Move (drag) - see models.Job.offset_x).
+    plate" or Move (drag) - see models.Job.offset_x). raft: print it on a
+    raft (models.Job.raft_enabled).
 
     rotation_touched is job_edit.html's own hidden field, set to true by
     its JS the moment any rotation control (typed value, drag-rotate, or
@@ -913,6 +915,7 @@ def reslice(
             auto_orient,
             offset_x,
             offset_y,
+            raft,
         )
     except JobActionError as e:
         request.session["flash_error"] = str(e)

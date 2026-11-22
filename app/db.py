@@ -532,6 +532,14 @@ def _migrate_to_9_5_0(conn):
 # Color table that shipped in that same version. VERSION still bumps
 # regardless, per the user - a schema change (a new table counts) always
 # needs one, whether or not it happens to need an ALTER TABLE too.
+def _migrate_to_9_6_0(conn):
+    """New Job.raft_enabled. Defaults to off, what every existing job was
+    sliced with."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "raft_enabled" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN raft_enabled BOOLEAN NOT NULL DEFAULT 0"))
+
+
 MIGRATIONS = {
     "2.1.0": _migrate_to_2_1_0,
     "2.4.0": _migrate_to_2_4_0,
@@ -555,6 +563,7 @@ MIGRATIONS = {
     "9.2.0": _migrate_to_9_2_0,
     "9.3.0": _migrate_to_9_3_0,
     "9.5.0": _migrate_to_9_5_0,
+    "9.6.0": _migrate_to_9_6_0,
 }
 
 
