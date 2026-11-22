@@ -135,6 +135,8 @@ function initScene(containerEl) {
     });
     scene.add(new THREE.Mesh(bedGeometry, bedMaterial));
 
+    buildSizeReference();
+
     resizeObserver = new ResizeObserver(() => resizeToContainer());
     resizeObserver.observe(container);
     // Called both synchronously now *and* again next frame, deliberately -
@@ -158,6 +160,141 @@ function initScene(containerEl) {
     requestAnimationFrame(() => resizeToContainer());
 
     animate();
+}
+
+/*
+ * Size reference: a US quarter and a dollar bill, to scale, lying on the
+ * plate in front of the model - things everyone knows the size of, for
+ * judging how big the print really is. They're in the scene, so they zoom
+ * with the model, and coloured silver and green, unlike the model (blue,
+ * red when it doesn't fit) or the snap highlight (amber); they're never
+ * part of what's sliced. A button in the corner of the preview shows and
+ * hides them, remembered per browser.
+ */
+const QUARTER_DIAMETER_MM = 24.26;
+const QUARTER_THICKNESS_MM = 1.75;
+const BILL_WIDTH_MM = 155.96;
+const BILL_HEIGHT_MM = 66.29;
+const BILL_THICKNESS_MM = 0.2; // really 0.11 - a little thicker to stay visible edge-on
+const SIZE_REFERENCE_GAP_MM = 8;
+const SIZE_REFERENCE_KEY = "queue3d.sizeReference";
+let sizeReference = null;
+let quarterMesh = null;
+let billMesh = null;
+
+function labelTexture(width, height, draw) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    draw(canvas.getContext("2d"), width, height);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 4;
+    return texture;
+}
+
+function sizeReferenceShown() {
+    try {
+        return localStorage.getItem(SIZE_REFERENCE_KEY) === "1";
+    } catch {
+        return false;
+    }
+}
+
+function buildSizeReference() {
+    sizeReference = new THREE.Group();
+
+    const silver = new THREE.MeshPhongMaterial({ color: 0xb8bcc4, specular: 0x666666, shininess: 60 });
+    const coinFace = new THREE.MeshPhongMaterial({
+        specular: 0x666666,
+        shininess: 60,
+        map: labelTexture(256, 256, (ctx, w, h) => {
+            ctx.fillStyle = "#b8bcc4";
+            ctx.fillRect(0, 0, w, h);
+            ctx.strokeStyle = "#7d828c";
+            ctx.lineWidth = 10;
+            ctx.beginPath();
+            ctx.arc(w / 2, h / 2, w / 2 - 16, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = "#3d424a";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.font = "bold 84px sans-serif";
+            ctx.fillText("25¢", w / 2, h / 2 - 16);
+            ctx.font = "34px sans-serif";
+            ctx.fillText("24 mm", w / 2, h / 2 + 56);
+        }),
+    });
+    // A cylinder's caps face up and down its axis (Y); turned to stand on
+    // Z, then a quarter turn so the label reads the same way as the bill's.
+    const coin = new THREE.CylinderGeometry(QUARTER_DIAMETER_MM / 2, QUARTER_DIAMETER_MM / 2, QUARTER_THICKNESS_MM, 64);
+    coin.rotateX(Math.PI / 2);
+    coin.rotateZ(Math.PI / 2);
+    quarterMesh = new THREE.Mesh(coin, [silver, coinFace, silver]);
+    sizeReference.add(quarterMesh);
+
+    const green = new THREE.MeshPhongMaterial({ color: 0x6f9a6a, shininess: 10 });
+    const billFace = new THREE.MeshPhongMaterial({
+        shininess: 10,
+        map: labelTexture(1024, 436, (ctx, w, h) => {
+            ctx.fillStyle = "#cfe0c3";
+            ctx.fillRect(0, 0, w, h);
+            ctx.strokeStyle = "#3e6b3a";
+            ctx.lineWidth = 18;
+            ctx.strokeRect(24, 24, w - 48, h - 48);
+            ctx.fillStyle = "#3e6b3a";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.font = "bold 120px sans-serif";
+            ctx.fillText("$1 bill", w / 2, h / 2 - 40);
+            ctx.font = "56px sans-serif";
+            ctx.fillText("156 x 66 mm", w / 2, h / 2 + 80);
+        }),
+    });
+    // BoxGeometry's faces: +x, -x, +y, -y, +z (top), -z.
+    billMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(BILL_WIDTH_MM, BILL_HEIGHT_MM, BILL_THICKNESS_MM),
+        [green, green, green, green, billFace, green]
+    );
+    sizeReference.add(billMesh);
+
+    sizeReference.visible = sizeReferenceShown();
+    scene.add(sizeReference);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "size-reference-btn";
+    button.title = "A US quarter and dollar bill, to scale, to judge the model's size by. They aren't printed.";
+    const label = () => { button.textContent = sizeReference.visible ? "Hide coin & bill" : "Show coin & bill"; };
+    label();
+    // The preview's own pointer handlers (orbit, Snap to surface) mustn't
+    // see a click on the button as a click on the model behind it.
+    for (const type of ["pointerdown", "pointerup", "pointermove"]) {
+        button.addEventListener(type, (e) => e.stopPropagation());
+    }
+    button.addEventListener("click", () => {
+        sizeReference.visible = !sizeReference.visible;
+        try {
+            localStorage.setItem(SIZE_REFERENCE_KEY, sizeReference.visible ? "1" : "0");
+        } catch {
+            // Not remembered, still toggled.
+        }
+        label();
+    });
+    container.appendChild(button);
+}
+
+/** Lays the bill and quarter side by side just in front of the model. */
+function placeSizeReference(placedBox) {
+    if (!sizeReference) return;
+    const y = placedBox.min.y - SIZE_REFERENCE_GAP_MM - BILL_HEIGHT_MM / 2;
+    const billX = placedBox.min.x + BILL_WIDTH_MM / 2;
+    billMesh.position.set(billX, y, BILL_THICKNESS_MM / 2);
+    quarterMesh.position.set(
+        billX + BILL_WIDTH_MM / 2 + SIZE_REFERENCE_GAP_MM + QUARTER_DIAMETER_MM / 2,
+        y,
+        QUARTER_THICKNESS_MM / 2
+    );
 }
 
 function resizeToContainer() {
@@ -398,6 +535,7 @@ function renderGeometry(geometry, offset = { x: 0, y: 0 }) {
     currentMesh = new THREE.Mesh(geometry, material);
     currentMesh.position.copy(meshHome);
     scene.add(currentMesh);
+    placeSizeReference(placedBox);
 
     // Frame the camera around the model AND the bed together, holding a
     // floor tied to the bed's own fixed size (BED_RADIUS_MM) rather than
