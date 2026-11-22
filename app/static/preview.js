@@ -167,9 +167,11 @@ function initScene(containerEl) {
 }
 
 /*
- * Size reference: a US quarter and a dollar bill, to scale, lying on the
- * plate in front of the model - things everyone knows the size of, for
- * judging how big the print really is. They're in the scene, so they zoom
+ * Size reference: a US quarter or a dollar bill, to scale, lying on the
+ * plate next to the model - things everyone knows the size of, for
+ * judging how big the print really is. Only the one closer to the
+ * model's own size is shown (see placeSizeReference): a bill dwarfs a
+ * small figure, and a coin is lost next to a long one. They're in the scene, so they zoom
  * with the model, and coloured silver and green, unlike the model (blue,
  * red when it doesn't fit) or the snap highlight (amber); they're never
  * part of what's sliced. A button in the corner of the preview shows and
@@ -268,8 +270,8 @@ function buildSizeReference() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "size-reference-btn";
-    button.title = "A US quarter and dollar bill, to scale, to judge the model's size by. They aren't printed.";
-    const label = () => { button.textContent = sizeReference.visible ? "Hide coin & bill" : "Show coin & bill"; };
+    button.title = "A US quarter or dollar bill, to scale, whichever is closer to the model's size, to judge its size by. It isn't printed.";
+    const label = () => { button.textContent = sizeReference.visible ? "Hide size reference" : "Show size reference"; };
     label();
     // The preview's own pointer handlers (orbit, Snap to surface) mustn't
     // see a click on the button as a click on the model behind it.
@@ -288,17 +290,52 @@ function buildSizeReference() {
     container.appendChild(button);
 }
 
-/** Lays the bill and quarter side by side just in front of the model. */
+/**
+ * Shows the quarter or the bill, whichever is closer to the model's size,
+ * right beside it. "Closer" compares the longer side of the model's
+ * footprint with each item's longer side by ratio, not by mm - a 56 mm
+ * figure is about twice a quarter and a third of a bill, so it gets the
+ * quarter. The switch-over is about 62 mm.
+ *
+ * Tried in front of the model first (the side the camera starts on), then
+ * right, left and behind, the bill also turned lengthways along the
+ * model's side; the first spot that's wholly on the plate wins. When none
+ * is - a big model - it goes in front anyway, hanging off the plate: next
+ * to the model is what makes the comparison, and a smaller item moved
+ * away to fit says much less about a big one.
+ */
 function placeSizeReference(placedBox) {
     if (!sizeReference) return;
-    const y = placedBox.min.y - SIZE_REFERENCE_GAP_MM - BILL_HEIGHT_MM / 2;
-    const billX = placedBox.min.x + BILL_WIDTH_MM / 2;
-    billMesh.position.set(billX, y, BILL_THICKNESS_MM / 2);
-    quarterMesh.position.set(
-        billX + BILL_WIDTH_MM / 2 + SIZE_REFERENCE_GAP_MM + QUARTER_DIAMETER_MM / 2,
-        y,
-        QUARTER_THICKNESS_MM / 2
-    );
+    const modelLong = Math.max(placedBox.max.x - placedBox.min.x, placedBox.max.y - placedBox.min.y, 1e-6);
+    const items = [
+        { mesh: quarterMesh, long: QUARTER_DIAMETER_MM, w: QUARTER_DIAMETER_MM, d: QUARTER_DIAMETER_MM, z: QUARTER_THICKNESS_MM / 2 },
+        { mesh: billMesh, long: BILL_WIDTH_MM, w: BILL_WIDTH_MM, d: BILL_HEIGHT_MM, z: BILL_THICKNESS_MM / 2 },
+    ];
+    const misfit = (item) => Math.abs(Math.log(modelLong / item.long));
+    const item = misfit(items[0]) <= misfit(items[1]) ? items[0] : items[1];
+
+    const midX = (placedBox.min.x + placedBox.max.x) / 2;
+    const midY = (placedBox.min.y + placedBox.max.y) / 2;
+    const gap = SIZE_REFERENCE_GAP_MM;
+    const { w, d } = item;
+    // [x, y, turned] - the first, in front, is also where it goes when
+    // none of them is on the plate.
+    const spots = [
+        [midX, placedBox.min.y - gap - d / 2, false],
+        [placedBox.max.x + gap + d / 2, midY, true],
+        [placedBox.max.x + gap + w / 2, midY, false],
+        [placedBox.min.x - gap - d / 2, midY, true],
+        [placedBox.min.x - gap - w / 2, midY, false],
+        [midX, placedBox.max.y + gap + d / 2, false],
+    ];
+    const onPlate = ([x, y, turned]) =>
+        Math.abs(x) + (turned ? d : w) / 2 <= BED_WIDTH_MM / 2 &&
+        Math.abs(y) + (turned ? w : d) / 2 <= BED_DEPTH_MM / 2;
+    const [x, y, turned] = spots.find(onPlate) || spots[0];
+
+    for (const other of items) other.mesh.visible = other === item;
+    item.mesh.position.set(x, y, item.z);
+    item.mesh.rotation.z = turned ? Math.PI / 2 : 0;
 }
 
 function resizeToContainer() {

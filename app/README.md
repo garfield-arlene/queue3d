@@ -4258,20 +4258,33 @@ wrench laid on its side is 266 mm long and lay across the plate's 195 mm
 depth; it's now turned -62°, 237 x 136 mm with about 57 mm to spare each
 way, and slices there.
 
-### Size reference: a coin and a bill
+### Size reference: a coin or a bill
 
 The preview's camera frames the model and plate together, so on its own
-it's hard to tell a 3 cm print from a 30 cm one. A **Show coin & bill**
-button in the top corner of every 3D preview (the upload form, the edit
-page and View 3D - it's added by `preview.js` itself) puts a US quarter
-(24.26 mm across, 1.75 mm thick) and a dollar bill (155.96 x 66.29 mm)
-on the plate, side by side just in front of the model's front-left
-corner. They're objects in the same scene, so they zoom and turn with
-the model, and they follow it when it's moved or reoriented. They're
-silver and green with their size printed on top, unlike the model
-(blue, red when it doesn't fit) or the Snap to surface highlight
-(amber), and they're never part of what's sliced. Whether they're shown
-is remembered per browser (`localStorage`, `queue3d.sizeReference`).
+it's hard to tell a 3 cm print from a 30 cm one. A **Show size
+reference** button in the top corner of every 3D preview (the upload
+form, the edit page and View 3D - it's added by `preview.js` itself) puts
+a US quarter (24.26 mm across, 1.75 mm thick) or a dollar bill
+(155.96 x 66.29 mm) on the plate beside the model. They're objects in the
+same scene, so they zoom and turn with the model, and follow it when it's
+moved or reoriented. They're silver and green with their size printed on
+top, unlike the model (blue, red when it doesn't fit) or the Snap to
+surface highlight (amber), and they're never part of what's sliced.
+Whether the reference is shown is remembered per browser
+(`localStorage`, `queue3d.sizeReference`).
+
+Only one is shown, the one closer to the model's size
+(`placeSizeReference`): the longer side of the model's footprint against
+each item's longer side, by ratio, so the switch-over is at about 62 mm.
+Next to a 41 x 56 mm figure (`ratatouille.stl` at 50x) the bill is
+three times its size and the quarter half of it.
+
+It goes right beside the model, on the plate where there's room: in
+front first (the side the camera starts on), then right, left and
+behind, the bill also turned lengthways. For a big model - a 237 mm
+wrench laid diagonally, say - there isn't, and it goes in front anyway,
+hanging off the plate, since next to the model is what makes the
+comparison.
 
 ### Printing on a raft
 
