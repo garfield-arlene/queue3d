@@ -60,6 +60,11 @@ MODEL_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+# Printed by build_3mf when center_if_needed moved the model, followed by
+# the offset - app/pipeline.py's placed_offset reads it back.
+PLACED_PREFIX = "Centered on the plate by its outline, offset:"
+
+
 class ModelTooLargeError(ValueError):
     """The placed model doesn't fit the profile's build volume. Raised
     before OrcaSlicer runs, since its own message for this ("Nothing to
@@ -67,20 +72,51 @@ class ModelTooLargeError(ValueError):
     say how big the model is or what to change."""
 
 
+def _bed_bounds(settings):
+    """(x0, x1, y0, y1, height) of the profile's printable volume."""
+    corners = [tuple(float(n) for n in c.split("x")) for c in settings["printable_area"]]
+    return (
+        min(c[0] for c in corners), max(c[0] for c in corners),
+        min(c[1] for c in corners), max(c[1] for c in corners),
+        float(settings["printable_height"]),
+    )
+
+
+def fits_build_volume(vertices, settings):
+    bed_x0, bed_x1, bed_y0, bed_y1, bed_z = _bed_bounds(settings)
+    xs, ys, zs = zip(*vertices)
+    return min(xs) >= bed_x0 and max(xs) <= bed_x1 and min(ys) >= bed_y0 and max(ys) <= bed_y1 and max(zs) <= bed_z
+
+
+def outline_center_offset(vertices, settings):
+    """The (x, y) shift that puts the middle of the model's outline at the
+    middle of the bed - app/static/preview.js's centerOnPlateOffset."""
+    bed_x0, bed_x1, bed_y0, bed_y1, _bed_z = _bed_bounds(settings)
+    xs, ys = [v[0] for v in vertices], [v[1] for v in vertices]
+    return (bed_x0 + bed_x1) / 2 - (min(xs) + max(xs)) / 2, (bed_y0 + bed_y1) / 2 - (min(ys) + max(ys)) / 2
+
+
 def check_fits_build_volume(vertices, settings, scale_factor=1.0):
     """Raises ModelTooLargeError if the already rotated, scaled and
     centered vertices fall outside the profile's printable_area (bed
     corners as "XxY" strings) or above its printable_height - the same
     test OrcaSlicer applies, on the same coordinates it will receive."""
-    corners = [tuple(float(n) for n in c.split("x")) for c in settings["printable_area"]]
-    bed_x0, bed_x1 = min(c[0] for c in corners), max(c[0] for c in corners)
-    bed_y0, bed_y1 = min(c[1] for c in corners), max(c[1] for c in corners)
-    bed_z = float(settings["printable_height"])
+    bed_x0, bed_x1, bed_y0, bed_y1, bed_z = _bed_bounds(settings)
 
     xs, ys, zs = zip(*vertices)
     x0, x1, y0, y1, z0, z1 = min(xs), max(xs), min(ys), max(ys), min(zs), max(zs)
     if x0 >= bed_x0 and x1 <= bed_x1 and y0 >= bed_y0 and y1 <= bed_y1 and z1 <= bed_z:
         return
+
+    if x1 - x0 <= bed_x1 - bed_x0 and y1 - y0 <= bed_y1 - bed_y0 and z1 <= bed_z:
+        # Small enough, just placed so that part of it hangs off an edge -
+        # moving it fixes that, shrinking it isn't needed.
+        raise ModelTooLargeError(
+            f"This model is {x1 - x0:.0f} x {y1 - y0:.0f} x {z1 - z0:.0f} mm, which fits on the "
+            f"printer's {bed_x1 - bed_x0:.0f} x {bed_y1 - bed_y0:.0f} mm build plate, but where it "
+            f"sits part of it hangs off the edge. Click \"Center on plate\" on the edit page, "
+            f"or drag it back onto the plate with \"Move (drag)\"."
+        )
 
     # Placement is centroid-based (see center_vertices()), not bounding-
     # box-centered, so a model can be narrower than the bed and still
@@ -412,6 +448,9 @@ def build_3mf(
     rotate_x=0.0,
     rotate_y=0.0,
     rotate_z=0.0,
+    offset_x=0.0,
+    offset_y=0.0,
+    center_if_needed=False,
 ):
     """overrides: optional dict of settings keys to override in the loaded
     profile before embedding it - e.g. {"enable_support": "1"} to turn
@@ -427,7 +466,19 @@ def build_3mf(
     center last of all - center_vertices() needs the final (already
     rotated and scaled) triangle geometry to compute the right centroid
     and the right new Z=0 floor, since rotating can change which point
-    is actually lowest."""
+    is actually lowest.
+
+    offset_x/offset_y: mm to move the model on the plate after centering
+    (models.Job.offset_x/offset_y) - "Center on plate" or a drag in the
+    editor. The bed's origin is its middle, so this is a plain shift.
+
+    center_if_needed: when the model hasn't been moved (offsets both 0)
+    and its default placement hangs off the bed but it would fit centered
+    by its outline, place it that way instead - a lopsided model (a
+    wrench with a solid head) is centered on its balance point by default,
+    which can leave the light end over the edge. The offset used is
+    printed as a PLACED_PREFIX line so the app can record it on the job
+    and show the same placement in its preview."""
     vertices, triangles = parse_stl(stl_path)
     vertices = rotate_vertices(vertices, rotate_x, rotate_y, rotate_z)
     if scale_factor != 1.0:
@@ -436,6 +487,14 @@ def build_3mf(
 
     with open(settings_path, "r") as f:
         settings = json.load(f)
+    if center_if_needed and not (offset_x or offset_y) and not fits_build_volume(vertices, settings):
+        shift_x, shift_y = outline_center_offset(vertices, settings)
+        shifted = [(x + shift_x, y + shift_y, z) for x, y, z in vertices]
+        if fits_build_volume(shifted, settings):
+            offset_x, offset_y = shift_x, shift_y
+            print(f"{PLACED_PREFIX} {offset_x:.3f} {offset_y:.3f}")
+    if offset_x or offset_y:
+        vertices = [(x + offset_x, y + offset_y, z) for x, y, z in vertices]
     check_fits_build_volume(vertices, settings, scale_factor)
     model_xml = build_model_xml(vertices, triangles)
 

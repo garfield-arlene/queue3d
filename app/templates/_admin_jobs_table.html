@@ -114,6 +114,14 @@
                 <input type="text" name="reason" placeholder="reason" required size="16" list="fix-hints">
                 <button type="submit">Mark failed</button>
               </form>
+              {# Stops the print on the printer itself, then records it as
+                 failed with this reason - see jobs.cancel_printing_job.
+                 "Mark failed" only records it; the printer keeps going. #}
+              <form method="post" action="/admin/jobs/{{ job.id }}/cancel{{ qs }}" style="display:inline"
+                    onsubmit="if (!confirm('Stop this print on the printer now? This can\'t be undone.')) return false; lockSubmit(this)">
+                <input type="text" name="reason" placeholder="reason" required size="16" list="fix-hints">
+                <button type="submit">Cancel print</button>
+              </form>
             {% elif job.status.value == 'slice_failed' %}
               <span class="muted">slicing failed</span>
               {% if job.slice_error %}

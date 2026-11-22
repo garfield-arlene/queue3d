@@ -172,6 +172,10 @@ class JobStatus(str, enum.Enum):
     job can be on the printer at a time.
     """
 
+    # One model of several from a zip upload, saved but not sliced: the
+    # user chooses which to slice (and in what order) or delete - a zip
+    # often holds the same model twice, or a part and the whole.
+    uploaded = "uploaded"
     submitted = "submitted"
     sliced = "sliced"
     slice_failed = "slice_failed"
@@ -190,12 +194,12 @@ class JobStatus(str, enum.Enum):
 # construction instead of needing their own separate allow-lists that can
 # quietly drift out of sync with a status added later.
 #
-# DRAFT: sliced (or slicing, or failed to) but never submitted - exists
+# DRAFT: uploaded, sliced (or slicing, or failed to) but never submitted - exists
 # only for its own user; the admin queue view must never show these.
 # QUEUE: actually in the shared queue, admin-visible and actionable.
 # TERMINAL: nothing more will ever happen to it; files live in archive/,
 # never queue/ or scratch/ (see storage.py).
-DRAFT_STATUSES = {JobStatus.submitted, JobStatus.sliced, JobStatus.slice_failed}
+DRAFT_STATUSES = {JobStatus.uploaded, JobStatus.submitted, JobStatus.sliced, JobStatus.slice_failed}
 QUEUE_STATUSES = {JobStatus.queued, JobStatus.approved, JobStatus.printing}
 TERMINAL_STATUSES = {JobStatus.rejected, JobStatus.done, JobStatus.failed, JobStatus.expired}
 
@@ -379,6 +383,13 @@ class Job(SQLModel, table=True):
     # this persistent flag exists to fix, and job_edit.html's "auto_orient"
     # checkbox for the one explicit way back to automatic search.
     rotation_manual: bool = Field(default=False)
+    # Where on the plate the model sits, in mm, moved from where it's placed
+    # by default (its centroid at the middle of the plate - see
+    # slicing/stl_to_3mf.center_vertices). Set on the edit page with "Center
+    # on plate" or by dragging it (job_edit.html, preview.js); applied after
+    # rotation and scale, the same way in the preview and the slicer.
+    offset_x: float = Field(default=0.0)
+    offset_y: float = Field(default=0.0)
 
     # When this row was created (upload time) - NOT when it joined the
     # queue, which may be much later or never (see queued_at below). Used

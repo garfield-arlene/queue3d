@@ -499,6 +499,15 @@ def _migrate_to_9_3_0(conn):
             )
 
 
+def _migrate_to_9_5_0(conn):
+    """New Job.offset_x/offset_y (mm the model is moved on the plate).
+    Defaults to 0.0, the placement every existing job was sliced with."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    for col in ("offset_x", "offset_y"):
+        if col not in cols:
+            conn.execute(text(f"ALTER TABLE job ADD COLUMN {col} FLOAT NOT NULL DEFAULT 0.0"))
+
+
 # Keyed by the app VERSION a schema (or, as of 7.1.0, sometimes pure
 # data) change shipped in, not a separate incrementing number - per the
 # user, a schema change should always come with a version bump, so
@@ -545,6 +554,7 @@ MIGRATIONS = {
     "9.1.0": _migrate_to_9_1_0,
     "9.2.0": _migrate_to_9_2_0,
     "9.3.0": _migrate_to_9_3_0,
+    "9.5.0": _migrate_to_9_5_0,
 }
 
 

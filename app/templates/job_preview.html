@@ -7,7 +7,9 @@
     exact print path, just roughly where supports will be).
   </p>
 
-  <div id="preview-container" class="preview-container"></div>
+  {# Hidden until the job's size and orientation are applied below, so
+     the raw file's own orientation never shows first. #}
+  <div id="preview-container" class="preview-container" style="visibility: hidden"></div>
   <p id="preview-info" class="preview-info"></p>
   <p><a href="javascript:history.back()">&laquo; Back</a></p>
 
@@ -30,11 +32,13 @@
       rotateX: {{ job.rotate_x }},
       rotateY: {{ job.rotate_y }},
       rotateZ: {{ job.rotate_z }},
+      offsetX: {{ job.offset_x }},
+      offsetY: {{ job.offset_y }},
     };
     previewUrl("/jobs/{{ job.id }}/model.stl", supportsUrl, container, info).then(() => {
-      if (transform.scale !== 1 || transform.rotateX || transform.rotateY || transform.rotateZ) {
+      if (transform.scale !== 1 || transform.rotateX || transform.rotateY || transform.rotateZ || transform.offsetX || transform.offsetY) {
         applyTransform(transform);
       }
-    });
+    }).finally(() => { container.style.visibility = ""; });
   </script>
 {% endblock %}

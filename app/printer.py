@@ -720,6 +720,15 @@ class _PersistentConnection:
                 self._drop(f"print upload failed: {e}")
                 raise
 
+    def cancel_print(self) -> None:
+        with self._lock:
+            client = self._connected_client()
+            try:
+                client.request("cancel", {}, timeout=15)
+            except (_MakerBotError, OSError, TimeoutError) as e:
+                self._keep_or_drop(client, e)
+                raise PrinterError(f"Couldn't cancel the print on the printer: {e}")
+
     def capture_photo(self) -> bytes:
         with self._lock:
             client = self._connected_client()
@@ -887,6 +896,21 @@ def send_print_job(makerbot_path: Path) -> None:
     since a failure partway through the upload leaves no guarantee the
     printer actually started."""
     _connection.send_print_job(makerbot_path)
+
+
+def cancel_print() -> None:
+    """Stops whatever the printer is doing right now (the `cancel` RPC),
+    over the same persistent connection as everything else here. Raises
+    PrinterError on any failure.
+
+    Taken from the open-source client this protocol was reverse-
+    engineered from (tjhorner/node-makerbot-rpc's cancel(): method
+    "cancel", empty params, after authenticating), and exercised against
+    simulator/ - never against the real printer, which was already on
+    site when this was written. Its reply isn't relied on; the printer's
+    own current_process (see jobs.check_and_finish_active_print) is what
+    confirms a print actually stopped."""
+    _connection.cancel_print()
 
 
 def capture_photo() -> bytes:

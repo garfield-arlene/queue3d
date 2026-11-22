@@ -3,6 +3,7 @@ business logic (what's allowed, what moves where) is testable on its own
 and routers stay thin HTTP glue.
 """
 
+import math
 import shutil
 import statistics
 import threading
@@ -15,8 +16,8 @@ from sqlmodel import Session, select, update
 from db import engine
 from filters import apply_event_filters, apply_job_filters
 from models import Admin, Color, DRAFT_STATUSES, Job, JobEvent, JobStatus, QUEUE_STATUSES, TERMINAL_STATUSES, User
-from pipeline import TIMEOUT_MESSAGE, run_slice
-from printer import PrinterError, capture_photo, send_print_job, system_information
+from pipeline import TIMEOUT_MESSAGE, placed_offset, run_slice
+from printer import PrinterError, cancel_print, capture_photo, send_print_job, system_information
 from storage import (
     archive_paths,
     archive_photo_path,
@@ -663,6 +664,7 @@ def delete_own_job(session: Session, job: Job, user: User) -> None:
         job,
         f"user:{user.name}",
         job.original_filename,
+        JobStatus.uploaded,
         JobStatus.submitted,
         JobStatus.sliced,
         JobStatus.queued,
@@ -714,6 +716,8 @@ def restore_job(session: Session, job: Job, user: User) -> Job:
         rotate_x=job.rotate_x,
         rotate_y=job.rotate_y,
         rotate_z=job.rotate_z,
+        offset_x=job.offset_x,
+        offset_y=job.offset_y,
         color_name=job.color_name,
         restored_from_job_id=job.id,
     )
@@ -773,6 +777,8 @@ def reprint_job(session: Session, job: Job, user: User) -> Job:
         rotate_x=job.rotate_x,
         rotate_y=job.rotate_y,
         rotate_z=job.rotate_z,
+        offset_x=job.offset_x,
+        offset_y=job.offset_y,
         color_name=job.color_name,
         queued_at=datetime.now(timezone.utc),
     )
@@ -1023,6 +1029,9 @@ _NOT_SHAPE_FAILURE_MARKERS = (
 # slice.py's ModelTooLargeError, and OrcaSlicer's own wording if
 # anything reaches it out of bounds.
 _SIZE_FAILURE_MARKERS = ("doesn't fit on the printer's", "fully inside the print volume")
+# slice.py's message for a model that fits but was moved partly off the
+# plate (stl_to_3mf.check_fits_build_volume).
+PLACEMENT_FAILURE_MARKER = "hangs off the edge"
 
 
 def rotation_candidates_for(detail: str) -> list[tuple[float, float, float]]:
@@ -1036,13 +1045,16 @@ def rotation_candidates_for(detail: str) -> list[tuple[float, float, float]]:
     return FACE_ROTATE_CANDIDATES
 
 
-def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, support_style, scratch_supports, scale_factor, rotate_x, rotate_y, rotate_z, rotation_deliberate=False, on_progress=None):
+def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, support_style, scratch_supports, scale_factor, rotate_x, rotate_y, rotate_z, rotation_deliberate=False, on_progress=None, offset_x=0.0, offset_y=0.0):
     """Tries the requested orientation first, then - only if that fails
     *and* the caller says nothing about the requested orientation was
     actually deliberate - retries the rotations rotation_candidates_for()
     picks for that failure, stopping at the first success or when
     AUTO_ROTATE_BUDGET_S runs out. on_progress(text), if given, is
-    called before each retry with what to show the user. Returns (success, detail, used_rotate_x,
+    called before each retry with what to show the user. offset_x/y
+    (where the model was moved on the plate) apply to the requested
+    orientation only: a move made for one orientation means nothing for
+    another, so each retry is placed the default way. Returns (success, detail, used_rotate_x,
     used_y, used_z, auto_rotated) - auto_rotated is True only when a
     candidate other than the originally-requested rotation is what
     actually worked, so the caller can record what really got sliced
@@ -1108,10 +1120,18 @@ def _slice_with_rotation_retry(stl_path, scratch_makerbot, enable_supports, supp
         rotate_x=rotate_x,
         rotate_y=rotate_y,
         rotate_z=rotate_z,
+        offset_x=offset_x,
+        offset_y=offset_y,
     )
     first_attempt_s = time.monotonic() - started
     if success:
         return success, detail, rotate_x, rotate_y, rotate_z, False
+
+    if PLACEMENT_FAILURE_MARKER in detail:
+        # It fits, it was just moved partly off the plate - the slicer's
+        # own message says to move it back. Another orientation would
+        # undo the move as well as the orientation.
+        return False, detail, rotate_x, rotate_y, rotate_z, False
 
     if rotation_deliberate or (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0):
         # A deliberate orientation (drag-rotate, typed values, or Snap
@@ -1301,6 +1321,8 @@ def _slice_and_update_now(
                 rotate_z,
                 job.rotation_manual,
                 on_progress=lambda note: slice_queue.set_note(job.id, note),
+                offset_x=job.offset_x,
+                offset_y=job.offset_y,
             )
         except Exception as e:
             success, detail, auto_rotated = False, f"Unexpected error while slicing: {e}", False
@@ -1337,6 +1359,20 @@ def _slice_and_update_now(
                 job.queued_at = datetime.now(timezone.utc)
             else:
                 job.status = JobStatus.sliced
+
+            # Where it was actually sliced: a retry at another orientation
+            # is placed the default way, and the slicer moves a model that
+            # hasn't been moved onto the plate when it would otherwise hang
+            # off an edge (see pipeline.run_slice). The preview reads these.
+            if auto_rotated:
+                job.offset_x = job.offset_y = 0.0
+            placed = placed_offset(detail)
+            if placed:
+                job.offset_x, job.offset_y = placed
+                log_event(
+                    session, job.id, actor, "centered",
+                    detail=f"hung off the edge of the plate where it was placed by default - centered by its outline (moved x={placed[0]:.1f}, y={placed[1]:.1f} mm)",
+                )
 
             if auto_rotated:
                 job.rotate_x, job.rotate_y, job.rotate_z = used_rotate_x, used_rotate_y, used_rotate_z
@@ -1383,6 +1419,9 @@ def fail_interrupted_slices() -> int:
 
 MIN_SCALE_FACTOR = 0.01  # 1% - below this, a model isn't meaningfully printable any more
 MAX_SCALE_FACTOR = 100.0  # 10000% - a model exported in the wrong units can be ~1 mm across
+# How far a model can be moved from the middle of the plate, in mm - the
+# plate's own width; anything further is off it entirely.
+MAX_OFFSET_MM = 295.0
 
 
 def start_reslice(
@@ -1396,6 +1435,8 @@ def start_reslice(
     rotate_z: float = 0.0,
     rotation_touched: bool = False,
     auto_orient: bool = False,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
 ) -> tuple[Path, bool]:
     """Resets a draft to re-slice the same already-uploaded file with new
     settings - the whole point of splitting slicing from submitting: a
@@ -1446,11 +1487,14 @@ def start_reslice(
     float is a valid rotation (sin/cos are periodic, so e.g. 370 degrees
     and 10 degrees produce the identical result), there's no "too
     rotated" the way there's a "too small/too large" for scale."""
-    _require_status(job, JobStatus.sliced, JobStatus.slice_failed, JobStatus.queued, JobStatus.approved)
+    _require_status(job, JobStatus.uploaded, JobStatus.sliced, JobStatus.slice_failed, JobStatus.queued, JobStatus.approved)
+    first_slice = job.status == JobStatus.uploaded
     if not (MIN_SCALE_FACTOR <= scale_factor <= MAX_SCALE_FACTOR):
         raise JobActionError(
             f"Scale must be between {MIN_SCALE_FACTOR * 100:.0f}% and {MAX_SCALE_FACTOR * 100:.0f}%."
         )
+    if not all(math.isfinite(v) and abs(v) <= MAX_OFFSET_MM for v in (offset_x, offset_y)):
+        raise JobActionError("That position is off the build plate. Click \"Center on plate\" and re-slice.")
     was_queued = job.status in (JobStatus.queued, JobStatus.approved)
     if was_queued:
         queue_stl, queue_makerbot, queue_supports = queue_paths(job.id)
@@ -1468,6 +1512,8 @@ def start_reslice(
     job.rotate_x = rotate_x
     job.rotate_y = rotate_y
     job.rotate_z = rotate_z
+    job.offset_x = offset_x
+    job.offset_y = offset_y
     job.rotation_manual = False if auto_orient else (job.rotation_manual or rotation_touched)
     job.status = JobStatus.submitted
     job.slice_error = None
@@ -1482,12 +1528,28 @@ def start_reslice(
             if job.rotation_manual or (rotate_x, rotate_y, rotate_z) != (0.0, 0.0, 0.0)
             else ""
         )
+        + (f" move=({offset_x:.1f},{offset_y:.1f})" if (offset_x, offset_y) != (0.0, 0.0) else "")
         + (" [auto-orient requested]" if auto_orient else "")
         + (" (was queued - temporarily left the queue while this re-slices)" if was_queued else "")
     )
-    log_event(session, job.id, _user_actor(session, job.user_id), "reslice_started", detail=style_detail)
+    log_event(session, job.id, _user_actor(session, job.user_id), "slice_started" if first_slice else "reslice_started", detail=style_detail)
     session.commit()
     return Path(job.stl_path), was_queued
+
+
+def start_chosen_slice(session: Session, job: Job) -> Path:
+    """Starts slicing an 'uploaded' job (one of several from a zip, saved
+    unsliced until its user picks it - see models.JobStatus.uploaded)
+    with the settings it was uploaded with. Returns the STL path for the
+    caller to queue slice_and_update on; slices run one at a time in the
+    order they're started (slice_queue.py), so the order a user clicks
+    Slice is the order they slice in."""
+    _require_status(job, JobStatus.uploaded)
+    job.status = JobStatus.submitted
+    session.add(job)
+    log_event(session, job.id, _user_actor(session, job.user_id), "slice_started", detail="chosen from a zip upload")
+    session.commit()
+    return Path(job.stl_path)
 
 
 def submit_draft(session: Session, job: Job) -> Job:
@@ -1635,6 +1697,42 @@ def mark_finished(
     log_event(session, job.id, actor, job.status.value, detail=photo_detail)
     session.commit()
     session.refresh(job)
+    return job
+
+
+def cancel_printing_job(session: Session, job: Job, admin: Admin, reason: str) -> Job:
+    """An admin's "Cancel print": stops the print on the printer, then
+    records the job as failed with `reason`, the same as "Mark failed"
+    (photo, actual duration and all - see mark_finished). Marking a job
+    failed alone doesn't stop the printer, and a real failed print kept
+    going after it. If the printer can't be told to stop, nothing is
+    recorded and the admin is told to cancel it on the printer itself.
+    See printer.cancel_print for where the command comes from."""
+    _require_status(job, JobStatus.printing)
+    if not reason.strip():
+        raise JobActionError("Give a reason, so the submitter knows why it was stopped.")
+    try:
+        cancel_print()
+    except PrinterError as e:
+        raise JobActionError(f"{e} Cancel it on the printer's own screen, then use Mark failed.")
+    return mark_finished(session, job, admin, False, reason=f"cancelled from the app - {reason.strip()}")
+
+
+def cancel_still_running_print(session: Session, admin: Admin) -> Job | None:
+    """Stops a print the printer is still running after its job was
+    already marked done or failed here (the admin dashboard's "still
+    printing" banner). Logs it on that job, which it returns; None if the
+    printer isn't running one of this app's finished jobs any more."""
+    current = untracked_print_in_progress(session)
+    job = current.get("job") if current else None
+    if job is None or job.status not in (JobStatus.done, JobStatus.failed):
+        return None
+    try:
+        cancel_print()
+    except PrinterError as e:
+        raise JobActionError(f"{e} Cancel it on the printer's own screen.")
+    log_event(session, job.id, _admin_actor(admin), "print_cancelled", detail="stopped from the app after it was already marked " + job.status.value)
+    session.commit()
     return job
 
 

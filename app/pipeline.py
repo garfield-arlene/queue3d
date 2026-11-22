@@ -27,6 +27,26 @@ SLICE_TIMEOUT_S = 600
 TIMEOUT_MESSAGE = "Slicing timed out"
 
 
+# slicing/stl_to_3mf.py's PLACED_PREFIX - the line it prints when it
+# moved a model onto the plate. Kept in step by hand: the app runs the
+# slicer as a separate program rather than importing it.
+_PLACED_PREFIX = "Centered on the plate by its outline, offset:"
+
+
+def placed_offset(detail: str) -> tuple[float, float] | None:
+    """The (x, y) offset the slicer moved the model to, if it did (see
+    run_slice), from its output - for recording on the job so the preview
+    shows where it was actually sliced."""
+    for line in detail.splitlines():
+        if line.startswith(_PLACED_PREFIX):
+            try:
+                x, y = (float(n) for n in line[len(_PLACED_PREFIX):].split())
+            except ValueError:
+                return None
+            return x, y
+    return None
+
+
 def run_slice(
     stl_path: Path,
     output_makerbot_path: Path,
@@ -37,6 +57,8 @@ def run_slice(
     rotate_x: float = 0.0,
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
     timeout_s: float = SLICE_TIMEOUT_S,
 ) -> tuple[bool, str]:
     """Returns (success, detail) - detail is the slicer's own output either
@@ -52,7 +74,10 @@ def run_slice(
     degrees, applied in that order about the fixed world axes - see
     models.Job.scale_factor/rotate_x and stl_to_3mf.build_3mf's own
     docstring for the full ordering and why it has to match the client
-    preview exactly.
+    preview exactly. offset_x/offset_y: mm to move it on the plate after
+    that (models.Job.offset_x/offset_y). A model that hasn't been moved
+    and hangs off the plate where it's placed by default is centered by
+    its outline instead, when that fits - see placed_offset.
 
     timeout_s: how long this slice may run before it's stopped. On a
     timeout, detail starts with TIMEOUT_MESSAGE.
@@ -74,6 +99,11 @@ def run_slice(
             cmd += ["--rotate-y", str(rotate_y)]
         if rotate_z != 0.0:
             cmd += ["--rotate-z", str(rotate_z)]
+        if offset_x != 0.0:
+            cmd += ["--offset-x", str(offset_x)]
+        if offset_y != 0.0:
+            cmd += ["--offset-y", str(offset_y)]
+        cmd.append("--center-if-needed")
 
         # stdin=DEVNULL - a real incident, not foresight: mbotmake (called
         # two subprocess layers down, see slicing/slice.py) has its own
