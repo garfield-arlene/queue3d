@@ -43,11 +43,20 @@ sys.path.insert(0, str(HERE))
 from stl_to_3mf import ModelTooLargeError, build_3mf  # noqa: E402
 
 
+# How many raft layers --raft prints under the model: with the profile's
+# 0.3 mm layers that's 0.9 mm of base, wider than the model by the
+# profile's raft_expansion, and the model sits raft_contact_distance above
+# it so it snaps off. Tested on a ship hull, where it also gave the
+# supports under the hull a solid base instead of separate feet.
+RAFT_LAYERS = 3
+
+
 def slice_stl(
     stl_path,
     output_makerbot_path,
     enable_supports=False,
     support_style=None,
+    raft=False,
     gcode_out_path=None,
     scale_factor=1.0,
     rotate_x=0.0,
@@ -79,6 +88,8 @@ def slice_stl(
     stl_path = Path(stl_path)
     output_makerbot_path = Path(output_makerbot_path)
     overrides = {"enable_support": "1" if enable_supports else "0"}
+    if raft:
+        overrides["raft_layers"] = str(RAFT_LAYERS)
     if support_style:
         overrides["support_style"] = support_style
         if support_style in SUPPORT_STYLE_TYPE:
@@ -193,6 +204,7 @@ def main():
     parser.add_argument("stl", help="Input STL file")
     parser.add_argument("output", help="Output .makerbot path")
     parser.add_argument("--enable-supports", action="store_true", help="Turn on auto-generated supports for this slice")
+    parser.add_argument("--raft", action="store_true", help=f"Print the model on a {RAFT_LAYERS}-layer raft")
     parser.add_argument("--support-style", help="OrcaSlicer support_style override, e.g. grid/snug/organic/tree_hybrid/tree_slim")
     parser.add_argument("--gcode-out", help="Also save the intermediate gcode here")
     parser.add_argument("--scale", type=float, default=1.0, help="Uniform scale factor, 1.0 = original size")
@@ -209,6 +221,7 @@ def main():
             args.output,
             enable_supports=args.enable_supports,
             support_style=args.support_style,
+            raft=args.raft,
             gcode_out_path=args.gcode_out,
             scale_factor=args.scale,
             rotate_x=args.rotate_x,

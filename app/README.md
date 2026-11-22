@@ -4258,20 +4258,59 @@ wrench laid on its side is 266 mm long and lay across the plate's 195 mm
 depth; it's now turned -62°, 237 x 136 mm with about 57 mm to spare each
 way, and slices there.
 
-### Size reference: a coin and a bill
+### Size reference: a coin or a bill
 
 The preview's camera frames the model and plate together, so on its own
-it's hard to tell a 3 cm print from a 30 cm one. A **Show coin & bill**
-button in the top corner of every 3D preview (the upload form, the edit
-page and View 3D - it's added by `preview.js` itself) puts a US quarter
-(24.26 mm across, 1.75 mm thick) and a dollar bill (155.96 x 66.29 mm)
-on the plate, side by side just in front of the model's front-left
-corner. They're objects in the same scene, so they zoom and turn with
-the model, and they follow it when it's moved or reoriented. They're
-silver and green with their size printed on top, unlike the model
-(blue, red when it doesn't fit) or the Snap to surface highlight
-(amber), and they're never part of what's sliced. Whether they're shown
-is remembered per browser (`localStorage`, `queue3d.sizeReference`).
+it's hard to tell a 3 cm print from a 30 cm one. A **Show size
+reference** button in the top corner of every 3D preview (the upload
+form, the edit page and View 3D - it's added by `preview.js` itself) puts
+a US quarter (24.26 mm across, 1.75 mm thick) or a dollar bill
+(155.96 x 66.29 mm) on the plate beside the model. They're objects in the
+same scene, so they zoom and turn with the model, and follow it when it's
+moved or reoriented. They're silver and green with their size printed on
+top, unlike the model (blue, red when it doesn't fit) or the Snap to
+surface highlight (amber), and they're never part of what's sliced.
+Whether the reference is shown is remembered per browser
+(`localStorage`, `queue3d.sizeReference`).
+
+Only one is shown, the one closer to the model's size
+(`placeSizeReference`): the longer side of the model's footprint against
+each item's longer side, by ratio, so the switch-over is at about 62 mm.
+Next to a 41 x 56 mm figure (`ratatouille.stl` at 50x) the bill is
+three times its size and the quarter half of it.
+
+It goes right beside the model, on the plate where there's room: in
+front first (the side the camera starts on), then right, left and
+behind, the bill also turned lengthways. For a big model - a 237 mm
+wrench laid diagonally, say - there isn't, and it goes in front anyway,
+hanging off the plate, since next to the model is what makes the
+comparison.
+
+### Printing on a raft
+
+A model with no flat bottom - a ship's round hull - touches the plate
+along one thin line, so it rocks and the first layer squashes that line
+flat. **Print on a raft** (edit page, `Job.raft_enabled`, schema 9.6.0)
+slices it on OrcaSlicer's raft: `slice.py --raft` sets `raft_layers` to
+`RAFT_LAYERS` (3), 0.9 mm of base a little wider than the model
+(`raft_expansion`), with the model starting `raft_contact_distance`
+(0.1 mm) above it so it snaps off. With supports on as well, the supports
+under the hull stand on the raft instead of on separate feet. On the
+Stalwart-class DDG (job 42's settings: 27.4%, tree_slim supports) the
+first layer went from a 23 x 151 mm spread of support feet plus a tiny
+hull contact to a solid 27 x 155 mm raft, with the hull starting 1.0 mm
+up; about 2 g of filament and 12 minutes more. OrcaSlicer can't slice a
+model floating in mid-air - it always drops it onto the plate - so a raft
+is how a model is raised.
+
+The raft is drawn in the preview with the supports: gcode tags raft
+layers as `Support`/`Support interface`, so `supports.py` already picks
+them up, and its JSON is generated whenever supports *or* a raft is on.
+That file is now `{"segments": [...], "model_lift": mm}` (a bare list
+before 9.6.0, still read): `model_lift` is the top of the last layer
+printed before any of the model, and `preview.js` draws the model that
+far up so it sits on its raft instead of inside it. Restore and Reprint
+copy the setting.
 
 ### A real silently-overridden-orientation incident
 

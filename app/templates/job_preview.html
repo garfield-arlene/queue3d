@@ -3,8 +3,9 @@
 {% block content %}
   <h2>{{ job.original_filename }}</h2>
   <p class="muted">
-    Orange lines are generated support material (simplified - not the
-    exact print path, just roughly where supports will be).
+    Orange lines are generated support material, and the raft if it has
+    one (simplified - not the exact print path, just roughly where they'll
+    be).
   </p>
 
   {# Hidden until the job's size and orientation are applied below, so
@@ -20,7 +21,7 @@
     import { previewUrl, applyTransform } from "/static/preview.js";
     const container = document.getElementById("preview-container");
     const info = document.getElementById("preview-info");
-    const supportsUrl = {% if job.supports_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
+    const supportsUrl = {% if job.supports_enabled or job.raft_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
     // The stored model file is always the original, unscaled/unrotated
     // upload - scaling and rotation only ever happen transiently during
     // slicing (see slicing/stl_to_3mf.build_3mf), never rewriting the
