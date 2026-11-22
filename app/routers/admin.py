@@ -29,7 +29,7 @@ from auth import (
 from backup import get_backup_history, get_last_successful_backup, is_stale
 from backup import manifest as backup_manifest
 from db import get_session
-from feedback import create_feedback, list_feedback
+from feedback import FUTURE_OCCURRED_AT_ERROR, create_feedback, list_feedback, occurred_at_is_future
 from filters import (
     apply_user_filters,
     event_filter_params,
@@ -42,6 +42,8 @@ from filters import (
 from jobs import (
     JobActionError,
     _admin_actor,
+    cancel_printing_job,
+    cancel_still_running_print,
     active_jobs,
     all_events,
     approve,
@@ -67,8 +69,9 @@ from jobs import (
 )
 from models import Admin, Color, Job, QUEUE_STATUSES, Settings, TERMINAL_STATUSES, User
 from printer import PrinterError, connection_status, pairing_status, start_pairing, system_information
+from pseudonyms import Scrubber
 from support_bundle import build_support_bundle
-from templates_env import is_valid_timezone, set_display_timezone, templates
+from templates_env import is_valid_timezone, set_display_timezone, set_print_time_thresholds, templates
 from themes import DEFAULT_MODE, MODES, effective_theme, is_theme_selectable, is_valid_mode, is_valid_theme, theme_choices
 
 router = APIRouter(prefix="/admin")
@@ -501,6 +504,34 @@ def mark_failed_job(
     return _perform_action(request, session, admin, job_id, mark_finished, admin, False, reason)
 
 
+@router.post("/jobs/{job_id}/cancel")
+def cancel_print_job(
+    request: Request,
+    job_id: int,
+    reason: str = Form(...),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Stops the print on the printer and records the job as failed -
+    see jobs.cancel_printing_job."""
+    return _perform_action(request, session, admin, job_id, cancel_printing_job, admin, reason)
+
+
+@router.post("/printer/cancel")
+def cancel_still_running(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """The "still printing" banner's Stop button - see
+    jobs.cancel_still_running_print."""
+    try:
+        cancel_still_running_print(session, admin)
+    except JobActionError as e:
+        return templates.TemplateResponse(request, "admin_dashboard.html", _dashboard_context(session, admin, str(e)))
+    return RedirectResponse("/admin/dashboard", status_code=303)
+
+
 def _old_jobs_context(session: Session, admin: Admin, action_error: str | None = None, filters: dict | None = None):
     filters = filters or {}
     threshold_days = get_settings(session).old_job_threshold_days
@@ -515,6 +546,7 @@ def _old_jobs_context(session: Session, admin: Admin, action_error: str | None =
             {
                 "job": job,
                 "user_name": user.name if user else "?",
+                "duration_estimate_s": estimate_s,
                 "duration_display": format_duration(estimate_s) if estimate_s else None,
                 "queue_wait_display": format_duration(wait_s) if wait_s is not None else None,
             }
@@ -1111,6 +1143,8 @@ def update_settings(
     old_job_threshold_days: int = Form(...),
     printer_host: str = Form(...),
     printer_port: int = Form(...),
+    print_time_good_hours: float = Form(...),
+    print_time_ask_hours: float = Form(...),
     admin: Admin = Depends(require_admin),
     session: Session = Depends(get_session),
 ):
@@ -1126,6 +1160,8 @@ def update_settings(
         error = "Printer IP address can't be blank."
     elif not (1 <= printer_port <= 65535):
         error = "Printer port must be between 1 and 65535."
+    elif not (0 < print_time_good_hours < print_time_ask_hours <= 48):
+        error = "Print-time colours: the green limit must be above 0 and below the yellow limit, and yellow at most 48 hours."
     else:
         settings = get_settings(session)
         settings.draft_expiry_days = draft_expiry_days
@@ -1133,6 +1169,8 @@ def update_settings(
         settings.old_job_threshold_days = old_job_threshold_days
         settings.printer_host = printer_host
         settings.printer_port = printer_port
+        settings.print_time_good_hours = print_time_good_hours
+        settings.print_time_ask_hours = print_time_ask_hours
         session.add(settings)
         session.commit()
         # Takes effect immediately, for every viewer, not just after a
@@ -1140,6 +1178,7 @@ def update_settings(
         # in-process cache exists at all rather than a DB read per
         # timestamp shown.
         set_display_timezone(display_timezone)
+        set_print_time_thresholds(print_time_good_hours, print_time_ask_hours)
     return templates.TemplateResponse(
         request, "admin_settings.html", _admin_settings_context(request, session, admin, error, error is None)
     )
@@ -1357,6 +1396,24 @@ def download_support_bundle(
     return FileResponse(bundle_path, media_type="application/gzip", filename=filename)
 
 
+@router.get("/support-bundle/codes")
+def support_bundle_codes(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Which person each code in a support bundle stands for (see
+    pseudonyms.py) - only on the Pi, which is the point: the bundle
+    leaves the site, this lookup doesn't. Covers current accounts and
+    names that only appear in the activity log now (deleted accounts)."""
+    scrubber = Scrubber(session)
+    rows = sorted(
+        ({"kind": kind, "name": name, "code": code} for (kind, name), code in scrubber.people.items()),
+        key=lambda row: (row["kind"], row["name"].lower()),
+    )
+    return templates.TemplateResponse(request, "admin_bundle_codes.html", {"admin": admin, "rows": rows})
+
+
 # ---- feedback ----
 # See models.Feedback/feedback.py - a free-text support/bug-report
 # channel, submitted by either account type, folded into
@@ -1427,6 +1484,8 @@ def admin_submit_feedback(
     job = None
     if not description:
         error = "Describe what you were doing and what went wrong before submitting."
+    elif occurred_at_is_future(occurred_at):
+        error = FUTURE_OCCURRED_AT_ERROR
     elif job_id:
         job = session.get(Job, int(job_id))
         if job is None:

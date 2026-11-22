@@ -39,16 +39,18 @@
        job from a filtered view lands back on that same filtered view
        instead of silently resetting to unfiltered. #}
     {% set qs = ('?' + request.url.query) if request.url.query else '' %}
+    {% include "_time_legend.html" %}
     <table>
       <tr><th>User</th><th>File</th><th></th><th></th><th>Status</th><th>Queued</th><th>Est.</th><th>Actions</th></tr>
       {% for row in rows %}
         {% set job = row.job %}
-        <tr>
+        {% set time_level = print_time_level(row.duration_estimate_s) if job.status.value in ('queued', 'approved') else none %}
+        <tr{% if time_level %} class="time-row time-row-{{ time_level }}"{% endif %}>
           <td>{{ row.user_name }}</td>
           <td>{{ job.original_filename }}</td>
           <td>{% if job.stl_path %}<a href="/jobs/{{ job.id }}/preview">View 3D</a>{% endif %}</td>
           <td><a href="/admin/jobs/{{ job.id }}/log">Log</a></td>
-          <td>{{ job.status.value }}</td>
+          <td>{{ job.status.value }}{% include "_time_light.html" %}</td>
           <td class="muted">
             {{ job.queued_at | local_time }}<br>
             waiting {{ row.queue_wait_display }}

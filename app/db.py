@@ -3,6 +3,7 @@ printer; a separate DB server would be pure overhead, and a single file is
 trivial to back up."""
 
 import os
+import re
 from pathlib import Path
 
 from sqlalchemy import text
@@ -474,6 +475,39 @@ def _migrate_to_9_2_0(conn):
             conn.execute(text(ddl))
 
 
+def _migrate_to_9_3_0(conn):
+    """New Settings.print_time_good_hours/print_time_ask_hours (the
+    stoplight thresholds, defaults 2 and 3 - what was hard-coded before)
+    and Job.restored_from_job_id. Fills the latter in for drafts already
+    restored, from their 'restored' log entry ("from job #N (...)") - the
+    only place that link was recorded before."""
+    for table, col, ddl in [
+        ("settings", "print_time_good_hours", "ALTER TABLE settings ADD COLUMN print_time_good_hours FLOAT NOT NULL DEFAULT 2.0"),
+        ("settings", "print_time_ask_hours", "ALTER TABLE settings ADD COLUMN print_time_ask_hours FLOAT NOT NULL DEFAULT 3.0"),
+        ("job", "restored_from_job_id", "ALTER TABLE job ADD COLUMN restored_from_job_id INTEGER"),
+    ]:
+        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+        if col not in cols:
+            conn.execute(text(ddl))
+    rows = conn.execute(text("SELECT job_id, detail FROM jobevent WHERE action = 'restored' AND job_id IS NOT NULL")).fetchall()
+    for job_id, detail in rows:
+        match = re.match(r"from job #(\d+)", detail or "")
+        if match:
+            conn.execute(
+                text("UPDATE job SET restored_from_job_id = :src WHERE id = :id AND restored_from_job_id IS NULL"),
+                {"src": int(match.group(1)), "id": job_id},
+            )
+
+
+def _migrate_to_9_5_0(conn):
+    """New Job.offset_x/offset_y (mm the model is moved on the plate).
+    Defaults to 0.0, the placement every existing job was sliced with."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    for col in ("offset_x", "offset_y"):
+        if col not in cols:
+            conn.execute(text(f"ALTER TABLE job ADD COLUMN {col} FLOAT NOT NULL DEFAULT 0.0"))
+
+
 # Keyed by the app VERSION a schema (or, as of 7.1.0, sometimes pure
 # data) change shipped in, not a separate incrementing number - per the
 # user, a schema change should always come with a version bump, so
@@ -498,6 +532,14 @@ def _migrate_to_9_2_0(conn):
 # Color table that shipped in that same version. VERSION still bumps
 # regardless, per the user - a schema change (a new table counts) always
 # needs one, whether or not it happens to need an ALTER TABLE too.
+def _migrate_to_9_6_0(conn):
+    """New Job.raft_enabled. Defaults to off, what every existing job was
+    sliced with."""
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(job)")).fetchall()}
+    if "raft_enabled" not in cols:
+        conn.execute(text("ALTER TABLE job ADD COLUMN raft_enabled BOOLEAN NOT NULL DEFAULT 0"))
+
+
 MIGRATIONS = {
     "2.1.0": _migrate_to_2_1_0,
     "2.4.0": _migrate_to_2_4_0,
@@ -519,6 +561,9 @@ MIGRATIONS = {
     "8.1.0": _migrate_to_8_1_0,
     "9.1.0": _migrate_to_9_1_0,
     "9.2.0": _migrate_to_9_2_0,
+    "9.3.0": _migrate_to_9_3_0,
+    "9.5.0": _migrate_to_9_5_0,
+    "9.6.0": _migrate_to_9_6_0,
 }
 
 

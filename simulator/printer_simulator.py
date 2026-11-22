@@ -168,18 +168,44 @@ class PrintState:
         self._filename = None
         self._started_at = None
         self._outcome_applied = False
+        self._cancelled_after_s = None
 
     def start(self, filename: str) -> None:
         with self._lock:
             self._filename = filename
             self._started_at = time.monotonic()
             self._outcome_applied = False
+            self._cancelled_after_s = None
+
+    def cancel(self) -> None:
+        """The `cancel` RPC: stops the current print where it is, which
+        current_process then reports as cancelled - the same terminal
+        state a cancel from the printer's own dial gives (see
+        --fail-at cancelled). A no-op with nothing printing, or once the
+        print has already finished."""
+        with self._lock:
+            if self._filename is None or self._cancelled_after_s is not None:
+                return
+            elapsed = time.monotonic() - self._started_at
+            if elapsed < self.print_duration_s:
+                self._cancelled_after_s = elapsed
 
     def current_process(self) -> dict | None:
         with self._lock:
             if self._filename is None:
                 return None
             elapsed = time.monotonic() - self._started_at
+            if self._cancelled_after_s is not None:
+                return {
+                    "filename": self._filename,
+                    "step": "printing",
+                    "progress": min(100, int(100 * self._cancelled_after_s / max(0.001, self.print_duration_s))),
+                    "time_remaining": 0,
+                    "elapsed_time": round(self._cancelled_after_s),
+                    "complete": False,
+                    "cancelled": True,
+                    "error": None,
+                }
             # The first ~10% of the simulated duration (capped at 3s, so
             # a short --print-duration during fast iteration doesn't
             # spend most of it "heating") is final_heating - matches the
@@ -345,6 +371,17 @@ class RPCHandler(socketserver.BaseRequestHandler):
 
         if method == "print":
             self._pending_filename = params.get("filepath")
+            self._reply(req_id, result={})
+            return
+
+        if method == "cancel":
+            # Cancels whatever the printer is doing - per the open-source
+            # client this protocol was reverse-engineered from
+            # (tjhorner/node-makerbot-rpc's cancel(): method "cancel",
+            # empty params). What the real firmware replies with isn't
+            # documented; an empty result is the simplest valid answer,
+            # and printer.cancel_print() doesn't depend on its content.
+            self.server.print_state.cancel()
             self._reply(req_id, result={})
             return
 

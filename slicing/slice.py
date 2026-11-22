@@ -43,16 +43,28 @@ sys.path.insert(0, str(HERE))
 from stl_to_3mf import ModelTooLargeError, build_3mf  # noqa: E402
 
 
+# How many raft layers --raft prints under the model: with the profile's
+# 0.3 mm layers that's 0.9 mm of base, wider than the model by the
+# profile's raft_expansion, and the model sits raft_contact_distance above
+# it so it snaps off. Tested on a ship hull, where it also gave the
+# supports under the hull a solid base instead of separate feet.
+RAFT_LAYERS = 3
+
+
 def slice_stl(
     stl_path,
     output_makerbot_path,
     enable_supports=False,
     support_style=None,
+    raft=False,
     gcode_out_path=None,
     scale_factor=1.0,
     rotate_x=0.0,
     rotate_y=0.0,
     rotate_z=0.0,
+    offset_x=0.0,
+    offset_y=0.0,
+    center_if_needed=False,
 ):
     """gcode_out_path: if given, the intermediate gcode (before mbotmake
     conversion) is copied there - it's otherwise thrown away with the temp
@@ -70,10 +82,14 @@ def slice_stl(
     scale_factor: uniform scale (1.0 = original size). rotate_x/y/z:
     degrees, applied in that order about the fixed world axes - see
     stl_to_3mf.build_3mf's own docstring for the full ordering (rotate,
-    then scale, then center) and why it matters."""
+    then scale, then center) and why it matters. offset_x/offset_y: mm
+    to move it on the plate after centering. center_if_needed: see
+    stl_to_3mf.build_3mf."""
     stl_path = Path(stl_path)
     output_makerbot_path = Path(output_makerbot_path)
     overrides = {"enable_support": "1" if enable_supports else "0"}
+    if raft:
+        overrides["raft_layers"] = str(RAFT_LAYERS)
     if support_style:
         overrides["support_style"] = support_style
         if support_style in SUPPORT_STYLE_TYPE:
@@ -91,6 +107,9 @@ def slice_stl(
             rotate_x=rotate_x,
             rotate_y=rotate_y,
             rotate_z=rotate_z,
+            offset_x=offset_x,
+            offset_y=offset_y,
+            center_if_needed=center_if_needed,
         )
         print(f"Wrapped {stl_path.name} into project.3mf ({n_verts} vertices, {n_tris} triangles)")
 
@@ -185,12 +204,16 @@ def main():
     parser.add_argument("stl", help="Input STL file")
     parser.add_argument("output", help="Output .makerbot path")
     parser.add_argument("--enable-supports", action="store_true", help="Turn on auto-generated supports for this slice")
+    parser.add_argument("--raft", action="store_true", help=f"Print the model on a {RAFT_LAYERS}-layer raft")
     parser.add_argument("--support-style", help="OrcaSlicer support_style override, e.g. grid/snug/organic/tree_hybrid/tree_slim")
     parser.add_argument("--gcode-out", help="Also save the intermediate gcode here")
     parser.add_argument("--scale", type=float, default=1.0, help="Uniform scale factor, 1.0 = original size")
     parser.add_argument("--rotate-x", type=float, default=0.0, help="Degrees to rotate about the X axis, applied first")
     parser.add_argument("--rotate-y", type=float, default=0.0, help="Degrees to rotate about the Y axis, applied second")
     parser.add_argument("--rotate-z", type=float, default=0.0, help="Degrees to rotate about the Z axis, applied third")
+    parser.add_argument("--offset-x", type=float, default=0.0, help="mm to move the model along X after centering it on the plate")
+    parser.add_argument("--offset-y", type=float, default=0.0, help="mm to move the model along Y after centering it on the plate")
+    parser.add_argument("--center-if-needed", action="store_true", help="If the model hasn't been moved and hangs off the plate where it's placed by default, center it by its outline instead")
     args = parser.parse_args()
     try:
         slice_stl(
@@ -198,11 +221,15 @@ def main():
             args.output,
             enable_supports=args.enable_supports,
             support_style=args.support_style,
+            raft=args.raft,
             gcode_out_path=args.gcode_out,
             scale_factor=args.scale,
             rotate_x=args.rotate_x,
             rotate_y=args.rotate_y,
             rotate_z=args.rotate_z,
+            offset_x=args.offset_x,
+            offset_y=args.offset_y,
+            center_if_needed=args.center_if_needed,
         )
     except ModelTooLargeError as e:
         # A plain message, not a traceback - this output is what the

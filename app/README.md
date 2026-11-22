@@ -333,11 +333,15 @@ style. Slicing and submitting are now two distinct, explicit actions:
   action, and this is where any future editing controls belong too (a
   resize, say) since it's already the "load the model and its settings
   back up" page. While a (re-)slice is running the page shows a spinner
-  and reloads itself every couple seconds until it's done - a plain
-  reload, not htmx swapping the DOM, because the live Three.js scene on
-  this page keeps its state tied to the *current* preview container; a
-  partial swap would leave that state pointing at a detached element
-  instead of reinitializing, where a full reload just starts fresh.
+  with what the slicer is doing (waiting its turn, or which orientation
+  it's trying), checked every couple seconds from
+  `/jobs/{id}/slice-status`. The preview stays still the whole time,
+  showing the orientation that was submitted; the page reloads once, when
+  the slice has finished or failed - a plain reload, not htmx swapping
+  the DOM, because the live Three.js scene on this page keeps its state
+  tied to the *current* preview container. The preview (here and on View
+  3D) stays hidden until the saved size and orientation are applied, so
+  the file's own orientation never flashes up first.
   Visiting this page for a job that isn't a draft any more (submitted,
   or - a stale link - since expired) redirects to the dashboard instead
   of showing an edit form for something it can no longer apply to.
@@ -388,7 +392,7 @@ input's own `min`, and independently server-side too); `cleanup_drafts.py` again
 draft actually moves its files to `archive/` and flips it to `expired`;
 the edit page's own settings form starts pre-filled with a draft's
 current settings and its 3D preview actually renders; clicking re-slice
-there stays on that same page through the "slicing…" reload loop and
+there stays on that same page through "slicing…" and
 lands back on it reflecting the new settings and a fresh preview;
 submitting from the edit page ends on the dashboard with the job queued;
 and visiting a queued job's edit URL directly redirects to the dashboard
@@ -417,6 +421,22 @@ upload→slice→draft flow every plain `.stl` upload already goes through,
 just run once per file found. Zero changes needed to slicing, the 3D
 preview, or support generation - the entire feature is upload-time
 extraction plus a loop.
+
+**A zip with several models isn't sliced straight away - the user
+chooses.** Each model is saved as an `uploaded` draft (`JobStatus.uploaded`)
+and the dashboard says how many are waiting. A zip often holds the same
+model twice (an `.stl` and a `.3mf`), or one part and the whole thing -
+an articulated dragon's two files, a pumpkin's stem and the full
+pumpkin - and slicing every file, one at a time on the Pi, spent minutes
+on ones nobody wanted. Each waiting model has View 3D (to check it),
+**Slice** and **Delete**; **Slice all** slices every one. Slices run in
+the order they're started, so the order the user clicks is the order
+they slice in. Edit works too: change the size or settings first, then
+**Slice with these settings**. A zip with one usable model still slices
+right away, like a plain upload. Waiting models are drafts, so they
+expire with the others (see "Drafts and expiry"). The files are listed
+`.stl` first, then `.obj`, then `.3mf` (`storage.ZIP_FORMAT_ORDER`), which
+is also the order Slice all uses.
 
 **`.obj` is converted to a real `.stl` immediately on upload, not taught
 to the rest of the pipeline as a second format** - `app/mesh.py`'s
@@ -901,21 +921,25 @@ the zip upload cap) started from knowing a job's exact settings/status/
 history, and without the real model file alongside it, none of those
 could have been reproduced or diagnosed at all.
 
-**Deliberately not included, and documented plainly rather than
-silently left out: a persistent application log file.** This app's own
-progress output goes straight to whatever terminal `uvicorn` happens to
-be running in, not a file - there's nothing on disk to collect yet. If
-the real deployment eventually runs this under systemd, its journal
-would be the natural next thing to add here; not attempted now since
-that setup doesn't exist yet to test against.
+**The service journal is included** (`journal.txt`) - see "Feedback and
+the support bundle" below.
 
-**A real design question resolved rather than glossed over: this
-bundle contains real user names, job filenames, and the database's
-stored (hashed, not plaintext) PIN/password secrets.** Not a new
-exposure - an admin generating this already has that same access on the
-live server - but worth being explicit about in both the bundle's own
-`manifest.txt` and here, rather than assumed harmless without saying so,
-since the file is meant to leave the device once generated.
+**No real names leave the site in it** (`pseudonyms.py`). Every user and
+admin appears as a code like `user-3f9a2c`, and every model filename as
+one like `file-81bc04.stl` - in the database copy, the activity log,
+feedback, the journal, and anywhere they turn up in free text, URL-encoded
+forms included. Model files are named `models/job-<id>.stl`. PIN and
+password hashes are blanked in the database copy, which is then VACUUMed
+so the old values don't linger in free pages. The codes are an HMAC with
+a secret kept only on the Pi (`data/bundle_pseudonym_key` on the data
+drive, never in the database), so the same person gets the same code in
+every bundle, and nobody off site can turn a code back into a name.
+**Admin > Support bundle codes** (`/admin/support-bundle/codes`, linked
+from the dashboard) lists each account's code, on the Pi only. Scrubbing
+free text is best effort - a name that isn't an account can't be
+recognised - so the feedback forms ask people not to type names.
+Checked against the Nov 11 field database: none of its account names,
+filenames or password hashes appear anywhere in the bundle.
 
 `GET /admin/support-bundle` builds the bundle into a fresh temp file
 and streams it back as a real file download (`Content-Disposition:
@@ -989,6 +1013,56 @@ requests stop the moment it does, request counts staying flat
 afterward. (This predates the slice/submit
 split below, which is why the end state here is `sliced` rather than
 `queued`.)
+
+### Slicing one model at a time
+
+A real field session left one of two near-simultaneous uploads of the
+same large model at `submitted` for good. `jobs.slice_and_update` now
+only queues the slice: `slice_queue.py` runs them on one background
+thread of its own, one at a time, in upload order. Two OrcaSlicer runs no
+longer compete for the Pi's memory, and waiting slices don't hold
+threads the web server needs for page requests.
+
+- **What a `submitted` row says.** "waiting to slice - 2 models ahead of
+  it" while queued, "slicing" while running, and which rotation retry is
+  running if the first attempt failed (`slice_queue.describe`, a Jinja
+  global as `slice_progress`). Shown on the dashboard and the edit page.
+- **Timeouts stop the whole slice.** `pipeline.run_slice` starts
+  `slice.py` in a process group of its own and kills the group on a
+  timeout. `subprocess.run`'s own timeout killed only `slice.py`, then
+  waited for its output pipe to close, which a still-running OrcaSlicer
+  held open - so a hung slice never ended and its job never left
+  `submitted`.
+- **Interrupted slices fail at startup.** The queue is in memory, so a
+  restart empties it. `jobs.fail_interrupted_slices()` runs at startup
+  and marks every job still `submitted` as `slice_failed` ("interrupted
+  because the app restarted"), so it can be re-sliced from its edit page.
+- **Any draft can be deleted.** A zip often has the same model in
+  several formats and only one is wanted, so Delete now shows on sliced
+  drafts and on ones still waiting to slice, not just failed ones. A
+  draft that's slicing right now can't be deleted until it finishes
+  (`slice_queue.withdraw`).
+
+### Print-time stoplight
+
+Every queued, approved or (on the user's dashboard) sliced row on the
+user's dashboard, the admin queue and the admin's old-jobs page is
+tinted by its estimated print time, with a coloured edge and a badge
+under its status: **green** under 2 hours, **yellow** 2-3 hours ("ask
+first"), **red** over 3 hours ("too long"). A legend above each of those
+tables (`_time_legend.html`) says what the colours mean. The edit page shows the same
+estimate, coloured the same way, next to the filament amount - so a
+student can see a print is too long and scale it down before
+submitting, rather than finding out in the queue. It's hidden while a
+re-slice is running or after a failed one, when it would be out of date. It uses the
+corrected estimate (`jobs.corrected_duration_estimate_s`), the same one
+shown as the print time, since the slicer's own runs about 40% short on
+this printer. The thresholds are admin settings (green under 2 hours
+and yellow up to 3 by default - `Settings.print_time_good_hours`/
+`print_time_ask_hours`, schema 9.3.0), and the legend and badges follow
+them. The colours are fixed rather than per theme, so they mean the same
+thing everywhere.
+
 
 ### A real silent-upload-failure incident: XHR eating its own flash message
 
@@ -2764,6 +2838,44 @@ obvious alternative (anything more explicitly romantic) the way Winter
 stays clear of Christmas/Hanukkah-specific imagery and Thanksgiving stays
 clear of Pilgrims/First-Thanksgiving imagery.
 
+### Marking a print done or failed
+
+- **One click counts.** `jobs.mark_finished` takes several seconds (a
+  printer read and a photo). A real failed print got marked failed three
+  times by repeated clicks, each logging its own `failed` and taking its
+  own photo. It now claims the job with a single conditional update
+  (`printing` -> `done`/`failed`) before the slow part, and any other
+  click gets "This job was already marked failed." The buttons also
+  lock and say "Saving..." as soon as they're clicked.
+- **Marking a job doesn't stop the printer; "Cancel print" does.** A
+  printing row has a **Cancel print** button (with a reason, and a
+  confirmation) that stops the print on the printer and then records the
+  job as failed exactly like "Mark failed" - photo, actual duration, and
+  "cancelled from the app - <reason>" shown to the submitter
+  (`jobs.cancel_printing_job`). If the printer can't be told to stop,
+  nothing is recorded and the admin is told to cancel it on the printer.
+  If a job marked done or failed is still printing, the admin dashboard
+  says so instead of reporting a print started outside the app, logs a
+  `still_printing` event on that job, and offers **Stop it on the
+  printer** (`jobs.cancel_still_running_print`, logged as
+  `print_cancelled`).
+
+  The command is the `cancel` RPC with empty params, taken from the
+  open-source client this protocol was reverse-engineered from
+  (`tjhorner/node-makerbot-rpc`'s `cancel()`), and tested against
+  `simulator/`, which now implements it. It has never run against the
+  real printer, which was already on site. Nothing depends on the
+  printer's reply to it.
+- **Sending a job back.** The reject and "Mark failed" reason boxes
+  suggest fixes ("Turn on supports and resubmit.", "Scale it down and
+  resubmit.", and so on), and any text can still be typed. The submitter
+  sees the reason on their dashboard next to a **Fix and resubmit**
+  button, which is the existing restore: a copy of the model as a new
+  draft, opened in the editor. The copy remembers its source
+  (`Job.restored_from_job_id`, schema 9.3.0, filled in from the log for
+  drafts restored earlier), and its edit page repeats the reason under
+  "What to change".
+
 ### Login rate-limiting
 
 **Why this exists:** PINs are short by design (low
@@ -3577,7 +3689,7 @@ gains a `--scale` CLI flag, `pipeline.run_slice()` and
 `jobs.slice_and_update()`/`start_reslice()` each gain a `scale_factor`
 parameter) rather than becoming a second, parallel pipeline.
 
-**Bounded** (`MIN_SCALE_FACTOR`/`MAX_SCALE_FACTOR`, 1%-1000%) and
+**Bounded** (`MIN_SCALE_FACTOR`/`MAX_SCALE_FACTOR`, 1%-10000%) and
 validated in `start_reslice()` before anything about the job changes -
 an out-of-range value is rejected with a clear message and the job's
 previous state (status, scale) is left completely untouched, same
@@ -3603,10 +3715,19 @@ displayed, so a new exported function (originally `setPreviewScale(factor)`,
 later folded into the combined `applyTransform()` once rotation joined it
 - see "Rotate and snap to surface" below) can always compute fresh from
 the true original size - repeated scale changes never compound - and a
-new `autoFitScale()` computes the largest factor
-(capped at 1, so this only ever shrinks an oversized model, never grows
-one that already fits) that would bring the *original* geometry within
-the build plate on all three axes at once. The one-click "Auto-resize
+new `autoFitScale()` computes the largest factor (up to the 10000% cap)
+that would bring the *original* geometry within the build plate on all
+three axes at once - shrinking an oversized model or enlarging a small
+one. It used to be capped at 100%, so on a small model the button reset
+the scale to 100%: a real 1.2 mm `ratatouille.stl` that needed enlarging
+just snapped back to its original size.
+
+**A model under 5 mm in every direction gets a "This model is very
+small" note** on the edit page, since that's almost always a file saved
+in centimetres or inches, read as millimetres. Its two buttons scale the
+model ×10 (centimetres) or ×25.4 (inches). The scale cap is 10000% for
+the same reason - the drag handles, the scale field, auto-fit and
+`jobs.start_reslice()` all use the same bounds. The one-click "Auto-resize
 to fit build plate" button in `job_edit.html` just calls that and
 applies the result; the scale number field re-renders live on every
 keystroke via the same function. The **read-only "View 3D" page for an
@@ -3867,7 +3988,7 @@ keeping proportions" should never actually show a negative or
 astronomical result regardless of what the widget's own math allows.
 Fixed by clamping the committed result in `commitGizmoTransform()` to
 the exact same `MIN_SCALE_FACTOR`/`MAX_SCALE_FACTOR` bounds
-`jobs.start_reslice()` already enforces server-side (1%-1000%),
+`jobs.start_reslice()` already enforces server-side (1%-10000%),
 falling back to the pre-drag scale entirely for a non-finite or
 non-positive result rather than clamping a meaningless number into
 range. Verified directly: the same degenerate near-origin drag that
@@ -4020,14 +4141,26 @@ motivated suggesting a rotation on a slicing error, then attempting
 rotation automatically on one instead of just suggesting it - retrying
 every reasonable rotation rather than stopping at the first one tried.
 
-`jobs.AUTO_ROTATE_CANDIDATES` is a fixed, bounded set of 11 rotations -
-quarter/eighth turns about Z (every real fix observed across all three
-investigated models landed here), plus the four ways to lay the model
-on one of its other faces (±90° about X or Y) - not an exhaustive
-multi-axis grid, which would multiply the real per-attempt cost
-(a full OrcaSlicer+`mbotmake` run each, genuinely minutes for a large
-model) combinatorially for a search with no particular reason to
-expect a better answer than a simpler sweep would find.
+Which rotations are retried depends on the failure
+(`jobs.rotation_candidates_for()`):
+
+- **Setup problems** (a missing system library, an unwritable file, a
+  slice that timed out) aren't retried at all - rotating can't fix them.
+- **"Too big for the bed"** retries 90° and 45° about Z (onto the bed's
+  long axis, or its diagonal), then lying on its side about X or Y.
+  An orientation that still doesn't fit fails `slice.py`'s size check in
+  seconds, before OrcaSlicer starts.
+- **Any other slicer failure** retries lying it on each of its four
+  sides (±90° about X or Y). Turning about Z slices the same layers, so
+  it can't change these. The 45° Z turns that fixed the models above got
+  past `mbotmake`'s bed-centering check, which is now a warning.
+
+The retries share a **3-minute limit** (`AUTO_ROTATE_BUDGET_S`), after the
+first attempt: each gets only the time left, and one doesn't start with
+less time left than the first attempt took. While they run, the job's
+row says which one ("trying another orientation (2 of 4)"). If none
+works, the failure says how many were tried, and whether the limit
+stopped it.
 `jobs._slice_with_rotation_retry()` tries the orientation actually
 requested first, and only sweeps
 the candidates if that fails *and* `Job.rotation_manual` is still
@@ -4048,9 +4181,8 @@ fall back to a candidate. If every candidate also fails, the *original*
 requested orientation's own failure is what gets reported (not
 whichever candidate happened to run last) - the one the user actually
 asked for is the most relevant thing to show - and the `slice_failed`
-page's own hint text was updated to say a broad rotation sweep was
-already tried automatically, so a user doesn't waste time manually
-retrying rotations the app already ruled out.
+page's own hint text says which rotations were already tried
+automatically, so a user doesn't waste time retrying them by hand.
 
 Uploading the Flexi_Seal model fresh (rotation
 defaulting to 0/0/0, deliberately not pre-rotated) and letting the real
@@ -4059,6 +4191,126 @@ background slicing task run to completion lands it on
 `45.0` and a clear note on the edit page explaining exactly what
 happened and why the rotation fields show a value nobody manually
 entered.
+
+### Moving the model on the plate
+
+A model is placed with its balance point (volume centroid, see
+`slicing/stl_to_3mf.center_vertices`) at the middle of the plate. For a
+lopsided model - a wrench with a solid head and a long handle - that
+leaves the light end hanging off the edge even when the whole model is
+shorter than the plate. Two edit-page controls under the preview move it:
+
+- **Center on plate** puts the middle of the model's outline at the
+  middle of the plate (`preview.js` `centerOnPlateOffset`).
+- **Move (drag)** shows move handles on the model, limited to the plate
+  (no up/down).
+
+The result is stored as `Job.offset_x`/`offset_y` (mm, schema 9.5.0) and
+applied after rotation and scale, the same way by the preview and by
+`stl_to_3mf.build_3mf`. Restore and Reprint copy it. The edit page
+recenters automatically after Snap to surface (a new face means a new
+footprint) and after Auto-resize, which now fits the model centered by
+its outline with 0.5 mm to spare, rather than around its balance point.
+
+The slicer also moves a model nobody has moved: when the default
+placement hangs off but the model fits centered by its outline, slice.py
+(`--center-if-needed`, always passed by `pipeline.run_slice`) places it
+that way and prints the offset it used. `jobs.py` records it on the job
+and logs a `centered` event, so a lopsided upload slices on the first
+try and its preview shows where it was actually sliced. A model that was
+moved partly off the plate fails with "hangs off the edge" and a pointer
+to Center on plate; that failure doesn't trigger the automatic rotation
+retries, which would undo the move.
+
+### Snap to surface lays the model on a whole face
+
+Snap to surface turns the model so a whole flat face sits on the plate,
+not the one triangle under the pointer. Much of what looks like a flat
+side is really bevels, rounded rims and the walls of holes: on the
+Voronoi-handle wrench (`wrench_v2_assembly_VORONOI_FIXED.stl`) only 53%
+of a side, seen face on, is within 2° of flat and 32% is tilted 10-60°,
+so laying it on the clicked triangle tilted the model to whatever slope
+the click landed on.
+
+`preview.js` `findRestFaces` lists, once per loaded model, the faces it
+can lie on: a plane holding at least 0.5% of the model's surface with no
+vertex past it. A side can be stepped - the wrench's handle is thinner
+than its head - so only the outermost level touches the plate; the
+parallel levels behind it count as the same side. Together the rest faces
+wrap the model like a box, and `pickRestFace` takes the one the pointer's
+line of sight enters that box through, so a click on a bevel or into a
+hole still picks the side it's on. Where it enters off every rest face (a
+dome, or a sphere with no flat face at all) it falls back to the triangle
+under the pointer.
+
+In Snap mode the face a click would pick lights up as the pointer moves
+(`showSnapTarget`): bright amber where it will touch the plate, darker
+amber for the rest of that side. On the wrench, pointing anywhere on the
+side - flat, bevel or hole - now lays it flat on that side.
+
+A face says how the model should lie, not which way round it should
+point, so a snap that leaves it hanging off the plate also turns it about
+the vertical (`preview.js` `fitTurnOnPlate`, added to Rotate Z) and
+centers it. Of the turns that fit, it takes the one leaving the most room
+to the nearest edge, to the mm, smaller turn first; a model that already
+fits isn't turned, and one no turn can fit is left for Auto-resize. The
+wrench laid on its side is 266 mm long and lay across the plate's 195 mm
+depth; it's now turned -62°, 237 x 136 mm with about 57 mm to spare each
+way, and slices there.
+
+### Size reference: a coin or a bill
+
+The preview's camera frames the model and plate together, so on its own
+it's hard to tell a 3 cm print from a 30 cm one. A **Show size
+reference** button in the top corner of every 3D preview (the upload
+form, the edit page and View 3D - it's added by `preview.js` itself) puts
+a US quarter (24.26 mm across, 1.75 mm thick) or a dollar bill
+(155.96 x 66.29 mm) on the plate beside the model. They're objects in the
+same scene, so they zoom and turn with the model, and follow it when it's
+moved or reoriented. They're silver and green with their size printed on
+top, unlike the model (blue, red when it doesn't fit) or the Snap to
+surface highlight (amber), and they're never part of what's sliced.
+Whether the reference is shown is remembered per browser
+(`localStorage`, `queue3d.sizeReference`).
+
+Only one is shown, the one closer to the model's size
+(`placeSizeReference`): the longer side of the model's footprint against
+each item's longer side, by ratio, so the switch-over is at about 62 mm.
+Next to a 41 x 56 mm figure (`ratatouille.stl` at 50x) the bill is
+three times its size and the quarter half of it.
+
+It goes right beside the model, on the plate where there's room: in
+front first (the side the camera starts on), then right, left and
+behind, the bill also turned lengthways. For a big model - a 237 mm
+wrench laid diagonally, say - there isn't, and it goes in front anyway,
+hanging off the plate, since next to the model is what makes the
+comparison.
+
+### Printing on a raft
+
+A model with no flat bottom - a ship's round hull - touches the plate
+along one thin line, so it rocks and the first layer squashes that line
+flat. **Print on a raft** (edit page, `Job.raft_enabled`, schema 9.6.0)
+slices it on OrcaSlicer's raft: `slice.py --raft` sets `raft_layers` to
+`RAFT_LAYERS` (3), 0.9 mm of base a little wider than the model
+(`raft_expansion`), with the model starting `raft_contact_distance`
+(0.1 mm) above it so it snaps off. With supports on as well, the supports
+under the hull stand on the raft instead of on separate feet. On the
+Stalwart-class DDG (job 42's settings: 27.4%, tree_slim supports) the
+first layer went from a 23 x 151 mm spread of support feet plus a tiny
+hull contact to a solid 27 x 155 mm raft, with the hull starting 1.0 mm
+up; about 2 g of filament and 12 minutes more. OrcaSlicer can't slice a
+model floating in mid-air - it always drops it onto the plate - so a raft
+is how a model is raised.
+
+The raft is drawn in the preview with the supports: gcode tags raft
+layers as `Support`/`Support interface`, so `supports.py` already picks
+them up, and its JSON is generated whenever supports *or* a raft is on.
+That file is now `{"segments": [...], "model_lift": mm}` (a bare list
+before 9.6.0, still read): `model_lift` is the top of the last layer
+printed before any of the model, and `preview.js` draws the model that
+far up so it sits on its raft instead of inside it. Restore and Reprint
+copy the setting.
 
 ### A real silently-overridden-orientation incident
 
@@ -4070,7 +4322,7 @@ chosen orientation failed the printer's own bed-centering check
 stuck-slicing incident" and the Flexi_Seal investigation elsewhere in
 this file already cover) - and the job came back lying on its side
 again anyway, `Job.rotate_x/y/z` silently reset to whatever candidate
-in `AUTO_ROTATE_CANDIDATES` happened to pass that check first. Every
+in the retry list happened to pass that check first. Every
 further attempt at a different upright orientation met the identical
 fate.
 
@@ -4080,7 +4332,7 @@ this on purpose."** `_slice_with_rotation_retry()`'s own docstring
 always claimed "respecting an explicit user choice, not second-guessing
 it," but the code only ever honored that for the *first* attempt at
 whatever orientation was requested - the instant that attempt failed,
-it swept every `AUTO_ROTATE_CANDIDATES` entry regardless of whether the
+it swept every retry candidate regardless of whether the
 requested orientation came from a genuinely untouched upload or from
 someone deliberately dragging/snapping it into place, silently landing
 on and saving whichever candidate happened to pass the bed-centering
@@ -5023,6 +5275,20 @@ never ends up duplicated. Verified directly: a job with no slice error
 at all, referenced only by a feedback report, showed up in the
 downloaded bundle's `models/` folder alongside every job that qualified
 the older way.
+
+**The job dropdown shows each job's number** (`#14 planeTRJ.stl
+(failed, ...)`), so duplicate uploads of the same file can be told
+apart. **"When did this happen" can't be in the future** - the input's
+`max` is the current time in the display timezone, and the server
+rejects a later one too. A real report came in with a time nine days
+after it was submitted.
+
+**The bundle includes the service journal** (`journal.txt`, the last 14
+days of `queue3d` and its backup/cleanup timers): the app's own output
+and tracebacks, which the database doesn't record.
+`deploy/remote_install.sh` adds the `queue3d` user to the
+`systemd-journal` group so it can read it; if it can't, `journal.txt`
+says why instead.
 
 **`job_id` is a real FK, but `job_filename` is also snapshotted alongside
 it at submission time** - the same "stay readable even if the thing it

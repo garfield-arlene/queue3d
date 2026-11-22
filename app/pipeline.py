@@ -6,6 +6,8 @@ boundary consistent instead of reaching across directories with sys.path
 hacks. It also means slicing/ stays fully independent and runnable/
 testable on its own, which it already was."""
 
+import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -16,22 +18,56 @@ from supports import write_support_preview
 SLICING_DIR = Path(__file__).resolve().parent.parent / "slicing"
 SLICE_SCRIPT = SLICING_DIR / "slice.py"
 
+# The longest one slice may run before it's stopped. A model's first
+# slice gets all of it; the automatic rotation retries in jobs.py pass
+# less (see AUTO_ROTATE_BUDGET_S there).
+SLICE_TIMEOUT_S = 600
+# Starts the detail returned for a slice that ran out of time, so callers
+# can tell a timeout from a slicer failure.
+TIMEOUT_MESSAGE = "Slicing timed out"
+
+
+# slicing/stl_to_3mf.py's PLACED_PREFIX - the line it prints when it
+# moved a model onto the plate. Kept in step by hand: the app runs the
+# slicer as a separate program rather than importing it.
+_PLACED_PREFIX = "Centered on the plate by its outline, offset:"
+
+
+def placed_offset(detail: str) -> tuple[float, float] | None:
+    """The (x, y) offset the slicer moved the model to, if it did (see
+    run_slice), from its output - for recording on the job so the preview
+    shows where it was actually sliced."""
+    for line in detail.splitlines():
+        if line.startswith(_PLACED_PREFIX):
+            try:
+                x, y = (float(n) for n in line[len(_PLACED_PREFIX):].split())
+            except ValueError:
+                return None
+            return x, y
+    return None
+
 
 def run_slice(
     stl_path: Path,
     output_makerbot_path: Path,
     enable_supports: bool = False,
     support_style: str | None = None,
+    raft: bool = False,
     supports_json_path: Path | None = None,
     scale_factor: float = 1.0,
     rotate_x: float = 0.0,
     rotate_y: float = 0.0,
     rotate_z: float = 0.0,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+    timeout_s: float = SLICE_TIMEOUT_S,
 ) -> tuple[bool, str]:
     """Returns (success, detail) - detail is the slicer's own output either
     way, useful as slice_error on failure.
 
-    If enable_supports and supports_json_path are both given, also asks
+    raft: print it on a raft (models.Job.raft_enabled).
+
+    If supports_json_path is given, also asks
     slice.py to preserve the intermediate gcode (normally thrown away once
     it's converted to .makerbot) and extracts a simplified support-geometry
     preview from it - see supports.py for why that has to come from the
@@ -41,7 +77,13 @@ def run_slice(
     degrees, applied in that order about the fixed world axes - see
     models.Job.scale_factor/rotate_x and stl_to_3mf.build_3mf's own
     docstring for the full ordering and why it has to match the client
-    preview exactly.
+    preview exactly. offset_x/offset_y: mm to move it on the plate after
+    that (models.Job.offset_x/offset_y). A model that hasn't been moved
+    and hangs off the plate where it's placed by default is centered by
+    its outline instead, when that fits - see placed_offset.
+
+    timeout_s: how long this slice may run before it's stopped. On a
+    timeout, detail starts with TIMEOUT_MESSAGE.
     """
     with tempfile.TemporaryDirectory(prefix="queue3d-pipeline-") as tmp:
         gcode_path = Path(tmp) / "intermediate.gcode"
@@ -50,6 +92,8 @@ def run_slice(
             cmd.append("--enable-supports")
         if support_style:
             cmd += ["--support-style", support_style]
+        if raft:
+            cmd.append("--raft")
         if supports_json_path is not None:
             cmd += ["--gcode-out", str(gcode_path)]
         if scale_factor != 1.0:
@@ -60,6 +104,11 @@ def run_slice(
             cmd += ["--rotate-y", str(rotate_y)]
         if rotate_z != 0.0:
             cmd += ["--rotate-z", str(rotate_z)]
+        if offset_x != 0.0:
+            cmd += ["--offset-x", str(offset_x)]
+        if offset_y != 0.0:
+            cmd += ["--offset-y", str(offset_y)]
+        cmd.append("--center-if-needed")
 
         # stdin=DEVNULL - a real incident, not foresight: mbotmake (called
         # two subprocess layers down, see slicing/slice.py) has its own
@@ -71,26 +120,34 @@ def run_slice(
         # terminal in normal dev/deployment use - so that `input()` blocks
         # forever waiting for a keystroke nobody will ever type, instead
         # of raising EOFError immediately the way it does when stdin is
-        # already closed/empty. The 600s timeout below still eventually
-        # fires either way, but only kills this direct child - the
-        # blocked grandchild (mbotmake) would otherwise leak indefinitely
-        # rather than exiting with it. Confirmed live: a real job got
-        # stuck this way; killing the process tree by hand was the only
-        # way to unwedge it before this fix existed.
-        result = subprocess.run(
+        # already closed/empty.
+        #
+        # start_new_session puts slice.py, OrcaSlicer and mbotmake in one
+        # process group of their own, so a timeout kills all three.
+        # subprocess.run's own timeout kills only slice.py, then waits
+        # for its output pipe to close - which a still-running OrcaSlicer
+        # holds open, so the wait never ends and the job stays
+        # 'submitted' for good.
+        proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             text=True,
-            timeout=600,
+            start_new_session=True,
         )
-        output = result.stdout or ""
-        success = result.returncode == 0 and output_makerbot_path.exists()
+        try:
+            output, _ = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            output, _ = proc.communicate()
+            return False, f"{TIMEOUT_MESSAGE} after {timeout_s:.0f} seconds and was stopped.\n\n{output or ''}".rstrip()
+        output = output or ""
+        success = proc.returncode == 0 and output_makerbot_path.exists()
 
         if success and supports_json_path is not None and gcode_path.exists():
             write_support_preview(gcode_path, supports_json_path)
 
     if success:
         return True, output
-    return False, output or f"slice.py exited {result.returncode} with no output"
+    return False, output or f"slice.py exited {proc.returncode} with no output"

@@ -79,6 +79,15 @@
       supports use extra filament and take longer to remove.
     </li>
     <li>
+      <strong>Print on a raft</strong> (on the Edit page) - prints a few
+      layers under the model, a little wider than it, which snap off
+      afterwards. Use it when the model has no flat bottom to sit on - for
+      example a ball, a boat's hull or a rounded base. It lifts the model
+      off the plate onto a steady base instead of balancing on a thin line
+      or a point. Turn on supports too, so the curved underside is held up
+      and keeps its shape.
+    </li>
+    <li>
       <strong>Color</strong> - pick a specific filament color, or leave
       it "Any available" if you don't mind which one, so an admin
       doesn't have to change filament just for your job. This is best
@@ -93,6 +102,29 @@
       preview so you can see the result (and, with supports on, where
       they'll actually go) before deciding it's ready.
     </li>
+    <li>
+      <strong>Snap to surface</strong> - lays the model down on one of
+      its sides. Click the button, then point at the model: the side it
+      will lie on lights up, brightest where it will touch the plate.
+      Click to lay it there. If it would hang off the plate lying that
+      way, it's also turned and centered so it fits.
+    </li>
+    <li>
+      <strong>Show size reference</strong> - the button in the corner of
+      every 3D preview puts a US quarter (silver) or a dollar bill
+      (green), to scale, right next to the model, so you can see how big
+      it really is: the quarter for a small model, the bill for a bigger
+      one. Next to a big model it may hang off the plate. It isn't
+      printed.
+    </li>
+    <li>
+      <strong>Position on the plate</strong> - if part of the model hangs
+      off the edge of the plate (it turns red), click <strong>Center on
+      plate</strong> under the preview. To put it somewhere else, click
+      <strong>Move (drag)</strong> and drag the arrows on the model.
+      Standing it on a new face with Snap to surface, or using
+      Auto-resize, centers it for you.
+    </li>
   </ul>
   <p>
     Once it looks right, <strong>Submit</strong> puts it into the
@@ -104,7 +136,8 @@
   <h3 id="statuses">Job statuses, and what each one means</h3>
   <p>A job moves through these statuses, in this order:</p>
   <ul>
-    <li><strong>Submitted</strong> - just uploaded; being sliced right now.</li>
+    <li><strong>Uploaded</strong> - one of several models from a zip, saved but not sliced yet. Slice the ones you want (in the order you want) and Delete the rest - a zip often has the same model twice, or one part and the whole thing.</li>
+    <li><strong>Submitted</strong> - being sliced right now, or waiting its turn to be sliced.</li>
     <li><strong>Sliced</strong> - a draft, still yours to change and hasn't been submitted into the queue yet.</li>
     <li><strong>Slice failed</strong> - the slicer couldn't process it (see the technical detail on the job for why). Still a draft - adjust settings and re-slice, or let it expire.</li>
     <li><strong>Queued</strong> - you've submitted it; waiting for an admin to look at it.</li>
@@ -113,7 +146,7 @@
     <li><strong>Printing</strong> - an admin has actually released it to the printer.</li>
     <li><strong>Done</strong> - finished printing successfully.</li>
     <li><strong>Failed</strong> - the print itself failed or was cancelled partway through (not the same as "Slice failed" above, which never reached the printer at all).</li>
-    <li><strong>Expired</strong> - a draft (Submitted, Sliced, or Slice failed) that sat too long without ever being submitted, and was automatically cleared out.</li>
+    <li><strong>Expired</strong> - a draft (Uploaded, Submitted, Sliced, or Slice failed) that sat too long without ever being submitted, and was automatically cleared out.</li>
   </ul>
 
   <h3 id="after-submit">Editing, re-slicing, restoring, and reprinting</h3>

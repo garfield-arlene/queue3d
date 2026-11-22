@@ -1,0 +1,9 @@
+{# What the print-time colours on the table below mean - shown above
+   every table that uses them (see _time_light.html). #}
+{%- set labels = print_time_labels() %}
+<p class="time-legend">
+  Estimated print time:
+  <span class="time-light time-light-good">{{ labels.good }}</span>
+  <span class="time-light time-light-ask">{{ labels.ask }}</span>
+  <span class="time-light time-light-long">{{ labels.long }}</span>
+</p>

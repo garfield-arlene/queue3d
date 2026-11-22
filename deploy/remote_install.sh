@@ -94,6 +94,10 @@ if ! id -u queue3d >/dev/null 2>&1; then
   echo "Creating the queue3d system user (no login shell, no password)..."
   useradd --system --no-create-home --shell /usr/sbin/nologin queue3d
 fi
+# Lets the app read its own service journal, for the admin support
+# bundle (see app/support_bundle.py). Re-run every deploy; a no-op once
+# it's a member. Takes effect when queue3d restarts further down.
+usermod -aG systemd-journal queue3d
 
 # Per the user, asked directly before ever relying on this for a real
 # upgrade rather than after a bad one: "does the upgrade process trigger

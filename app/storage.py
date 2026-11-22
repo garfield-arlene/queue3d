@@ -61,9 +61,12 @@ MODEL_EXTENSIONS = {".stl", ".obj", ".3mf"}
 MAX_ZIP_MODEL_FILES = 25
 
 
+ZIP_FORMAT_ORDER = {".stl": 0, ".obj": 1, ".3mf": 2}
+
+
 def extract_model_files(zip_bytes: bytes) -> list[tuple[str, bytes]]:
     """Returns [(filename, data), ...] for every .stl/.obj/.3mf entry in
-    the zip - everything else (a README, a photo, a license file, a
+    the zip, .stl entries first, then .obj, then .3mf - everything else (a README, a photo, a license file, a
     nested folder Thingiverse sometimes wraps everything in) is silently
     ignored, not an error. Each entry is still handled as its own
     separate job once extracted (see routers/user.py's upload()) - a
@@ -103,7 +106,12 @@ def extract_model_files(zip_bytes: bytes) -> list[tuple[str, bytes]]:
             if len(results) >= MAX_ZIP_MODEL_FILES:
                 raise ValueError(f"Too many model files in this zip (max {MAX_ZIP_MODEL_FILES}).")
             results.append((name, zf.read(info)))
-    return results
+    # Slices run one at a time in this order (see slice_queue.py), so the
+    # most dependable format goes first: a plain .stl, then .obj, then
+    # .3mf. A download often has the same model in several formats, and
+    # the .stl one is the one worth having ready soonest. Zip order is
+    # kept within each format.
+    return sorted(results, key=lambda entry: ZIP_FORMAT_ORDER[Path(entry[0]).suffix.lower()])
 
 
 def scratch_stl_path(job_id: int) -> Path:

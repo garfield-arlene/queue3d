@@ -1,0 +1,5 @@
+{# Print-time stoplight badge for one queue row - the table sets
+   time_level (templates_env.print_time_level, from the corrected
+   estimate) and tints the whole row to match (base.html's .time-row-*).
+   A word as well as a colour, so it reads without colour too. #}
+{%- if time_level %}<br><span class="time-light time-light-{{ time_level }}" title="Estimated print time: {{ print_time_labels()[time_level] }}">{{ print_time_labels()[time_level] }}</span>{% endif -%}

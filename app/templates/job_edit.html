@@ -14,34 +14,62 @@
      separate manual "Submit to queue" click it was never going to need. #}
   {% if job.status.value == 'submitted' %}
     <script>
-      // Full-page reload, not htmx polling: this page hosts a live
-      // Three.js scene (preview.js), which keeps its renderer/camera
-      // state in module-level variables tied to the *current* DOM nodes -
-      // a partial swap of the preview container out from under it would
-      // leave that state pointing at a detached element instead of
-      // reinitializing. A plain reload sidesteps that entirely by
-      // starting the whole page fresh, same as the very first load. A
-      // <meta http-equiv="refresh"> tag would do this without JS, but
-      // only reliably inside <head> - base.html's content block renders
-      // in <body>, where browser support for it is inconsistent.
-      setTimeout(() => window.location.reload(), 2000);
+      // Checks a small status endpoint instead of reloading the page:
+      // every reload redrew the preview from the raw file and then
+      // re-applied the saved orientation, so the model flipped between
+      // the two every couple of seconds while it sliced. The page only
+      // reloads once slicing has finished, worked or not, and the line
+      // above the preview shows what the slicer is doing meanwhile.
+      // A full reload at that point, not a partial swap: preview.js keeps
+      // its Three.js renderer/camera tied to the current DOM nodes.
+      (function poll() {
+        setTimeout(async () => {
+          try {
+            const r = await fetch("/jobs/{{ job.id }}/slice-status", { cache: "no-store" });
+            if (r.ok) {
+              const s = await r.json();
+              if (s.status !== "submitted") { window.location.reload(); return; }
+              const note = document.getElementById("slice-note");
+              if (note && s.note) note.textContent = s.note;
+            }
+          } catch (e) { /* network blip - try again next time */ }
+          poll();
+        }, 2000);
+      })();
     </script>
   {% endif %}
 
   <h2>{{ job.original_filename }}</h2>
   {% if flash_error %}<p class="error">{{ flash_error }}</p>{% endif %}
+  {% if sent_back %}
+    {# A copy made by "Fix and resubmit" - repeats why the original came
+       back, since that's what this edit is for. See routers/user.py's
+       _sent_back_reason. #}
+    <p class="notice">
+      <strong>What to change</strong>
+      Job #{{ sent_back.job.id }} ({{ sent_back.verb }}): {{ sent_back.reason }}
+    </p>
+  {% endif %}
 
-  {% if job.status.value == 'submitted' %}
-    <p><progress></progress> slicing&hellip;</p>
+  {% if job.status.value == 'uploaded' %}
+    <p class="notice">Not sliced yet. Check it in the preview, change the settings if
+      you need to, then <strong>Slice with these settings</strong> below - or go back and
+      Delete it if it's not the one you want.</p>
+  {% elif job.status.value == 'submitted' %}
+    <p><progress></progress> <span id="slice-note">{{ slice_progress(job.id) or "slicing" }}</span>&hellip;</p>
+  {% elif job.status.value == 'slice_failed' and job.slice_error and 'hangs off the edge' in job.slice_error %}
+    {# Moved partly off the plate - see jobs.PLACEMENT_FAILURE_MARKER. #}
+    <p class="error">Part of the model is off the edge of the build plate. Click
+      <strong>Center on plate</strong> under the preview, then Re-slice.</p>
   {% elif job.status.value == 'slice_failed' %}
     <p class="error">Couldn't slice this file. Adjust settings and re-slice below, or re-export and re-upload from the dashboard.</p>
     <p class="muted">
-      Many slicing failures come from a model's own shape or orientation,
-      not its size - this already automatically tried rotating it a
-      handful of likely ways (quarter/eighth turns, and standing it on
-      each of its other faces) before giving up, so if that didn't help,
-      a manual angle outside that set, or a support-style change, is more
-      likely to than trying the same rotations again by hand.
+      Many slicing failures come from a model's own shape or orientation.
+      Unless you set the orientation yourself, this already tried laying
+      it on each of its sides (or, if it was too big for the bed, turning
+      it to fit) for up to 3 minutes before giving up - the technical
+      details below say which. If that didn't help, try scaling it down,
+      a different angle of your own, or a different support style.
     </p>
     {% if job.slice_error %}
       <details class="tech-detail">
@@ -63,30 +91,45 @@
   {% endif %}
 
   <p class="muted">
-    Orange lines are generated support material (simplified - not the
-    exact print path, just roughly where supports will be).
+    Orange lines are generated support material, and the raft if it has
+    one (simplified - not the exact print path, just roughly where they'll
+    be).
   </p>
     <p class="muted" id="snap-hint" hidden>
-      Click a surface on the model above to stand it on that face.
+      Point at the model below: the highlighted face is the one that will
+      sit on the plate. Click to lay it there.
     </p>
     <p class="muted" id="gizmo-hint" hidden>
-      Drag a handle on the model above.
+      Drag a handle on the model below. To move it, drag the red or
+      green arrow, or the square between them.
     </p>
-    <div id="preview-container" class="preview-container"></div>
+    {# Hidden until the saved size and orientation are applied (see
+       previewUrl below), so the raw file's own orientation never shows
+       first. #}
+    <div id="preview-container" class="preview-container" style="visibility: hidden"></div>
     <p id="preview-info" class="preview-info"></p>
+    {# Where the model sits on the plate. By default it's centered on its
+       balance point, which leaves a lopsided model (a wrench with a solid
+       head) hanging off one edge even when it's shorter than the plate. #}
+    <p class="placement-controls">
+      <button type="button" id="center-btn">Center on plate</button>
+      <button type="button" id="move-gizmo-btn">Move (drag)</button>
+    </p>
 
     <script type="importmap">
       { "imports": { "three": "/static/vendor/three/three.module.min.js" } }
     </script>
     <script type="module">
-      import { previewUrl, applyTransform, autoFitScale, computeSnapRotation, enableGizmo, disableGizmo } from "/static/preview.js";
+      import { previewUrl, applyTransform, autoFitScale, centerOnPlateOffset, computeSnapRotation, fitTurnOnPlate, showSnapTarget, clearSnapTarget, displayedSize, enableGizmo, disableGizmo } from "/static/preview.js";
       const container = document.getElementById("preview-container");
       const info = document.getElementById("preview-info");
-      const supportsUrl = {% if job.supports_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
+      const supportsUrl = {% if job.supports_enabled or job.raft_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
       const scaleInput = document.getElementById("scale-percent");
       const rotateXInput = document.getElementById("rotate-x");
       const rotateYInput = document.getElementById("rotate-y");
       const rotateZInput = document.getElementById("rotate-z");
+      const offsetXInput = document.getElementById("offset-x");
+      const offsetYInput = document.getElementById("offset-y");
       // Tells the server a requested rotation is deliberate even when its
       // *value* happens to equal the untouched default (x=0/y=0/z=0) -
       // see jobs._slice_with_rotation_retry's own docstring for the real
@@ -104,6 +147,7 @@
       const snapHint = document.getElementById("snap-hint");
       const rotateGizmoBtn = document.getElementById("rotate-gizmo-btn");
       const scaleGizmoBtn = document.getElementById("scale-gizmo-btn");
+      const moveGizmoBtn = document.getElementById("move-gizmo-btn");
       const gizmoHint = document.getElementById("gizmo-hint");
 
       // The single source of truth for "what should the preview show right
@@ -117,10 +161,41 @@
           rotateX: parseFloat(rotateXInput.value) || 0,
           rotateY: parseFloat(rotateYInput.value) || 0,
           rotateZ: parseFloat(rotateZInput.value) || 0,
+          offsetX: parseFloat(offsetXInput.value) || 0,
+          offsetY: parseFloat(offsetYInput.value) || 0,
         };
       }
+      const roundMm = (v) => Math.round(v * 100) / 100;
+      // "Center on plate": the middle of the model's outline at the middle
+      // of the plate, for whatever rotation and size it has right now.
+      function centerOnPlate() {
+        const { offsetX, offsetY } = centerOnPlateOffset(currentTransform());
+        offsetXInput.value = roundMm(offsetX);
+        offsetYInput.value = roundMm(offsetY);
+      }
+      // A model under this many mm in every direction is almost certainly
+      // in the wrong units (see #units-hint).
+      const TINY_MODEL_MM = 5;
+      const unitsHint = document.getElementById("units-hint");
+      function updateUnitsHint() {
+        const size = displayedSize();
+        const largest = size ? Math.max(size.x, size.y, size.z) : null;
+        unitsHint.hidden = !(largest !== null && largest < TINY_MODEL_MM);
+        if (!unitsHint.hidden) {
+          document.getElementById("units-hint-size").textContent = `(${largest.toFixed(1)} mm at its largest)`;
+        }
+      }
+      for (const button of unitsHint.querySelectorAll("[data-units-factor]")) {
+        button.addEventListener("click", () => {
+          const factor = parseFloat(button.dataset.unitsFactor);
+          scaleInput.value = Math.min(10000, Math.round(currentTransform().scale * factor * 100 * 100) / 100);
+          applyPreview();
+        });
+      }
+
       function applyPreview() {
         applyTransform(currentTransform());
+        updateUnitsHint();
         // applyTransform() just replaced the displayed mesh with a fresh one
         // (see preview.js) - if the on-canvas handles are currently active,
         // they'd otherwise be left pointing at a disposed mesh. Re-enabling
@@ -134,25 +209,28 @@
       // face in "snap to surface" mode. Mutually exclusive with snap mode
       // (both would otherwise fight over pointer events on the same canvas)
       // and with each other (one handle set at a time, like most 3D editors).
-      let gizmoMode = null; // null | "rotate" | "scale"
+      let gizmoMode = null; // null | "rotate" | "scale" | "translate"
 
       function onGizmoCommit(t) {
         rotateXInput.value = Math.round(t.rotateX * 100) / 100;
         rotateYInput.value = Math.round(t.rotateY * 100) / 100;
         rotateZInput.value = Math.round(t.rotateZ * 100) / 100;
         scaleInput.value = Math.round(t.scale * 100 * 100) / 100; // percent, 2dp
-        markRotationTouched(); // shared with scale-drag commit - harmless: it's actually the model being edited either way
+        offsetXInput.value = roundMm(t.offsetX);
+        offsetYInput.value = roundMm(t.offsetY);
+        // Moving doesn't change the orientation, so it doesn't count as
+        // choosing one; rotating and resizing are the model being edited.
+        if (gizmoMode !== "translate") markRotationTouched();
       }
 
       function setGizmoMode(mode) {
         gizmoMode = mode;
         rotateGizmoBtn.textContent = gizmoMode === "rotate" ? "Stop rotating (drag)" : "Rotate (drag)";
         scaleGizmoBtn.textContent = gizmoMode === "scale" ? "Stop resizing (drag)" : "Resize (drag)";
+        moveGizmoBtn.textContent = gizmoMode === "translate" ? "Stop moving (drag)" : "Move (drag)";
         gizmoHint.hidden = !gizmoMode;
         if (gizmoMode) {
-          snapMode = false;
-          snapBtn.textContent = "Snap to surface";
-          snapHint.hidden = true;
+          setSnapMode(false);
           enableGizmo(gizmoMode, currentTransform(), onGizmoCommit);
         } else {
           disableGizmo();
@@ -161,6 +239,11 @@
 
       rotateGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "rotate" ? null : "rotate"));
       scaleGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "scale" ? null : "scale"));
+      moveGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "translate" ? null : "translate"));
+      document.getElementById("center-btn").addEventListener("click", () => {
+        centerOnPlate();
+        applyPreview();
+      });
 
       // The preview loads at the model's true original size/orientation
       // first - once that finishes, apply whatever's already saved on this
@@ -169,8 +252,9 @@
       // file.
       previewUrl("/jobs/{{ job.id }}/model.stl", supportsUrl, container, info).then(() => {
         const t = currentTransform();
-        if (t.scale !== 1 || t.rotateX || t.rotateY || t.rotateZ) applyPreview();
-      });
+        if (t.scale !== 1 || t.rotateX || t.rotateY || t.rotateZ || t.offsetX || t.offsetY) applyPreview();
+        else updateUnitsHint();
+      }).finally(() => { container.style.visibility = ""; });
 
       // Live re-render as any number changes - no server round trip, same
       // "see it before you commit to it" spirit as the pre-upload preview.
@@ -188,6 +272,7 @@
         const t = currentTransform();
         const factor = autoFitScale(t.rotateX, t.rotateY, t.rotateZ);
         scaleInput.value = Math.floor(factor * 100 * 100) / 100; // round down - never end up still slightly over
+        centerOnPlate(); // the fit assumes it's centered (see autoFitScale)
         applyPreview();
       });
 
@@ -200,12 +285,32 @@
       let snapMode = false;
       let pressPos = null;
 
-      snapBtn.addEventListener("click", () => {
-        snapMode = !snapMode;
+      function setSnapMode(on) {
+        snapMode = on;
         snapBtn.textContent = snapMode ? "Cancel snap to surface" : "Snap to surface";
         snapHint.hidden = !snapMode;
+        container.style.cursor = snapMode ? "crosshair" : "";
+        if (!snapMode) clearSnapTarget();
+      }
+      snapBtn.addEventListener("click", () => {
+        setSnapMode(!snapMode);
         if (snapMode && gizmoMode) setGizmoMode(null); // mutually exclusive, see setGizmoMode above
       });
+
+      // While in snap mode, highlight the face a click would lay the model
+      // on, at most once a frame (raycasting a big model isn't free).
+      let hoverPos = null;
+      container.addEventListener("pointermove", (e) => {
+        if (!snapMode || e.buttons) return; // not while orbiting the camera
+        const pending = hoverPos !== null;
+        hoverPos = { x: e.clientX, y: e.clientY };
+        if (pending) return;
+        requestAnimationFrame(() => {
+          if (snapMode && hoverPos) showSnapTarget(hoverPos.x, hoverPos.y);
+          hoverPos = null;
+        });
+      });
+      container.addEventListener("pointerleave", () => { hoverPos = null; clearSnapTarget(); });
 
       container.addEventListener("pointerdown", (e) => {
         pressPos = { x: e.clientX, y: e.clientY };
@@ -223,14 +328,24 @@
         rotateXInput.value = Math.round(snapped.x * 100) / 100;
         rotateYInput.value = Math.round(snapped.y * 100) / 100;
         rotateZInput.value = Math.round(snapped.z * 100) / 100;
+        // Lying the right way down, it may still point the wrong way round -
+        // a long model across the plate's short side. Turn it the least
+        // that fits it; if nothing does, it needs resizing, not turning.
+        const turn = fitTurnOnPlate(currentTransform());
+        if (turn) {
+          let z = (parseFloat(rotateZInput.value) || 0) + turn;
+          z = ((z + 180) % 360 + 360) % 360 - 180;
+          rotateZInput.value = Math.round(z * 100) / 100;
+        }
         markRotationTouched();
+        // Standing it on a new face changes its whole footprint - wherever
+        // it was moved to before means nothing now, so center it.
+        centerOnPlate();
         applyPreview();
 
         // One snap per click of the button - back to normal orbit/zoom
         // interaction immediately after, rather than staying "armed."
-        snapMode = false;
-        snapBtn.textContent = "Snap to surface";
-        snapHint.hidden = true;
+        setSnapMode(false);
       });
     </script>
 
@@ -252,18 +367,33 @@
     </select>
     <button type="submit">Save color</button>
   </form>
-  {% if filament %}
-    <p class="muted">
-      This job uses about {{ filament.required_g | round(1) }}g of filament.
-      {# enough is None (not just falsy) whenever there's no specific
-         color/tracked inventory to compare against at all - "Any
-         available" was picked, say - which must not be shown as if it
-         meant "not enough". #}
-      {% if filament.enough == false %}
-        <span class="error">Only {{ filament.available_g | round(1) }}g of
-        {{ job.color_name }} on hand, per the admin-tracked inventory
-        (best effort - may be out of date).</span>
+  {% if print_estimate or filament %}
+    {# Estimated print time (corrected - see jobs.corrected_duration_estimate_s)
+       next to the filament amount, coloured like the queue rows, so it's
+       clear before submitting whether this needs to be smaller. Updates
+       after each re-slice. #}
+    {% set time_level = print_time_level(print_estimate.seconds) if print_estimate else none %}
+    <p class="print-summary">
+      {% if print_estimate %}
+        Estimated print time: <strong>{{ print_estimate.display }}</strong>
+        {% if time_level %}<span class="time-light time-light-{{ time_level }}">{{ print_time_labels()[time_level] }}</span>{% endif %}
+        {% if filament %}<br>{% endif %}
       {% endif %}
+      {% if filament %}Filament: about <strong>{{ filament.required_g | round(1) }}g</strong>.{% endif %}
+      {% if job.status.value == 'sliced' %}
+        <br><span class="muted">Changed the size or settings? Re-slice below to update these before submitting.</span>
+      {% endif %}
+    </p>
+  {% endif %}
+  {# enough is None (not just falsy) whenever there's no specific
+     color/tracked inventory to compare against at all - "Any available"
+     was picked, say - which must not be shown as if it meant "not
+     enough". #}
+  {% if filament and filament.enough == false %}
+    <p class="muted">
+      <span class="error">Only {{ filament.available_g | round(1) }}g of
+      {{ job.color_name }} on hand, per the admin-tracked inventory
+      (best effort - may be out of date).</span>
     </p>
   {% endif %}
 
@@ -277,17 +407,35 @@
         {% endfor %}
       </select>
     </label>
+    <label><input type="checkbox" name="raft" {% if job.raft_enabled %}checked{% endif %}> Print on a raft</label>
+    <p class="muted">
+      A raft is a few layers printed under the model and a little wider
+      than it, which snap off afterwards. Use it when the model has no flat
+      bottom to sit on - for example a ball, a boat's hull or a rounded
+      base. It lifts the model off the plate onto a steady base. Turn on
+      supports too, so the curved underside is held up and keeps its shape.
+    </p>
     <label>Scale (%, keeps the model's proportions)<br>
-      <input type="number" id="scale-percent" name="scale_percent" min="1" max="1000" step="0.01"
+      <input type="number" id="scale-percent" name="scale_percent" min="1" max="10000" step="0.01"
              value="{{ (job.scale_factor * 100) | round(2) }}">
     </label>
     <button type="button" id="auto-fit-btn">Auto-resize to fit build plate</button>
+    {# Shown by the script above when the model is only a few mm across -
+       almost always a file exported in centimetres or inches rather than
+       millimetres, which the slicer reads it as. #}
+    <p id="units-hint" class="notice" hidden>
+      <strong>This model is very small</strong>
+      <span id="units-hint-size"></span> - it was probably saved in
+      centimetres or inches instead of millimetres.
+      <button type="button" data-units-factor="10">Scale &times;10 (centimetres)</button>
+      <button type="button" data-units-factor="25.4">Scale &times;25.4 (inches)</button>
+    </p>
     <button type="button" id="scale-gizmo-btn">Resize (drag)</button>
     <p class="muted">
       Rotation (degrees, applied X then Y then Z) - rotate freely, drag the
       handles on the model above ("Rotate (drag)"), or click "Snap to
-      surface" below and then click a face on the model to stand it on
-      that face.
+      surface" below and then click a face on the model (it lights up) to
+      lay it on that face.
     </p>
     <label>Rotate X<br><input type="number" id="rotate-x" name="rotate_x" step="0.01" value="{{ job.rotate_x | round(2) }}"></label>
     <label>Rotate Y<br><input type="number" id="rotate-y" name="rotate_y" step="0.01" value="{{ job.rotate_y | round(2) }}"></label>
@@ -300,6 +448,10 @@
        value on the server. Stays "0" (the server's own signal to fall
        back to the older value-only heuristic) for a plain no-JS post. #}
     <input type="hidden" id="rotation-touched" name="rotation_touched" value="0">
+    {# Where the model was moved on the plate, in mm - set by "Center on
+       plate" and "Move (drag)" under the preview (see models.Job.offset_x). #}
+    <input type="hidden" id="offset-x" name="offset_x" value="{{ job.offset_x | round(2) }}">
+    <input type="hidden" id="offset-y" name="offset_y" value="{{ job.offset_y | round(2) }}">
     {% if job.rotation_manual %}
       <label><input type="checkbox" name="auto_orient"> Let this app search
         for a working orientation automatically on this re-slice, instead
@@ -319,7 +471,7 @@
         fresh wait time once done - no separate "Submit to queue" step.
       </p>
     {% endif %}
-    <button type="submit">Re-slice</button>
+    <button type="submit">{{ "Slice with these settings" if job.status.value == 'uploaded' else "Re-slice" }}</button>
   </form>
 
   {% if job.status.value == 'sliced' %}

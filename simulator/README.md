@@ -9,7 +9,7 @@ Implements just enough of the real, reverse-engineered wire protocol
 (see `app/printer.py`'s own module docstring for the full writeup) to
 drive the app's actual client code through its real paths: the plaintext
 HTTP `/auth` pairing dance, and the TCP JSON-RPC socket for handshake,
-authenticate, uploading a print, live status polling
+authenticate, uploading a print, cancelling it (`cancel`), live status polling
 (`get_system_information`), and the camera stream. **Not** a
 protocol-accurate firmware clone - real return values and the full space
 of real error conditions aren't reproduced, only the shapes the app

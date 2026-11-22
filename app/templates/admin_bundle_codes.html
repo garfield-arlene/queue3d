@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Support bundle codes - queue3d{% endblock %}
+{% block nav %}
+  <a href="/admin/dashboard">&laquo; Queue</a>
+  <a href="/admin/users">Users</a>
+  <a href="/admin/admins">Admins</a>
+  <a href="/admin/colors">Colors</a>
+  <a href="/admin/jobs/finished">Finished jobs</a>
+  <a href="/admin/jobs/old">Old jobs</a>
+  <a href="/admin/log">Activity log</a>
+  <a href="/admin/settings">Settings</a>
+  <a href="/admin/system">System</a>
+  <a href="/admin/backups">Backups</a>
+  <a href="/admin/feedback">Feedback</a>
+  <a href="/admin/help#admin-queue">Help</a>
+  <form method="post" action="/admin/logout"><button type="submit">Log out</button></form>
+{% endblock %}
+{% block content %}
+  <h2>Support bundle codes</h2>
+  <p class="muted">
+    A support bundle doesn't contain anyone's name: each user and admin
+    appears as one of these codes, the same in every bundle from this
+    site. This list exists only here, on the Pi - use it to find who a
+    code in a bundle refers to. Model filenames are replaced the same
+    way; find a model by its job number instead.
+  </p>
+  {% if rows %}
+    <table>
+      <tr><th>Code</th><th>Account</th><th>Type</th></tr>
+      {% for row in rows %}
+        <tr><td><code>{{ row.code }}</code></td><td>{{ row.name }}</td><td>{{ row.kind }}</td></tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">No accounts yet.</p>
+  {% endif %}
+{% endblock %}

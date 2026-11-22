@@ -413,6 +413,12 @@
     }
     header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2rem; }
     header a { text-decoration: none; }
+    /* Basic keeps the nav as a top row; the admin pages have a dozen
+       links, which squeezed into the 720px column until multi-word ones
+       ("Finished jobs") broke mid-link and overlapped their neighbours.
+       Wrapped onto a second row instead, each link kept whole. */
+    [data-theme="default"] header { flex-wrap: wrap; column-gap: 0.9rem; row-gap: 0.3rem; }
+    [data-theme="default"] header a { white-space: nowrap; }
     h1 { font-size: 1.25rem; }
     /* The app logo + "queue3d" title as one unit (see the <svg> markup's
        own comment below for why the logo itself is inline rather than a
@@ -445,6 +451,29 @@
     button { font-size: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
     .error { color: var(--error); }
     .muted { opacity: 0.7; font-size: 0.9rem; }
+    /* Print-time stoplight: the whole row's background is the colour
+       code, readable at a glance (legend: _time_legend.html; badge under
+       the status: _time_light.html). Fixed colours, the same on every
+       theme - green/yellow/red has to mean the same thing everywhere.
+       Strong but translucent, so they read on light and dark themes
+       alike. !important and opacity: 1 because themes style table cells
+       and .muted cells are drawn at reduced opacity, which faded the
+       colour in those columns. */
+    tr.time-row > td { opacity: 1 !important; }
+    tr.time-row-good > td { background: rgba(30, 160, 70, 0.38) !important; }
+    tr.time-row-ask > td { background: rgba(240, 180, 0, 0.45) !important; }
+    tr.time-row-long > td { background: rgba(225, 45, 35, 0.38) !important; }
+    tr.time-row-good > td:first-child { box-shadow: inset 8px 0 0 #1e8e3e; }
+    tr.time-row-ask > td:first-child { box-shadow: inset 8px 0 0 #d99a00; }
+    tr.time-row-long > td:first-child { box-shadow: inset 8px 0 0 #c5221f; }
+    .time-light { display: inline-block; margin-top: 0.3rem; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; color: #fff; }
+    .time-light-good { background: #1e8e3e; }
+    .time-light-ask { background: #b07d00; }
+    .time-light-long { background: #c5221f; }
+    .time-legend { margin: 0.5rem 0; }
+    .print-summary { font-size: 1.05rem; }
+    .print-summary .time-light { margin: 0 0 0 0.35rem; }
+    .time-legend .time-light { margin: 0 0.25rem 0 0; }
     /* The school logo and its surrounding centered layout on the two
        login pages (admin_login.html, user_login.html) - a plain rule,
        not theme-gated like .bmms-logo above, since it's meant to show
@@ -499,7 +528,9 @@
     form.filters input, form.filters select { font-size: 0.9rem; padding: 0.3rem 0.4rem; }
     table { border-collapse: collapse; width: 100%; }
     th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
-    .preview-container { width: 100%; max-width: 500px; height: 350px; border: 1px solid var(--border-strong); touch-action: none; }
+    .preview-container { position: relative; width: 100%; max-width: 500px; height: 350px; border: 1px solid var(--border-strong); touch-action: none; }
+    /* preview.js's size-reference toggle, in the preview's top corner. */
+    .preview-container .size-reference-btn { position: absolute; top: 0.4rem; right: 0.4rem; font-size: 0.8rem; padding: 0.2rem 0.5rem; opacity: 0.9; }
     .preview-info { font-size: 0.85rem; opacity: 0.8; margin-top: 0.25rem; }
     footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.8rem; opacity: 0.6; }
     progress { vertical-align: middle; margin-left: 0.5rem; }

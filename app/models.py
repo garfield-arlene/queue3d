@@ -172,6 +172,10 @@ class JobStatus(str, enum.Enum):
     job can be on the printer at a time.
     """
 
+    # One model of several from a zip upload, saved but not sliced: the
+    # user chooses which to slice (and in what order) or delete - a zip
+    # often holds the same model twice, or a part and the whole.
+    uploaded = "uploaded"
     submitted = "submitted"
     sliced = "sliced"
     slice_failed = "slice_failed"
@@ -190,12 +194,12 @@ class JobStatus(str, enum.Enum):
 # construction instead of needing their own separate allow-lists that can
 # quietly drift out of sync with a status added later.
 #
-# DRAFT: sliced (or slicing, or failed to) but never submitted - exists
+# DRAFT: uploaded, sliced (or slicing, or failed to) but never submitted - exists
 # only for its own user; the admin queue view must never show these.
 # QUEUE: actually in the shared queue, admin-visible and actionable.
 # TERMINAL: nothing more will ever happen to it; files live in archive/,
 # never queue/ or scratch/ (see storage.py).
-DRAFT_STATUSES = {JobStatus.submitted, JobStatus.sliced, JobStatus.slice_failed}
+DRAFT_STATUSES = {JobStatus.uploaded, JobStatus.submitted, JobStatus.sliced, JobStatus.slice_failed}
 QUEUE_STATUSES = {JobStatus.queued, JobStatus.approved, JobStatus.printing}
 TERMINAL_STATUSES = {JobStatus.rejected, JobStatus.done, JobStatus.failed, JobStatus.expired}
 
@@ -256,6 +260,13 @@ class Settings(SQLModel, table=True):
     # by network), but kept admin-configurable alongside the host rather
     # than a separate, inconsistent mechanism just for this one field.
     printer_port: int = Field(default=9999)
+    # The print-time "stoplight" on queue rows (see templates_env.
+    # print_time_level): green under print_time_good_hours, yellow up to
+    # print_time_ask_hours, red past that. Measured against the corrected
+    # estimate (jobs.corrected_duration_estimate_s). Defaults are what a
+    # site admin first asked for, sized to a school lunch period.
+    print_time_good_hours: float = Field(default=2.0)
+    print_time_ask_hours: float = Field(default=3.0)
 
 
 class Color(SQLModel, table=True):
@@ -363,7 +374,7 @@ class Job(SQLModel, table=True):
     # True once a human has ever deliberately set this job's rotation -
     # typing a value, drag-rotating, or Snap to surface - as opposed to
     # whatever a fresh upload's own automatic rotation-retry sweep left it
-    # at (see jobs.AUTO_ROTATE_CANDIDATES). Sticky for the rest of this
+    # at (see jobs.rotation_candidates_for). Sticky for the rest of this
     # job's life once set: a re-slice that doesn't touch rotation at all
     # (toggling supports, say) still must not silently sweep away an
     # orientation someone already chose on purpose, even across a page
@@ -372,6 +383,19 @@ class Job(SQLModel, table=True):
     # this persistent flag exists to fix, and job_edit.html's "auto_orient"
     # checkbox for the one explicit way back to automatic search.
     rotation_manual: bool = Field(default=False)
+    # Where on the plate the model sits, in mm, moved from where it's placed
+    # by default (its centroid at the middle of the plate - see
+    # slicing/stl_to_3mf.center_vertices). Set on the edit page with "Center
+    # on plate" or by dragging it (job_edit.html, preview.js); applied after
+    # rotation and scale, the same way in the preview and the slicer.
+    offset_x: float = Field(default=0.0)
+    offset_y: float = Field(default=0.0)
+    # Printed on a raft: a few removable layers under the model, wider than
+    # it, so a model with no flat bottom (a ship's round hull) sits up off
+    # the plate on a steady base, with supports filling in under its curve
+    # instead of the first layer squashing it flat. See slicing/slice.py's
+    # RAFT_LAYERS.
+    raft_enabled: bool = Field(default=False)
 
     # When this row was created (upload time) - NOT when it joined the
     # queue, which may be much later or never (see queued_at below). Used
@@ -422,6 +446,12 @@ class Job(SQLModel, table=True):
     # feature exists at all), in which case that wall-clock figure
     # remains the fallback, not dead code.
     actual_duration_s: float | None = Field(default=None)
+    # The job this draft was copied from by "Restore & edit" / "Fix and
+    # resubmit" (jobs.restore_job), so its edit page can repeat why that
+    # one was rejected or failed - the student is fixing exactly that.
+    # Not a foreign key: the source job can be deleted afterwards, and
+    # the edit page just stops showing the note then.
+    restored_from_job_id: int | None = Field(default=None)
     # Why a 'failed' job failed - shown to the submitter, not just an
     # admin (see jobs.mark_finished). Always set automatically when the
     # background poller detects the failure itself ("cancelled at the

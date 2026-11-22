@@ -17,7 +17,7 @@ from auth import (
     verify_secret,
 )
 from db import get_session
-from feedback import create_feedback, list_feedback
+from feedback import FUTURE_OCCURRED_AT_ERROR, create_feedback, list_feedback, occurred_at_is_future
 from filters import filtered_redirect, job_filter_params, job_filters_from_query_params
 from jobs import (
     JobActionError,
@@ -34,6 +34,7 @@ from jobs import (
     reprint_job,
     restore_job,
     slice_and_update,
+    start_chosen_slice,
     start_reslice,
     submit_draft,
 )
@@ -41,6 +42,7 @@ from mesh import convert_3mf_to_stl, convert_obj_to_stl
 from mesh_repair import repair_stl_bytes
 from models import DRAFT_STATUSES, Color, Job, JobStatus, User
 from storage import MAX_UPLOAD_BYTES, MAX_ZIP_MODEL_FILES, scratch_stl_path
+from slice_queue import describe as slice_progress
 from templates_env import templates
 from themes import DEFAULT_MODE, MODES, effective_theme, is_theme_selectable, is_valid_mode, is_valid_theme, theme_choices
 
@@ -342,6 +344,8 @@ def submit_feedback(
     job = None
     if not description:
         error = "Describe what you were doing and what went wrong before submitting."
+    elif occurred_at_is_future(occurred_at):
+        error = FUTURE_OCCURRED_AT_ERROR
     elif job_id:
         job = session.get(Job, int(job_id))
         if job is None or job.user_id != user.id:
@@ -535,6 +539,7 @@ def _create_job_from_model(
     enable_supports: bool,
     support_style: str | None,
     color_name: str | None,
+    slice_now: bool = True,
 ) -> Job:
     """The actual job-creation body shared by a plain upload and each file
     extracted from a zip - `filename` is always what's shown as
@@ -545,11 +550,14 @@ def _create_job_from_model(
     color_name doesn't flow into slice_and_update below at all, unlike
     enable_supports/support_style - it has zero effect on the actual
     slice (see models.Job.color_name), so it's just set directly here,
-    not threaded through the background slicing task."""
+    not threaded through the background slicing task.
+
+    slice_now=False saves the model as 'uploaded' without slicing it - see
+    upload()'s zip handling."""
     job = Job(
         user_id=user.id,
         original_filename=filename,
-        status=JobStatus.submitted,
+        status=JobStatus.submitted if slice_now else JobStatus.uploaded,
         supports_enabled=enable_supports,
         support_style=support_style if enable_supports else None,
         color_name=color_name,
@@ -562,8 +570,10 @@ def _create_job_from_model(
     stl_path.write_bytes(stl_bytes)
     job.stl_path = str(stl_path)
     session.add(job)
-    log_event(session, job.id, f"user:{user.name}", "submitted", detail=filename)
+    log_event(session, job.id, f"user:{user.name}", "submitted" if slice_now else "uploaded", detail=filename)
     session.commit()
+    if not slice_now:
+        return job
 
     # Slicing (OrcaSlicer + mbotmake, both real subprocesses) can take
     # minutes for a large or support-dense model - returning now instead of
@@ -664,18 +674,27 @@ def upload(
             return fail(str(e))
         if not entries:
             return fail("No .stl, .obj, or .3mf files found in that zip.")
-        created = 0
+        converted = []
         skipped = []
         for entry_name, entry_data in entries:
             try:
-                stl_bytes = _stl_bytes_from_upload(entry_name, entry_data)
+                converted.append((entry_name, _stl_bytes_from_upload(entry_name, entry_data)))
             except ValueError as e:
                 skipped.append(f"{entry_name} ({e})")
-                continue
+        # One usable model slices straight away, like a plain upload.
+        # Several are saved unsliced ('uploaded') for the user to choose
+        # from: a zip often holds the same model twice (an .stl and a
+        # .3mf), or one part and the whole thing, and slicing every file
+        # - one at a time on the Pi - would spend minutes on ones nobody
+        # wants. The user slices the ones they want, in the order they
+        # want, and deletes the rest (see _jobs_table.html).
+        slice_now = len(converted) == 1
+        for entry_name, stl_bytes in converted:
             _create_job_from_model(
-                session, background_tasks, user, entry_name, stl_bytes, enable_supports, style, color_name
+                session, background_tasks, user, entry_name, stl_bytes, enable_supports, style, color_name,
+                slice_now=slice_now,
             )
-            created += 1
+        created = len(converted)
         if created == 0:
             return fail("Couldn't use any files in that zip: " + "; ".join(skipped))
         if skipped:
@@ -739,8 +758,55 @@ def edit_draft(
             "flash_error": flash_error,
             "colors": _colors_for_job(session, job),
             "filament": filament_status(session, job),
+            "print_estimate": _print_estimate(session, job),
+            "sent_back": _sent_back_reason(session, job),
         },
     )
+
+
+@router.get("/jobs/{job_id}/slice-status")
+def slice_status(
+    job_id: int,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """What the edit page polls while a job is slicing: its status and the
+    slicer's current note (waiting its turn, or which orientation it's
+    trying). The page reloads only once the status changes."""
+    job = _owned_job(session, user, job_id)
+    note = slice_progress(job.id) if job.status == JobStatus.submitted else None
+    return {"status": job.status.value, "note": note}
+
+
+def _print_estimate(session: Session, job: Job) -> dict | None:
+    """The corrected print-time estimate for the edit page - shown with
+    the filament amount so a student can tell whether to keep editing
+    (scale it down, say) before submitting. Only for a job whose sliced
+    file matches its current settings: while it's re-slicing, or after a
+    failed slice, the old number would be misleading."""
+    if job.status not in (JobStatus.sliced, JobStatus.queued, JobStatus.approved):
+        return None
+    seconds = corrected_duration_estimate_s(session, job)
+    if not seconds:
+        return None
+    return {"seconds": seconds, "display": format_duration(seconds)}
+
+
+def _sent_back_reason(session: Session, job: Job) -> dict | None:
+    """For a draft made by "Fix and resubmit": the job it was copied from
+    and the admin's reason that one was rejected or failed, so the edit
+    page can repeat what to change. None for anything else, or once the
+    source job is gone."""
+    if job.restored_from_job_id is None:
+        return None
+    source = session.get(Job, job.restored_from_job_id)
+    if source is None or source.user_id != job.user_id:
+        return None
+    if source.status == JobStatus.rejected and source.admin_note:
+        return {"job": source, "verb": "rejected", "reason": source.admin_note}
+    if source.status == JobStatus.failed and source.failure_reason:
+        return {"job": source, "verb": "print failed", "reason": source.failure_reason}
+    return None
 
 
 @router.post("/jobs/{job_id}/color")
@@ -790,6 +856,9 @@ def reslice(
     rotate_z: float = Form(0.0),
     rotation_touched: bool = Form(False),
     auto_orient: bool = Form(False),
+    offset_x: float = Form(0.0),
+    offset_y: float = Form(0.0),
+    raft: bool = Form(False),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
@@ -811,6 +880,9 @@ def reslice(
     the edit page actually shows/lets someone type (see job_edit.html).
     rotate_x/y/z are already in degrees, applied in that order - see
     models.Job.rotate_x's own docstring for why the order matters.
+    offset_x/offset_y: mm the model was moved on the plate ("Center on
+    plate" or Move (drag) - see models.Job.offset_x). raft: print it on a
+    raft (models.Job.raft_enabled).
 
     rotation_touched is job_edit.html's own hidden field, set to true by
     its JS the moment any rotation control (typed value, drag-rotate, or
@@ -841,6 +913,9 @@ def reslice(
             rotate_z,
             rotation_touched,
             auto_orient,
+            offset_x,
+            offset_y,
+            raft,
         )
     except JobActionError as e:
         request.session["flash_error"] = str(e)
@@ -891,6 +966,59 @@ def submit(
         submit_draft(session, job)
     except JobActionError as e:
         request.session["flash_error"] = str(e)
+    return filtered_redirect("/dashboard", request, _still_has_rows(session, user, filters))
+
+
+def _queue_chosen_slice(session: Session, background_tasks: BackgroundTasks, job: Job) -> None:
+    stl_path = start_chosen_slice(session, job)
+    background_tasks.add_task(
+        slice_and_update,
+        job.id,
+        stl_path,
+        job.supports_enabled,
+        job.support_style if job.supports_enabled else None,
+        scale_factor=job.scale_factor,
+        rotate_x=job.rotate_x,
+        rotate_y=job.rotate_y,
+        rotate_z=job.rotate_z,
+    )
+
+
+@router.post("/jobs/{job_id}/slice")
+def slice_uploaded(
+    job_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Slices one model saved unsliced from a zip (see upload()) with the
+    settings it was uploaded with. The edit page's "Slice with these
+    settings" does the same after changing them first."""
+    job = _owned_job(session, user, job_id)
+    filters = job_filters_from_query_params(request.query_params)
+    try:
+        _queue_chosen_slice(session, background_tasks, job)
+    except JobActionError as e:
+        request.session["flash_error"] = str(e)
+    return filtered_redirect("/dashboard", request, _still_has_rows(session, user, filters))
+
+
+@router.post("/jobs/slice-all")
+def slice_all_uploaded(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Slices every model this user still has waiting unsliced, in upload
+    order - for a zip whose files are all wanted."""
+    waiting = session.exec(
+        select(Job).where(Job.user_id == user.id, Job.status == JobStatus.uploaded).order_by(Job.id)
+    ).all()
+    for job in waiting:
+        _queue_chosen_slice(session, background_tasks, job)
+    filters = job_filters_from_query_params(request.query_params)
     return filtered_redirect("/dashboard", request, _still_has_rows(session, user, filters))
 
 
