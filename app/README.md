@@ -4258,6 +4258,21 @@ wrench laid on its side is 266 mm long and lay across the plate's 195 mm
 depth; it's now turned -62°, 237 x 136 mm with about 57 mm to spare each
 way, and slices there.
 
+### Size reference: a coin and a bill
+
+The preview's camera frames the model and plate together, so on its own
+it's hard to tell a 3 cm print from a 30 cm one. A **Show coin & bill**
+button in the top corner of every 3D preview (the upload form, the edit
+page and View 3D - it's added by `preview.js` itself) puts a US quarter
+(24.26 mm across, 1.75 mm thick) and a dollar bill (155.96 x 66.29 mm)
+on the plate, side by side just in front of the model's front-left
+corner. They're objects in the same scene, so they zoom and turn with
+the model, and they follow it when it's moved or reoriented. They're
+silver and green with their size printed on top, unlike the model
+(blue, red when it doesn't fit) or the Snap to surface highlight
+(amber), and they're never part of what's sliced. Whether they're shown
+is remembered per browser (`localStorage`, `queue3d.sizeReference`).
+
 ### A real silently-overridden-orientation incident
 
 **What happened:** a model sliced lying on its side by default; the

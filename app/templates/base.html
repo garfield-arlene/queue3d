@@ -522,7 +522,9 @@
     form.filters input, form.filters select { font-size: 0.9rem; padding: 0.3rem 0.4rem; }
     table { border-collapse: collapse; width: 100%; }
     th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
-    .preview-container { width: 100%; max-width: 500px; height: 350px; border: 1px solid var(--border-strong); touch-action: none; }
+    .preview-container { position: relative; width: 100%; max-width: 500px; height: 350px; border: 1px solid var(--border-strong); touch-action: none; }
+    /* preview.js's size-reference toggle, in the preview's top corner. */
+    .preview-container .size-reference-btn { position: absolute; top: 0.4rem; right: 0.4rem; font-size: 0.8rem; padding: 0.2rem 0.5rem; opacity: 0.9; }
     .preview-info { font-size: 0.85rem; opacity: 0.8; margin-top: 0.25rem; }
     footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.8rem; opacity: 0.6; }
     progress { vertical-align: middle; margin-left: 0.5rem; }
