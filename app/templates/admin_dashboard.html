@@ -50,9 +50,14 @@
     <p class="error">
       <a href="/admin/jobs/{{ untracked_print.job.id }}/log">Job #{{ untracked_print.job.id }}</a>
       ("{{ untracked_print.job.original_filename }}") is marked {{ untracked_print.job.status.value }} here, but
-      the printer is still printing it. Marking a job here doesn't stop the printer - cancel it on the
-      printer's own screen. Releasing another job is blocked until it stops.
+      the printer is still printing it. Marking a job here doesn't stop the printer. Releasing another
+      job is blocked until it stops.
     </p>
+    <form method="post" action="/admin/printer/cancel"
+          onsubmit="return confirm('Stop the print on the printer now? This can\'t be undone.')">
+      <button type="submit">Stop it on the printer</button>
+      <span class="muted">or cancel it on the printer's own screen.</span>
+    </form>
   {% elif untracked_print %}
     <p class="error">
       The printer itself reports it's actively printing

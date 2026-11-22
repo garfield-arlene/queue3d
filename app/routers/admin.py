@@ -42,6 +42,8 @@ from filters import (
 from jobs import (
     JobActionError,
     _admin_actor,
+    cancel_printing_job,
+    cancel_still_running_print,
     active_jobs,
     all_events,
     approve,
@@ -500,6 +502,34 @@ def mark_failed_job(
     session: Session = Depends(get_session),
 ):
     return _perform_action(request, session, admin, job_id, mark_finished, admin, False, reason)
+
+
+@router.post("/jobs/{job_id}/cancel")
+def cancel_print_job(
+    request: Request,
+    job_id: int,
+    reason: str = Form(...),
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Stops the print on the printer and records the job as failed -
+    see jobs.cancel_printing_job."""
+    return _perform_action(request, session, admin, job_id, cancel_printing_job, admin, reason)
+
+
+@router.post("/printer/cancel")
+def cancel_still_running(
+    request: Request,
+    admin: Admin = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """The "still printing" banner's Stop button - see
+    jobs.cancel_still_running_print."""
+    try:
+        cancel_still_running_print(session, admin)
+    except JobActionError as e:
+        return templates.TemplateResponse(request, "admin_dashboard.html", _dashboard_context(session, admin, str(e)))
+    return RedirectResponse("/admin/dashboard", status_code=303)
 
 
 def _old_jobs_context(session: Session, admin: Admin, action_error: str | None = None, filters: dict | None = None):

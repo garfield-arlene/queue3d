@@ -28,10 +28,19 @@ const BED_RADIUS_MM = Math.max(BED_WIDTH_MM, BED_DEPTH_MM, BED_HEIGHT_MM);
 // in the wrong units can be ~1 mm across and need that much.
 const MIN_SCALE = 0.01;
 const MAX_SCALE = 100.0;
+// jobs.MAX_OFFSET_MM - how far from the middle of the plate a model can be moved.
+const MAX_OFFSET_MM = 295;
+// How far inside the plate's edges "Auto-resize to fit build plate" stops.
+const FIT_MARGIN_MM = 0.5;
 
 const loader = new STLLoader();
 let scene, camera, renderer, controls, container, infoEl;
 let currentMesh = null;
+// Where currentMesh sits: the middle of the placed model's outline, on the
+// plate. Its geometry is stored relative to that point, so the on-canvas
+// handles appear on the model itself rather than at the middle of the
+// plate - see renderGeometry.
+const meshHome = new THREE.Vector3();
 let currentSupports = null;
 let resizeObserver = null;
 // The model exactly as loaded/parsed, before any scaling - kept around so
@@ -55,7 +64,7 @@ let displayedSizeMm = null;
 // to job_edit.html's input fields - the caller hands it in via
 // enableGizmo() and reads the result back out via the onCommit callback.
 let transformControls = null;
-let gizmoBaseline = { rotateX: 0, rotateY: 0, rotateZ: 0, scale: 1 };
+let gizmoBaseline = { rotateX: 0, rotateY: 0, rotateZ: 0, scale: 1, offsetX: 0, offsetY: 0 };
 let gizmoOnCommit = null;
 
 function initScene(containerEl) {
@@ -306,9 +315,11 @@ function centroidXY(geometry) {
  * Renders `geometry` (already scaled by the caller, if at all) - the
  * shared body behind both showModel() (a fresh load) and
  * setPreviewScale() (re-rendering the same raw model at a new scale,
- * with no re-fetch/re-parse needed).
+ * with no re-fetch/re-parse needed). `offset` ({x, y}, mm) moves it on
+ * the plate after centering - models.Job.offset_x/offset_y, applied
+ * the same way by slicing/stl_to_3mf.build_3mf.
  */
-function renderGeometry(geometry) {
+function renderGeometry(geometry, offset = { x: 0, y: 0 }) {
     if (currentMesh) {
         scene.remove(currentMesh);
         currentMesh.geometry.dispose();
@@ -351,7 +362,7 @@ function renderGeometry(geometry) {
     // against a real model that failed exactly that way before this
     // changed.
     const centroid = centroidXY(geometry);
-    geometry.translate(-centroid.x, -centroid.y, -box.min.z);
+    geometry.translate(-centroid.x + (offset.x || 0), -centroid.y + (offset.y || 0), -box.min.z);
 
     // Whether it actually fits has to be checked against this final,
     // already-centered placement - not the raw pre-translate size
@@ -378,7 +389,13 @@ function renderGeometry(geometry) {
         shininess: 40,
     });
 
+    // Stored relative to the middle of its outline and positioned there,
+    // so the move/rotate/resize handles sit on the model. Rotation and
+    // scale stay baked into the vertices; only this translation isn't.
+    meshHome.set((placedBox.min.x + placedBox.max.x) / 2, (placedBox.min.y + placedBox.max.y) / 2, 0);
+    geometry.translate(-meshHome.x, -meshHome.y, 0);
     currentMesh = new THREE.Mesh(geometry, material);
+    currentMesh.position.copy(meshHome);
     scene.add(currentMesh);
 
     // Frame the camera around the model AND the bed together, holding a
@@ -431,9 +448,16 @@ function renderGeometry(geometry) {
         // "doesn't fit," not "too large" - an asymmetric model can be
         // small enough overall but still hang off one edge once centered
         // on its actual surface centroid (see the comment above).
-        infoEl.textContent = overBuildVolume
-            ? `${dims} - doesn't fit the build plate (${BED_WIDTH_MM} x ${BED_DEPTH_MM} x ${BED_HEIGHT_MM} mm)`
-            : dims;
+        // Small enough for the plate but placed so part of it hangs off -
+        // moving it fixes that, which is a much smaller change than
+        // shrinking or rotating it.
+        const onlyPlacement = overBuildVolume &&
+            size.x <= BED_WIDTH_MM && size.y <= BED_DEPTH_MM && size.z <= BED_HEIGHT_MM;
+        infoEl.textContent = !overBuildVolume
+            ? dims
+            : onlyPlacement
+                ? `${dims} - hangs off the edge of the build plate. Click "Center on plate" to move it back on.`
+                : `${dims} - doesn't fit the build plate (${BED_WIDTH_MM} x ${BED_DEPTH_MM} x ${BED_HEIGHT_MM} mm)`;
         infoEl.classList.toggle("error", overBuildVolume);
     }
 }
@@ -463,14 +487,40 @@ function showModel(geometry) {
  * proportions can never distort, per the user ("resize... while
  * maintaining the aspect ratio").
  */
-export function applyTransform({ scale = 1, rotateX = 0, rotateY = 0, rotateZ = 0 } = {}) {
+export function applyTransform({ scale = 1, rotateX = 0, rotateY = 0, rotateZ = 0, offsetX = 0, offsetY = 0 } = {}) {
     if (!rawGeometry) return;
+    renderGeometry(transformedGeometry({ scale, rotateX, rotateY, rotateZ }), { x: offsetX, y: offsetY });
+}
+
+/** A rotated and scaled copy of the raw model, not yet placed. */
+function transformedGeometry({ scale = 1, rotateX = 0, rotateY = 0, rotateZ = 0 } = {}) {
     const geometry = rawGeometry.clone();
     if (rotateX) geometry.rotateX(THREE.MathUtils.degToRad(rotateX));
     if (rotateY) geometry.rotateY(THREE.MathUtils.degToRad(rotateY));
     if (rotateZ) geometry.rotateZ(THREE.MathUtils.degToRad(rotateZ));
     if (scale !== 1) geometry.scale(scale, scale, scale);
-    renderGeometry(geometry);
+    return geometry;
+}
+
+/**
+ * "Center on plate": the {offsetX, offsetY} (mm) that puts the middle of
+ * the model's outline at the middle of the plate, for this rotation and
+ * scale. The default placement centers its centroid instead (see
+ * renderGeometry), which for a lopsided model - a wrench with a solid
+ * head and a thin handle - leaves one end hanging off the plate even
+ * when the whole model is shorter than the plate. {0, 0} if nothing's
+ * loaded.
+ */
+export function centerOnPlateOffset(transform = {}) {
+    if (!rawGeometry) return { offsetX: 0, offsetY: 0 };
+    const geometry = transformedGeometry(transform);
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox;
+    const centroid = centroidXY(geometry);
+    const offsetX = centroid.x - (box.min.x + box.max.x) / 2;
+    const offsetY = centroid.y - (box.min.y + box.max.y) / 2;
+    if (![offsetX, offsetY].every(Number.isFinite)) return { offsetX: 0, offsetY: 0 };
+    return { offsetX, offsetY };
 }
 
 /**
@@ -478,7 +528,7 @@ export function applyTransform({ scale = 1, rotateX = 0, rotateY = 0, rotateZ = 
  * event, i.e. the handle was released - not fired for a mere hover/click
  * that never actually dragged anything). `transformControls.object` is
  * whatever Mesh enableGizmo() last attached to; because that mesh's own
- * Object3D transform always starts at identity (see renderGeometry - every
+ * Object3D rotation and scale always start at identity (see renderGeometry - every
  * (re)render creates a fresh Mesh with default position/quaternion/scale,
  * all real transform baked directly into vertex data instead), its
  * quaternion/scale *after* a drag session is exactly that session's delta,
@@ -487,7 +537,7 @@ export function applyTransform({ scale = 1, rotateX = 0, rotateY = 0, rotateZ = 
  * confirmed 'ZYX' intrinsic-Euler equivalence for the rotation half of it.
  *
  * Re-bakes the result via applyTransform() (replacing currentMesh with a
- * fresh, identity-transform one, same as every other transform change in
+ * fresh one, same as every other transform change in
  * this file) and re-attaches the gizmo to that new mesh - without this,
  * the gizmo would keep pointing at a mesh renderGeometry has already
  * disposed, and the next drag would silently do nothing.
@@ -530,11 +580,18 @@ function commitGizmoTransform() {
     if (!Number.isFinite(scale) || scale <= 0) scale = gizmoBaseline.scale;
     scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 
+    // A move drag shows up as the mesh's own position - its distance
+    // from meshHome is this drag's delta, added to where the model
+    // already was. Clamped to
+    // jobs.MAX_OFFSET_MM, the same bound the server enforces.
+    const clampOffset = (v) => Math.min(MAX_OFFSET_MM, Math.max(-MAX_OFFSET_MM, Number.isFinite(v) ? v : 0));
     const newTransform = {
         rotateX: THREE.MathUtils.radToDeg(resultEuler.x),
         rotateY: THREE.MathUtils.radToDeg(resultEuler.y),
         rotateZ: THREE.MathUtils.radToDeg(resultEuler.z),
         scale,
+        offsetX: clampOffset(gizmoBaseline.offsetX + obj.position.x - meshHome.x),
+        offsetY: clampOffset(gizmoBaseline.offsetY + obj.position.y - meshHome.y),
     };
     gizmoBaseline = newTransform;
     applyTransform(newTransform);
@@ -544,11 +601,11 @@ function commitGizmoTransform() {
 }
 
 /**
- * Turns on the on-canvas rotate/resize handles in `mode` ('rotate' or
- * 'scale'), starting from `baseline` (the transform the model is
+ * Turns on the on-canvas rotate/resize/move handles in `mode` ('rotate',
+ * 'scale' or 'translate'), starting from `baseline` (the transform the model is
  * currently displayed at - typically the caller's own number-field
  * values) and calling `onCommit(newTransform)` once per completed drag
- * with the new absolute {rotateX, rotateY, rotateZ, scale}. The caller
+ * with the new absolute {rotateX, rotateY, rotateZ, scale, offsetX, offsetY}. The caller
  * (job_edit.html) is expected to write those straight back into its own
  * number fields - the gizmo and the fields are two views onto the same
  * state, kept in sync through this callback rather than the gizmo owning
@@ -566,10 +623,15 @@ export function enableGizmo(mode, baseline, onCommit) {
         rotateY: baseline.rotateY || 0,
         rotateZ: baseline.rotateZ || 0,
         scale: baseline.scale || 1,
+        offsetX: baseline.offsetX || 0,
+        offsetY: baseline.offsetY || 0,
     };
     gizmoOnCommit = onCommit || null;
     transformControls.attach(currentMesh);
     transformControls.mode = mode;
+    // Moving is across the plate only - lifting it off or pushing it
+    // through the plate isn't a placement the slicer can use.
+    transformControls.showZ = mode !== "translate";
     transformControls.enabled = true;
     transformControls.visible = true;
 }
@@ -584,31 +646,18 @@ export function disableGizmo() {
 }
 
 /**
- * The largest scale factor (capped at 1 - this only ever shrinks, never
- * grows a model that already fits) that would bring the model within
- * the build plate on all three axes once actually placed the same way
- * renderGeometry() places it, *at the given rotation* - rotating
- * changes the footprint, so a model already reoriented (by hand, or via
- * "snap to surface") needs auto-fit computed against that orientation's
- * actual geometry, not the as-uploaded one. Returns 1 if nothing's
- * loaded, or if it already fits.
+ * The largest scale factor that fits the model on the build plate on all
+ * three axes *at the given rotation* - rotating changes the footprint, so
+ * a model already reoriented (by hand, or via "snap to surface") needs
+ * auto-fit computed against that orientation's actual geometry, not the
+ * as-uploaded one. Returns 1 if nothing's loaded.
  *
- * X/Y are NOT simply "does the bounding box span fit the bed" - the
- * model gets centered on its area-weighted surface centroid at
- * render/slice time (see renderGeometry() and
- * slicing/stl_to_3mf.center_vertices()), which for a lopsided model can
- * sit well off the bounding-box middle. A real fighter-jet model
- * demonstrated exactly this failure: shrunk to fit its own total X/Y
- * span, it still hung ~29mm off one edge of the bed once centered on its
- * actual centroid, because that centroid put ~127mm of the model on one
- * side and only ~68mm on the other - a span-based fit check has no way
- * to see that asymmetry. The real per-axis constraint is the *larger*
- * of the two centroid-relative half-extents (not half the total span),
- * checked against each axis's own bed half-width - which is exactly
- * what this computes. This reduces to the old, simpler span-based
- * formula automatically for any roughly-symmetric model (where the
- * centroid already sits at the bounding-box middle), so nothing changes
- * for the common case - only the asymmetric one this was blind to.
+ * Assumes the model is centered on the plate by its outline (see
+ * centerOnPlateOffset) - job_edit.html's "Auto-resize to fit build plate"
+ * centers it along with the resize. Fitting against the default centroid
+ * placement instead left a lopsided model (a fighter jet: ~127mm of it on
+ * one side of its centroid, ~68mm on the other) much smaller than the
+ * plate allowed.
  */
 /** The displayed model's size in mm ({x, y, z}, after the current
  * rotation and scale), or null if nothing's loaded. */
@@ -628,10 +677,13 @@ export function autoFitScale(rotateX = 0, rotateY = 0, rotateZ = 0) {
     box.getSize(size);
     if (![size.x, size.y, size.z].every(Number.isFinite)) return 1;
 
-    const centroid = centroidXY(geometry);
-    const halfExtentX = Math.max(Math.abs(box.min.x - centroid.x), Math.abs(box.max.x - centroid.x));
-    const halfExtentY = Math.max(Math.abs(box.min.y - centroid.y), Math.abs(box.max.y - centroid.y));
-    if (![halfExtentX, halfExtentY].every(Number.isFinite)) return 1;
+    // Fitted for the model centered on the plate by its outline (see
+    // centerOnPlateOffset) - job_edit.html centers it along with the
+    // resize - so half its size each way, however lopsided it is.
+    // FIT_MARGIN_MM short of each edge, so rounding the size and position
+    // the form keeps (2 decimal places) can't tip it just over one.
+    const halfExtentX = size.x / 2;
+    const halfExtentY = size.y / 2;
 
     // Enlarges as well as shrinks: the largest scale that fits. This used
     // to be capped at 1 (100%), so on a model smaller than the plate the
@@ -639,9 +691,9 @@ export function autoFitScale(rotateX = 0, rotateY = 0, rotateZ = 0) {
     // enlarging just snapped back to its original size.
     return Math.min(
         MAX_SCALE,
-        (BED_WIDTH_MM / 2) / halfExtentX,
-        (BED_DEPTH_MM / 2) / halfExtentY,
-        BED_HEIGHT_MM / size.z
+        (BED_WIDTH_MM / 2 - FIT_MARGIN_MM) / halfExtentX,
+        (BED_DEPTH_MM / 2 - FIT_MARGIN_MM) / halfExtentY,
+        (BED_HEIGHT_MM - FIT_MARGIN_MM) / size.z
     );
 }
 
@@ -687,11 +739,11 @@ export function computeSnapRotation(currentRotateX, currentRotateY, currentRotat
     const hits = raycaster.intersectObject(currentMesh, false);
     if (hits.length === 0 || !hits[0].face) return null;
 
-    // currentMesh's own Object3D transform is always identity (every
-    // rotation/scale/centering is baked directly into its geometry's
-    // vertex data - see renderGeometry above) - so the hit face's normal
-    // is already in the same space the rest of this function works in,
-    // no extra transform needed.
+    // currentMesh's rotation and scale are baked into its vertex data
+    // (see renderGeometry above) and its own transform is only a
+    // translation, which doesn't change a normal - so the hit face's
+    // normal is already in the same space the rest of this function works
+    // in, no extra transform needed.
     const clickedNormal = hits[0].face.normal.clone().normalize();
 
     const eulerToQuat = (xDeg, yDeg, zDeg) =>

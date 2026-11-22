@@ -25,6 +25,23 @@
   {% if not rows %}
     <p class="muted">Nothing submitted yet.</p>
   {% else %}
+    {% set waiting = rows | selectattr('job.status.value', 'equalto', 'uploaded') | list %}
+    {% if waiting %}
+      {# Several models from one zip are saved unsliced, for the user to
+         choose from - see routers/user.py's upload(). Slices run one at a
+         time in the order they're started. #}
+      <div class="notice">
+        <strong>{{ waiting | length }} model{{ "s" if waiting | length != 1 else "" }} from your zip
+          {{ "are" if waiting | length != 1 else "is" }} waiting for you to choose</strong>
+        <p>A zip often has the same model more than once, or a single part
+          and the whole thing. Use View 3D to check, Slice the ones you
+          want (they slice in the order you click), and Delete the rest.</p>
+        {% set qs_all = ('?' + request.url.query) if request.url.query else '' %}
+        <form method="post" action="/jobs/slice-all{{ qs_all }}" style="display:inline">
+          <button type="submit">Slice all {{ waiting | length }}</button>
+        </form>
+      </div>
+    {% endif %}
     {% include "_time_legend.html" %}
     <table>
       <tr><th>File</th><th>Color</th><th>Status</th><th>Date</th><th>Details</th><th></th><th>Actions</th></tr>
@@ -61,7 +78,7 @@
                filters.apply_job_filters already understands (see
                _job_filters.html), just always shown here instead of
                picked one-at-a-time by view. #}
-            {% if job.status.value in ('submitted', 'sliced', 'slice_failed') %}
+            {% if job.status.value in ('uploaded', 'submitted', 'sliced', 'slice_failed') %}
               uploaded {{ job.created_at | local_time }}
             {% elif job.status.value in ('queued', 'approved', 'printing') %}
               {% if job.queued_at %}queued {{ job.queued_at | local_time }}{% endif %}
@@ -70,7 +87,10 @@
             {% endif %}
           </td>
           <td class="muted">
-            {% if job.status.value == 'submitted' %}
+            {% if job.status.value == 'uploaded' %}
+              not sliced yet - Slice it if you want it (View 3D to check
+              first), or Delete it if you don't
+            {% elif job.status.value == 'submitted' %}
               <progress></progress> {{ slice_progress(job.id) or "slicing" }}&hellip;
             {% elif job.status.value == 'sliced' %}
               sliced - not yet submitted to the queue
@@ -112,7 +132,7 @@
                per line, since run together with only whitespace between
                them they read as one confusing blob rather than separate
                actions. #}
-            {% if job.status.value in ('submitted', 'sliced', 'slice_failed', 'queued', 'approved') %}
+            {% if job.status.value in ('uploaded', 'submitted', 'sliced', 'slice_failed', 'queued', 'approved') %}
               <a href="/jobs/{{ job.id }}/edit">Edit</a><br>
               <a href="/jobs/{{ job.id }}/edit#color">Change color</a><br>
             {% endif %}
@@ -130,7 +150,11 @@
                that same filtered view instead of silently resetting to
                unfiltered, unless the action itself just emptied it. #}
             {% set qs = ('?' + request.url.query) if request.url.query else '' %}
-            {% if job.status.value == 'sliced' %}
+            {% if job.status.value == 'uploaded' %}
+              <form method="post" action="/jobs/{{ job.id }}/slice{{ qs }}" style="display:inline">
+                <button type="submit">Slice</button>
+              </form>
+            {% elif job.status.value == 'sliced' %}
               <form method="post" action="/jobs/{{ job.id }}/submit{{ qs }}" style="display:inline">
                 <button type="submit">Submit to queue</button>
               </form>
@@ -139,7 +163,7 @@
                often holds the same model in several formats, and only one
                is wanted. Not while it's slicing (see slice_queue.withdraw);
                a draft still waiting its turn can go. #}
-            {% if job.status.value in ('sliced', 'queued', 'approved', 'slice_failed', 'rejected')
+            {% if job.status.value in ('uploaded', 'sliced', 'queued', 'approved', 'slice_failed', 'rejected')
                   or (job.status.value == 'submitted' and not is_slicing(job.id)) %}
               <form method="post" action="/jobs/{{ job.id }}/delete{{ qs }}" style="display:inline"
                     onsubmit="return confirm('Permanently delete {{ job.original_filename }}? This cannot be undone.')">

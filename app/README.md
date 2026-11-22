@@ -333,11 +333,15 @@ style. Slicing and submitting are now two distinct, explicit actions:
   action, and this is where any future editing controls belong too (a
   resize, say) since it's already the "load the model and its settings
   back up" page. While a (re-)slice is running the page shows a spinner
-  and reloads itself every couple seconds until it's done - a plain
-  reload, not htmx swapping the DOM, because the live Three.js scene on
-  this page keeps its state tied to the *current* preview container; a
-  partial swap would leave that state pointing at a detached element
-  instead of reinitializing, where a full reload just starts fresh.
+  with what the slicer is doing (waiting its turn, or which orientation
+  it's trying), checked every couple seconds from
+  `/jobs/{id}/slice-status`. The preview stays still the whole time,
+  showing the orientation that was submitted; the page reloads once, when
+  the slice has finished or failed - a plain reload, not htmx swapping
+  the DOM, because the live Three.js scene on this page keeps its state
+  tied to the *current* preview container. The preview (here and on View
+  3D) stays hidden until the saved size and orientation are applied, so
+  the file's own orientation never flashes up first.
   Visiting this page for a job that isn't a draft any more (submitted,
   or - a stale link - since expired) redirects to the dashboard instead
   of showing an edit form for something it can no longer apply to.
@@ -388,7 +392,7 @@ input's own `min`, and independently server-side too); `cleanup_drafts.py` again
 draft actually moves its files to `archive/` and flips it to `expired`;
 the edit page's own settings form starts pre-filled with a draft's
 current settings and its 3D preview actually renders; clicking re-slice
-there stays on that same page through the "slicing…" reload loop and
+there stays on that same page through "slicing…" and
 lands back on it reflecting the new settings and a fresh preview;
 submitting from the edit page ends on the dashboard with the job queued;
 and visiting a queued job's edit URL directly redirects to the dashboard
@@ -418,11 +422,21 @@ just run once per file found. Zero changes needed to slicing, the 3D
 preview, or support generation - the entire feature is upload-time
 extraction plus a loop.
 
-**The files in a zip are sliced in order of format: `.stl` first, then
-`.obj`, then `.3mf`** (`storage.ZIP_FORMAT_ORDER`), keeping zip order
-within each. Slices run one at a time (see "Slicing one model at a
-time"), and a download often has the same model in several formats - the
-`.stl` is the most dependable and the one worth having ready first.
+**A zip with several models isn't sliced straight away - the user
+chooses.** Each model is saved as an `uploaded` draft (`JobStatus.uploaded`)
+and the dashboard says how many are waiting. A zip often holds the same
+model twice (an `.stl` and a `.3mf`), or one part and the whole thing -
+an articulated dragon's two files, a pumpkin's stem and the full
+pumpkin - and slicing every file, one at a time on the Pi, spent minutes
+on ones nobody wanted. Each waiting model has View 3D (to check it),
+**Slice** and **Delete**; **Slice all** slices every one. Slices run in
+the order they're started, so the order the user clicks is the order
+they slice in. Edit works too: change the size or settings first, then
+**Slice with these settings**. A zip with one usable model still slices
+right away, like a plain upload. Waiting models are drafts, so they
+expire with the others (see "Drafts and expiry"). The files are listed
+`.stl` first, then `.obj`, then `.3mf` (`storage.ZIP_FORMAT_ORDER`), which
+is also the order Slice all uses.
 
 **`.obj` is converted to a real `.stl` immediately on upload, not taught
 to the rest of the pipeline as a second format** - `app/mesh.py`'s
@@ -2833,11 +2847,25 @@ clear of Pilgrims/First-Thanksgiving imagery.
   (`printing` -> `done`/`failed`) before the slow part, and any other
   click gets "This job was already marked failed." The buttons also
   lock and say "Saving..." as soon as they're clicked.
-- **Marking a job doesn't stop the printer.** If the printer is still
-  printing a job's file after it's been marked done or failed, the admin
-  dashboard says so - "cancel it on the printer's own screen" - instead
-  of reporting a print started outside the app, and the activity log
-  records a `still_printing` event on that job.
+- **Marking a job doesn't stop the printer; "Cancel print" does.** A
+  printing row has a **Cancel print** button (with a reason, and a
+  confirmation) that stops the print on the printer and then records the
+  job as failed exactly like "Mark failed" - photo, actual duration, and
+  "cancelled from the app - <reason>" shown to the submitter
+  (`jobs.cancel_printing_job`). If the printer can't be told to stop,
+  nothing is recorded and the admin is told to cancel it on the printer.
+  If a job marked done or failed is still printing, the admin dashboard
+  says so instead of reporting a print started outside the app, logs a
+  `still_printing` event on that job, and offers **Stop it on the
+  printer** (`jobs.cancel_still_running_print`, logged as
+  `print_cancelled`).
+
+  The command is the `cancel` RPC with empty params, taken from the
+  open-source client this protocol was reverse-engineered from
+  (`tjhorner/node-makerbot-rpc`'s `cancel()`), and tested against
+  `simulator/`, which now implements it. It has never run against the
+  real printer, which was already on site. Nothing depends on the
+  printer's reply to it.
 - **Sending a job back.** The reject and "Mark failed" reason boxes
   suggest fixes ("Turn on supports and resubmit.", "Scale it down and
   resubmit.", and so on), and any text can still be typed. The submitter
@@ -4163,6 +4191,36 @@ background slicing task run to completion lands it on
 `45.0` and a clear note on the edit page explaining exactly what
 happened and why the rotation fields show a value nobody manually
 entered.
+
+### Moving the model on the plate
+
+A model is placed with its balance point (volume centroid, see
+`slicing/stl_to_3mf.center_vertices`) at the middle of the plate. For a
+lopsided model - a wrench with a solid head and a long handle - that
+leaves the light end hanging off the edge even when the whole model is
+shorter than the plate. Two edit-page controls under the preview move it:
+
+- **Center on plate** puts the middle of the model's outline at the
+  middle of the plate (`preview.js` `centerOnPlateOffset`).
+- **Move (drag)** shows move handles on the model, limited to the plate
+  (no up/down).
+
+The result is stored as `Job.offset_x`/`offset_y` (mm, schema 9.5.0) and
+applied after rotation and scale, the same way by the preview and by
+`stl_to_3mf.build_3mf`. Restore and Reprint copy it. The edit page
+recenters automatically after Snap to surface (a new face means a new
+footprint) and after Auto-resize, which now fits the model centered by
+its outline with 0.5 mm to spare, rather than around its balance point.
+
+The slicer also moves a model nobody has moved: when the default
+placement hangs off but the model fits centered by its outline, slice.py
+(`--center-if-needed`, always passed by `pipeline.run_slice`) places it
+that way and prints the offset it used. `jobs.py` records it on the job
+and logs a `centered` event, so a lopsided upload slices on the first
+try and its preview shows where it was actually sliced. A model that was
+moved partly off the plate fails with "hangs off the edge" and a pointer
+to Center on plate; that failure doesn't trigger the automatic rotation
+retries, which would undo the move.
 
 ### A real silently-overridden-orientation incident
 

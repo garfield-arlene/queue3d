@@ -14,17 +14,28 @@
      separate manual "Submit to queue" click it was never going to need. #}
   {% if job.status.value == 'submitted' %}
     <script>
-      // Full-page reload, not htmx polling: this page hosts a live
-      // Three.js scene (preview.js), which keeps its renderer/camera
-      // state in module-level variables tied to the *current* DOM nodes -
-      // a partial swap of the preview container out from under it would
-      // leave that state pointing at a detached element instead of
-      // reinitializing. A plain reload sidesteps that entirely by
-      // starting the whole page fresh, same as the very first load. A
-      // <meta http-equiv="refresh"> tag would do this without JS, but
-      // only reliably inside <head> - base.html's content block renders
-      // in <body>, where browser support for it is inconsistent.
-      setTimeout(() => window.location.reload(), 2000);
+      // Checks a small status endpoint instead of reloading the page:
+      // every reload redrew the preview from the raw file and then
+      // re-applied the saved orientation, so the model flipped between
+      // the two every couple of seconds while it sliced. The page only
+      // reloads once slicing has finished, worked or not, and the line
+      // above the preview shows what the slicer is doing meanwhile.
+      // A full reload at that point, not a partial swap: preview.js keeps
+      // its Three.js renderer/camera tied to the current DOM nodes.
+      (function poll() {
+        setTimeout(async () => {
+          try {
+            const r = await fetch("/jobs/{{ job.id }}/slice-status", { cache: "no-store" });
+            if (r.ok) {
+              const s = await r.json();
+              if (s.status !== "submitted") { window.location.reload(); return; }
+              const note = document.getElementById("slice-note");
+              if (note && s.note) note.textContent = s.note;
+            }
+          } catch (e) { /* network blip - try again next time */ }
+          poll();
+        }, 2000);
+      })();
     </script>
   {% endif %}
 
@@ -40,8 +51,16 @@
     </p>
   {% endif %}
 
-  {% if job.status.value == 'submitted' %}
-    <p><progress></progress> {{ slice_progress(job.id) or "slicing" }}&hellip;</p>
+  {% if job.status.value == 'uploaded' %}
+    <p class="notice">Not sliced yet. Check it in the preview, change the settings if
+      you need to, then <strong>Slice with these settings</strong> below - or go back and
+      Delete it if it's not the one you want.</p>
+  {% elif job.status.value == 'submitted' %}
+    <p><progress></progress> <span id="slice-note">{{ slice_progress(job.id) or "slicing" }}</span>&hellip;</p>
+  {% elif job.status.value == 'slice_failed' and job.slice_error and 'hangs off the edge' in job.slice_error %}
+    {# Moved partly off the plate - see jobs.PLACEMENT_FAILURE_MARKER. #}
+    <p class="error">Part of the model is off the edge of the build plate. Click
+      <strong>Center on plate</strong> under the preview, then Re-slice.</p>
   {% elif job.status.value == 'slice_failed' %}
     <p class="error">Couldn't slice this file. Adjust settings and re-slice below, or re-export and re-upload from the dashboard.</p>
     <p class="muted">
@@ -79,16 +98,27 @@
       Click a surface on the model above to stand it on that face.
     </p>
     <p class="muted" id="gizmo-hint" hidden>
-      Drag a handle on the model above.
+      Drag a handle on the model above. To move it, drag the red or
+      green arrow, or the square between them.
     </p>
-    <div id="preview-container" class="preview-container"></div>
+    {# Hidden until the saved size and orientation are applied (see
+       previewUrl below), so the raw file's own orientation never shows
+       first. #}
+    <div id="preview-container" class="preview-container" style="visibility: hidden"></div>
     <p id="preview-info" class="preview-info"></p>
+    {# Where the model sits on the plate. By default it's centered on its
+       balance point, which leaves a lopsided model (a wrench with a solid
+       head) hanging off one edge even when it's shorter than the plate. #}
+    <p class="placement-controls">
+      <button type="button" id="center-btn">Center on plate</button>
+      <button type="button" id="move-gizmo-btn">Move (drag)</button>
+    </p>
 
     <script type="importmap">
       { "imports": { "three": "/static/vendor/three/three.module.min.js" } }
     </script>
     <script type="module">
-      import { previewUrl, applyTransform, autoFitScale, computeSnapRotation, displayedSize, enableGizmo, disableGizmo } from "/static/preview.js";
+      import { previewUrl, applyTransform, autoFitScale, centerOnPlateOffset, computeSnapRotation, displayedSize, enableGizmo, disableGizmo } from "/static/preview.js";
       const container = document.getElementById("preview-container");
       const info = document.getElementById("preview-info");
       const supportsUrl = {% if job.supports_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
@@ -96,6 +126,8 @@
       const rotateXInput = document.getElementById("rotate-x");
       const rotateYInput = document.getElementById("rotate-y");
       const rotateZInput = document.getElementById("rotate-z");
+      const offsetXInput = document.getElementById("offset-x");
+      const offsetYInput = document.getElementById("offset-y");
       // Tells the server a requested rotation is deliberate even when its
       // *value* happens to equal the untouched default (x=0/y=0/z=0) -
       // see jobs._slice_with_rotation_retry's own docstring for the real
@@ -113,6 +145,7 @@
       const snapHint = document.getElementById("snap-hint");
       const rotateGizmoBtn = document.getElementById("rotate-gizmo-btn");
       const scaleGizmoBtn = document.getElementById("scale-gizmo-btn");
+      const moveGizmoBtn = document.getElementById("move-gizmo-btn");
       const gizmoHint = document.getElementById("gizmo-hint");
 
       // The single source of truth for "what should the preview show right
@@ -126,7 +159,17 @@
           rotateX: parseFloat(rotateXInput.value) || 0,
           rotateY: parseFloat(rotateYInput.value) || 0,
           rotateZ: parseFloat(rotateZInput.value) || 0,
+          offsetX: parseFloat(offsetXInput.value) || 0,
+          offsetY: parseFloat(offsetYInput.value) || 0,
         };
+      }
+      const roundMm = (v) => Math.round(v * 100) / 100;
+      // "Center on plate": the middle of the model's outline at the middle
+      // of the plate, for whatever rotation and size it has right now.
+      function centerOnPlate() {
+        const { offsetX, offsetY } = centerOnPlateOffset(currentTransform());
+        offsetXInput.value = roundMm(offsetX);
+        offsetYInput.value = roundMm(offsetY);
       }
       // A model under this many mm in every direction is almost certainly
       // in the wrong units (see #units-hint).
@@ -164,20 +207,25 @@
       // face in "snap to surface" mode. Mutually exclusive with snap mode
       // (both would otherwise fight over pointer events on the same canvas)
       // and with each other (one handle set at a time, like most 3D editors).
-      let gizmoMode = null; // null | "rotate" | "scale"
+      let gizmoMode = null; // null | "rotate" | "scale" | "translate"
 
       function onGizmoCommit(t) {
         rotateXInput.value = Math.round(t.rotateX * 100) / 100;
         rotateYInput.value = Math.round(t.rotateY * 100) / 100;
         rotateZInput.value = Math.round(t.rotateZ * 100) / 100;
         scaleInput.value = Math.round(t.scale * 100 * 100) / 100; // percent, 2dp
-        markRotationTouched(); // shared with scale-drag commit - harmless: it's actually the model being edited either way
+        offsetXInput.value = roundMm(t.offsetX);
+        offsetYInput.value = roundMm(t.offsetY);
+        // Moving doesn't change the orientation, so it doesn't count as
+        // choosing one; rotating and resizing are the model being edited.
+        if (gizmoMode !== "translate") markRotationTouched();
       }
 
       function setGizmoMode(mode) {
         gizmoMode = mode;
         rotateGizmoBtn.textContent = gizmoMode === "rotate" ? "Stop rotating (drag)" : "Rotate (drag)";
         scaleGizmoBtn.textContent = gizmoMode === "scale" ? "Stop resizing (drag)" : "Resize (drag)";
+        moveGizmoBtn.textContent = gizmoMode === "translate" ? "Stop moving (drag)" : "Move (drag)";
         gizmoHint.hidden = !gizmoMode;
         if (gizmoMode) {
           snapMode = false;
@@ -191,6 +239,11 @@
 
       rotateGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "rotate" ? null : "rotate"));
       scaleGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "scale" ? null : "scale"));
+      moveGizmoBtn.addEventListener("click", () => setGizmoMode(gizmoMode === "translate" ? null : "translate"));
+      document.getElementById("center-btn").addEventListener("click", () => {
+        centerOnPlate();
+        applyPreview();
+      });
 
       // The preview loads at the model's true original size/orientation
       // first - once that finishes, apply whatever's already saved on this
@@ -199,9 +252,9 @@
       // file.
       previewUrl("/jobs/{{ job.id }}/model.stl", supportsUrl, container, info).then(() => {
         const t = currentTransform();
-        if (t.scale !== 1 || t.rotateX || t.rotateY || t.rotateZ) applyPreview();
+        if (t.scale !== 1 || t.rotateX || t.rotateY || t.rotateZ || t.offsetX || t.offsetY) applyPreview();
         else updateUnitsHint();
-      });
+      }).finally(() => { container.style.visibility = ""; });
 
       // Live re-render as any number changes - no server round trip, same
       // "see it before you commit to it" spirit as the pre-upload preview.
@@ -219,6 +272,7 @@
         const t = currentTransform();
         const factor = autoFitScale(t.rotateX, t.rotateY, t.rotateZ);
         scaleInput.value = Math.floor(factor * 100 * 100) / 100; // round down - never end up still slightly over
+        centerOnPlate(); // the fit assumes it's centered (see autoFitScale)
         applyPreview();
       });
 
@@ -255,6 +309,9 @@
         rotateYInput.value = Math.round(snapped.y * 100) / 100;
         rotateZInput.value = Math.round(snapped.z * 100) / 100;
         markRotationTouched();
+        // Standing it on a new face changes its whole footprint - wherever
+        // it was moved to before means nothing now, so center it.
+        centerOnPlate();
         applyPreview();
 
         // One snap per click of the button - back to normal orbit/zoom
@@ -356,6 +413,10 @@
        value on the server. Stays "0" (the server's own signal to fall
        back to the older value-only heuristic) for a plain no-JS post. #}
     <input type="hidden" id="rotation-touched" name="rotation_touched" value="0">
+    {# Where the model was moved on the plate, in mm - set by "Center on
+       plate" and "Move (drag)" under the preview (see models.Job.offset_x). #}
+    <input type="hidden" id="offset-x" name="offset_x" value="{{ job.offset_x | round(2) }}">
+    <input type="hidden" id="offset-y" name="offset_y" value="{{ job.offset_y | round(2) }}">
     {% if job.rotation_manual %}
       <label><input type="checkbox" name="auto_orient"> Let this app search
         for a working orientation automatically on this re-slice, instead
@@ -375,7 +436,7 @@
         fresh wait time once done - no separate "Submit to queue" step.
       </p>
     {% endif %}
-    <button type="submit">Re-slice</button>
+    <button type="submit">{{ "Slice with these settings" if job.status.value == 'uploaded' else "Re-slice" }}</button>
   </form>
 
   {% if job.status.value == 'sliced' %}

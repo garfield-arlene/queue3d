@@ -53,6 +53,9 @@ def slice_stl(
     rotate_x=0.0,
     rotate_y=0.0,
     rotate_z=0.0,
+    offset_x=0.0,
+    offset_y=0.0,
+    center_if_needed=False,
 ):
     """gcode_out_path: if given, the intermediate gcode (before mbotmake
     conversion) is copied there - it's otherwise thrown away with the temp
@@ -70,7 +73,9 @@ def slice_stl(
     scale_factor: uniform scale (1.0 = original size). rotate_x/y/z:
     degrees, applied in that order about the fixed world axes - see
     stl_to_3mf.build_3mf's own docstring for the full ordering (rotate,
-    then scale, then center) and why it matters."""
+    then scale, then center) and why it matters. offset_x/offset_y: mm
+    to move it on the plate after centering. center_if_needed: see
+    stl_to_3mf.build_3mf."""
     stl_path = Path(stl_path)
     output_makerbot_path = Path(output_makerbot_path)
     overrides = {"enable_support": "1" if enable_supports else "0"}
@@ -91,6 +96,9 @@ def slice_stl(
             rotate_x=rotate_x,
             rotate_y=rotate_y,
             rotate_z=rotate_z,
+            offset_x=offset_x,
+            offset_y=offset_y,
+            center_if_needed=center_if_needed,
         )
         print(f"Wrapped {stl_path.name} into project.3mf ({n_verts} vertices, {n_tris} triangles)")
 
@@ -191,6 +199,9 @@ def main():
     parser.add_argument("--rotate-x", type=float, default=0.0, help="Degrees to rotate about the X axis, applied first")
     parser.add_argument("--rotate-y", type=float, default=0.0, help="Degrees to rotate about the Y axis, applied second")
     parser.add_argument("--rotate-z", type=float, default=0.0, help="Degrees to rotate about the Z axis, applied third")
+    parser.add_argument("--offset-x", type=float, default=0.0, help="mm to move the model along X after centering it on the plate")
+    parser.add_argument("--offset-y", type=float, default=0.0, help="mm to move the model along Y after centering it on the plate")
+    parser.add_argument("--center-if-needed", action="store_true", help="If the model hasn't been moved and hangs off the plate where it's placed by default, center it by its outline instead")
     args = parser.parse_args()
     try:
         slice_stl(
@@ -203,6 +214,9 @@ def main():
             rotate_x=args.rotate_x,
             rotate_y=args.rotate_y,
             rotate_z=args.rotate_z,
+            offset_x=args.offset_x,
+            offset_y=args.offset_y,
+            center_if_needed=args.center_if_needed,
         )
     except ModelTooLargeError as e:
         # A plain message, not a traceback - this output is what the
