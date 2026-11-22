@@ -15,19 +15,38 @@ Sample data below (names, filenames, queue contents) - not a real
 deployment.
 
 **User view** - uploading a model and tracking submissions through the
-queue:
+queue. Rows are colour-coded by estimated print time; the two models
+from an uploaded zip wait for the user to pick which to slice:
 
-![User dashboard, showing the upload form and a table of submitted jobs in various states](docs/screenshots/user-dashboard.png)
+![User dashboard, showing the upload form, a notice that two models from a zip are waiting to be sliced, and colour-coded rows for sliced, queued, rejected and done jobs](docs/screenshots/user-dashboard.png)
 
-The interactive 3D preview, here showing a model alongside its generated
-support material:
+A model's edit page: the interactive 3D preview with its generated
+support material, the estimate and filament, and the settings, size,
+position and rotation controls:
 
-![3D preview of a model with orange support material rendered underneath its overhangs](docs/screenshots/3d-preview-supports.png)
+![Job edit page, showing a 3D preview of a desk hook with orange support material underneath, the print-time estimate, and the settings, scale and rotation controls](docs/screenshots/3d-preview-supports.png)
 
-**Admin view** - reviewing the queue and approving, rejecting, or releasing
-jobs to the printer:
+**Snap to surface** lights up the face the model will be laid on - bright
+where it will touch the plate, darker where that side is set back:
 
-![Admin dashboard, showing the queue with per-job approve/reject/release actions](docs/screenshots/admin-dashboard.png)
+![A wrench standing on its edge, its broad side highlighted amber: bright on the thick head, darker on the thinner handle](docs/screenshots/snap-to-surface.png)
+
+**Size reference** - a quarter or a dollar bill, to scale, beside the
+model, whichever is closer to its size:
+
+![A small chess pawn next to a quarter on the build plate](docs/screenshots/size-reference-quarter.png)
+
+![The wrench lying flat next to a dollar bill](docs/screenshots/size-reference-bill.png)
+
+**Print on a raft** - a round-bottomed model lifted off the plate on a
+removable base, with supports under its curve:
+
+![A round ornament sitting on an orange raft and supports](docs/screenshots/raft.png)
+
+**Admin view** - reviewing the queue and approving, rejecting, releasing
+or cancelling jobs on the printer:
+
+![Admin dashboard, showing the printer status and the colour-coded queue: a printing job with Mark done, Mark failed and Cancel print, then approved and queued jobs](docs/screenshots/admin-dashboard.png)
 
 Managing user accounts:
 
@@ -100,15 +119,27 @@ for the full design rationale behind each.
   the file is being received, and a "slicing…" indicator on the dashboard
   (self-updating, no page reload) while it's converted server-side -
   slicing runs in the background rather than leaving the page hanging for
-  however long that takes.
+  however long that takes. Models slice one at a time, in the order
+  they were started, and the dashboard shows each one's place in line
+  and, during a slice, what the slicer is trying. The edit page's 3D
+  preview stays still while a re-slice runs and refreshes once when it
+  finishes or fails.
 - **Slicing and submitting are separate actions** - uploading slices a
   model into a private draft (never visible to admins or counted in the
   queue) that can be re-sliced in place with different support settings,
   as many times as wanted, before deciding to submit it to the shared
-  queue. A draft nobody ever submits expires automatically after an
+  queue. Any draft can be deleted, unless it's slicing at that moment.
+  A draft nobody ever submits expires automatically after an
   admin-configurable number of days (`/admin/settings`).
 - **Live duration estimate and queue position** shown to the submitter as
   soon as slicing finishes.
+- **Colour-coded print times** - every queue row, on the user dashboard,
+  the admin queue and the old jobs page, is tinted by its estimated
+  print time: green under 2 hours, yellow 2-3 hours ("ask first"), red
+  over 3 hours ("too long"), with a legend above each table. The limits
+  are admin settings (`/admin/settings`). The edit page shows the same
+  coloured estimate next to the filament amount, so a student can scale
+  a model down before submitting it.
 - **Interactive 3D preview** - rotate and zoom a model on the real build
   plate before submitting (entirely in the browser, no upload needed just
   to look at it), and again afterward on the job's own page (for the
@@ -125,7 +156,11 @@ for the full design rationale behind each.
 - **One shared queue** - submissions land directly in it; there's no
   separate pre-review step before something counts as queued.
 - **Admin review** - approve, or reject with a required note explaining
-  why, before anything reaches the printer.
+  why, before anything reaches the printer. The reject and "Mark failed"
+  boxes suggest common fixes ("Turn on supports and resubmit.", "Scale
+  it down and resubmit."), and the submitter gets a **Fix and
+  resubmit** button that opens an editable copy showing the admin's
+  reason under "What to change".
 - **Browse finished jobs and a full audit log** - a rejected/done/failed/
   expired job leaves the live queue view but stays reachable
   (`/admin/jobs/finished`). A global activity log (`/admin/log`) shows
@@ -147,6 +182,12 @@ for the full design rationale behind each.
   meant only the first release after any pairing ever actually worked.
 - **One job on the printer at a time**, enforced - releasing a second job
   while one is already printing is blocked with a clear error.
+- **Cancel a print from the app** - a printing job has a **Cancel
+  print** button (with a reason and a confirmation) that stops the print
+  on the printer and records the job as failed, with the reason shown to
+  the submitter. A job marked done or failed that's still printing gets
+  **Stop it on the printer**. Tested against `simulator/`; not yet run
+  against the real printer.
 - **Printer status on the admin dashboard** - rather than only finding
   out the printer needs re-pairing when a release actually fails, the
   dashboard shows its connection state plainly, and a "Pair printer"
@@ -364,8 +405,13 @@ for the full design rationale behind each.
   re-slicing wait at all.
 - **Upload `.obj` or `.3mf` files directly, and `.zip` files of one or
   more `.stl`/`.obj`/`.3mf` models** (a common Thingiverse shape -
-  several separate parts plus a README/photo that's just ignored). Each
-  model in a zip
+  several separate parts plus a README/photo that's just ignored). A zip
+  with several models isn't sliced straight away: each waits on the
+  dashboard for the user to check it in 3D, then **Slice** it,
+  **Delete** it, or **Slice all** - a zip often holds the same model
+  twice, or a single part next to the whole thing, and slicing every
+  file one at a time on the Pi took minutes nobody needed. A zip with
+  one model slices right away. Each model in a zip
   becomes its own separate job/draft, up to `MAX_ZIP_MODEL_FILES` (25) -
   stated right on the upload form, not just in this README - rather
   than a combined-plate print - the right design since this app's whole
@@ -391,8 +437,12 @@ for the full design rationale behind each.
 - **Resize and auto-fit on the job edit page** - a scale control (always
   uniform - proportions can never distort) with a live, before-you-commit
   3D preview as you change it, and a one-click "Auto-resize to fit build
-  plate" button for a model that's too large, computing exactly the
-  shrink needed rather than making the user guess a percentage by hand.
+  plate" button that finds the largest size that fits - shrinking a
+  model that's too large or enlarging one that's tiny - rather than
+  making the user guess a percentage by hand. Scale goes up to 10000%,
+  and a model under 5 mm gets a note with ×10 (centimetres) and ×25.4
+  (inches) buttons, since it was almost certainly exported in the wrong
+  units.
   Full editing, not just color, is reachable from a queued/approved
   job's own dashboard row too, not just a draft's - changing anything on
   one re-slices it as a fresh submission (a new `queued_at`, same as a
@@ -408,6 +458,13 @@ for the full design rationale behind each.
   of filling the frame on its own, and a model that's actually too
   big for the bed visibly overflows that view instead of just
   re-filling the frame to look "normal-sized" like every other model.
+- **Moving the model on the plate** - a model is placed by its balance
+  point, which can leave a lopsided one (a wrench with a heavy head)
+  hanging off the edge even when it's shorter than the plate. **Center
+  on plate** centres it by its outline, and **Move (drag)** slides it
+  anywhere on the plate. Slicing centres a model nobody has moved by
+  itself when that makes it fit, so most uploads like that slice on the
+  first try. The position is saved with the job.
 - **Automatic mesh repair** - every upload gets checked for a watertight,
   correctly-oriented mesh before it ever reaches the slicer (which has
   no repair flag of its own), and repaired automatically if it isn't -
@@ -425,6 +482,9 @@ for the full design rationale behind each.
   turns, and standing the model on each of its other faces) before
   giving up, since real models have repeatedly turned out to need
   nothing more than a different rotation to slice successfully at all.
+  Which rotations are tried depends on the failure (none for a setup
+  error, turns on the plate for "too big", the model's other sides
+  otherwise), and the retries stop after 3 minutes in total.
   If one of those works, the job's rotation is updated to match and a
   clear note says so (not silently applied without explanation); if
   none do, the job fails as before, with a note that this was already
@@ -435,8 +495,12 @@ for the full design rationale behind each.
   whether a different one would actually print better.
 - **Rotate and snap to surface** - free rotation on any axis (three
   degree fields, live preview as you type), plus a "Snap to surface"
-  button: click it, then click any face on the model, and it reorients
-  to stand on that face - useful both for fit (a diagonal rotation can
+  button: click it, then point at the model - the side it will lie on
+  lights up, brightest where it will touch the plate - and click to lay
+  it on that side. It picks a whole flat face, so a click on a bevel or
+  into a hole still picks the side it's on, and if the model would hang
+  off the plate lying that way it's also turned and centred to fit.
+  Useful both for fit (a diagonal rotation can
   let an oversized model fit the plate) and for print success. Fixes
   a real slicing failure that resizing alone never
   could: a model whose asymmetric shape failed the printer's own
@@ -451,6 +515,17 @@ for the full design rationale behind each.
   alongside the number fields and
   snap-to-surface - three different ways to reach the same rotate/scale
   values, kept in sync with each other.
+- **Size reference** - a button in the corner of every 3D preview puts a
+  US quarter or a dollar bill, to scale, right beside the model -
+  whichever is closer to its size - so it's easy to see how big the
+  print really is. It zooms and turns with the model and is never
+  printed.
+- **Print on a raft** - for a model with no flat bottom (a ball, a
+  boat's hull), the edit page's **Print on a raft** prints a few
+  removable layers under it, a little wider than the model, so it sits
+  on a steady base instead of balancing on a line or a point. With
+  supports on, they hold up the curved underside. The preview shows the
+  raft and the model sitting on it.
 - **Automated backups** - the database and finished-job archive back up
   automatically on a schedule, rotating between two targets, each
   keeping about three weeks of dated, auto-pruned snapshots rather than
@@ -468,10 +543,14 @@ for the full design rationale behind each.
   page's own nav.
 - **Downloadable support bundle** - an admin can generate a `.tar.gz`
   on demand (a safe copy of the database, the full activity log, every
-  submitted feedback report, and every model that ever hit a slicing
-  error or was referenced by a feedback report) for offline bugfixing at
-  this app's zero-internet-access deployment, with no need for remote
-  access to the device itself.
+  submitted feedback report, every model that ever hit a slicing error
+  or was referenced by a feedback report, and the service's own journal)
+  for offline bugfixing at this app's zero-internet-access deployment,
+  with no need for remote access to the device itself. No names leave
+  the school in it: every account and model filename is replaced with a
+  stable code (keyed by a secret that stays on the Pi), names are
+  scrubbed from free text, and PIN/password hashes are blanked. An admin
+  can look a code up on site (Admin > Support bundle codes).
 - **Self-service help pages** - a shared `/help` page (no login required)
   covering registration/login, submitting a job, job statuses,
   editing/restoring/reprinting, and account settings, linked from every
@@ -491,7 +570,10 @@ for the full design rationale behind each.
   storage setup with its own systemd timers, the printer's own address
   as an admin-configurable setting (stored in the database, so it
   survives every future redeploy rather than needing to be hardcoded or
-  re-entered), and the downloadable admin support bundle. Full account
+  re-entered), and the downloadable admin support bundle. Every deploy
+  runs a real test slice on the Pi, offers (never forces) a printer
+  connection check, and ends with a large SUCCESS or FAIL that says
+  which versions it went from and to, or what went wrong. Full account
   of all of it in `deploy/README.md`.
 - **App version number** shown as a footer on every page, read from
   `app/VERSION` at startup - bump that file to change what's shown, no code
