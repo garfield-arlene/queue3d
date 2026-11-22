@@ -413,6 +413,12 @@
     }
     header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2rem; }
     header a { text-decoration: none; }
+    /* Basic keeps the nav as a top row; the admin pages have a dozen
+       links, which squeezed into the 720px column until multi-word ones
+       ("Finished jobs") broke mid-link and overlapped their neighbours.
+       Wrapped onto a second row instead, each link kept whole. */
+    [data-theme="default"] header { flex-wrap: wrap; column-gap: 0.9rem; row-gap: 0.3rem; }
+    [data-theme="default"] header a { white-space: nowrap; }
     h1 { font-size: 1.25rem; }
     /* The app logo + "queue3d" title as one unit (see the <svg> markup's
        own comment below for why the logo itself is inline rather than a
