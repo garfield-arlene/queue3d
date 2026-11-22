@@ -95,7 +95,8 @@
     exact print path, just roughly where supports will be).
   </p>
     <p class="muted" id="snap-hint" hidden>
-      Click a surface on the model above to stand it on that face.
+      Point at the model above: the highlighted face is the one that will
+      sit on the plate. Click to lay it there.
     </p>
     <p class="muted" id="gizmo-hint" hidden>
       Drag a handle on the model above. To move it, drag the red or
@@ -118,7 +119,7 @@
       { "imports": { "three": "/static/vendor/three/three.module.min.js" } }
     </script>
     <script type="module">
-      import { previewUrl, applyTransform, autoFitScale, centerOnPlateOffset, computeSnapRotation, displayedSize, enableGizmo, disableGizmo } from "/static/preview.js";
+      import { previewUrl, applyTransform, autoFitScale, centerOnPlateOffset, computeSnapRotation, fitTurnOnPlate, showSnapTarget, clearSnapTarget, displayedSize, enableGizmo, disableGizmo } from "/static/preview.js";
       const container = document.getElementById("preview-container");
       const info = document.getElementById("preview-info");
       const supportsUrl = {% if job.supports_enabled %}"/jobs/{{ job.id }}/supports.json"{% else %}null{% endif %};
@@ -228,9 +229,7 @@
         moveGizmoBtn.textContent = gizmoMode === "translate" ? "Stop moving (drag)" : "Move (drag)";
         gizmoHint.hidden = !gizmoMode;
         if (gizmoMode) {
-          snapMode = false;
-          snapBtn.textContent = "Snap to surface";
-          snapHint.hidden = true;
+          setSnapMode(false);
           enableGizmo(gizmoMode, currentTransform(), onGizmoCommit);
         } else {
           disableGizmo();
@@ -285,12 +284,32 @@
       let snapMode = false;
       let pressPos = null;
 
-      snapBtn.addEventListener("click", () => {
-        snapMode = !snapMode;
+      function setSnapMode(on) {
+        snapMode = on;
         snapBtn.textContent = snapMode ? "Cancel snap to surface" : "Snap to surface";
         snapHint.hidden = !snapMode;
+        container.style.cursor = snapMode ? "crosshair" : "";
+        if (!snapMode) clearSnapTarget();
+      }
+      snapBtn.addEventListener("click", () => {
+        setSnapMode(!snapMode);
         if (snapMode && gizmoMode) setGizmoMode(null); // mutually exclusive, see setGizmoMode above
       });
+
+      // While in snap mode, highlight the face a click would lay the model
+      // on, at most once a frame (raycasting a big model isn't free).
+      let hoverPos = null;
+      container.addEventListener("pointermove", (e) => {
+        if (!snapMode || e.buttons) return; // not while orbiting the camera
+        const pending = hoverPos !== null;
+        hoverPos = { x: e.clientX, y: e.clientY };
+        if (pending) return;
+        requestAnimationFrame(() => {
+          if (snapMode && hoverPos) showSnapTarget(hoverPos.x, hoverPos.y);
+          hoverPos = null;
+        });
+      });
+      container.addEventListener("pointerleave", () => { hoverPos = null; clearSnapTarget(); });
 
       container.addEventListener("pointerdown", (e) => {
         pressPos = { x: e.clientX, y: e.clientY };
@@ -308,6 +327,15 @@
         rotateXInput.value = Math.round(snapped.x * 100) / 100;
         rotateYInput.value = Math.round(snapped.y * 100) / 100;
         rotateZInput.value = Math.round(snapped.z * 100) / 100;
+        // Lying the right way down, it may still point the wrong way round -
+        // a long model across the plate's short side. Turn it the least
+        // that fits it; if nothing does, it needs resizing, not turning.
+        const turn = fitTurnOnPlate(currentTransform());
+        if (turn) {
+          let z = (parseFloat(rotateZInput.value) || 0) + turn;
+          z = ((z + 180) % 360 + 360) % 360 - 180;
+          rotateZInput.value = Math.round(z * 100) / 100;
+        }
         markRotationTouched();
         // Standing it on a new face changes its whole footprint - wherever
         // it was moved to before means nothing now, so center it.
@@ -316,9 +344,7 @@
 
         // One snap per click of the button - back to normal orbit/zoom
         // interaction immediately after, rather than staying "armed."
-        snapMode = false;
-        snapBtn.textContent = "Snap to surface";
-        snapHint.hidden = true;
+        setSnapMode(false);
       });
     </script>
 
@@ -399,8 +425,8 @@
     <p class="muted">
       Rotation (degrees, applied X then Y then Z) - rotate freely, drag the
       handles on the model above ("Rotate (drag)"), or click "Snap to
-      surface" below and then click a face on the model to stand it on
-      that face.
+      surface" below and then click a face on the model (it lights up) to
+      lay it on that face.
     </p>
     <label>Rotate X<br><input type="number" id="rotate-x" name="rotate_x" step="0.01" value="{{ job.rotate_x | round(2) }}"></label>
     <label>Rotate Y<br><input type="number" id="rotate-y" name="rotate_y" step="0.01" value="{{ job.rotate_y | round(2) }}"></label>
