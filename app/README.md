@@ -4222,6 +4222,42 @@ moved partly off the plate fails with "hangs off the edge" and a pointer
 to Center on plate; that failure doesn't trigger the automatic rotation
 retries, which would undo the move.
 
+### Snap to surface lays the model on a whole face
+
+Snap to surface turns the model so a whole flat face sits on the plate,
+not the one triangle under the pointer. Much of what looks like a flat
+side is really bevels, rounded rims and the walls of holes: on the
+Voronoi-handle wrench (`wrench_v2_assembly_VORONOI_FIXED.stl`) only 53%
+of a side, seen face on, is within 2° of flat and 32% is tilted 10-60°,
+so laying it on the clicked triangle tilted the model to whatever slope
+the click landed on.
+
+`preview.js` `findRestFaces` lists, once per loaded model, the faces it
+can lie on: a plane holding at least 0.5% of the model's surface with no
+vertex past it. A side can be stepped - the wrench's handle is thinner
+than its head - so only the outermost level touches the plate; the
+parallel levels behind it count as the same side. Together the rest faces
+wrap the model like a box, and `pickRestFace` takes the one the pointer's
+line of sight enters that box through, so a click on a bevel or into a
+hole still picks the side it's on. Where it enters off every rest face (a
+dome, or a sphere with no flat face at all) it falls back to the triangle
+under the pointer.
+
+In Snap mode the face a click would pick lights up as the pointer moves
+(`showSnapTarget`): bright amber where it will touch the plate, darker
+amber for the rest of that side. On the wrench, pointing anywhere on the
+side - flat, bevel or hole - now lays it flat on that side.
+
+A face says how the model should lie, not which way round it should
+point, so a snap that leaves it hanging off the plate also turns it about
+the vertical (`preview.js` `fitTurnOnPlate`, added to Rotate Z) and
+centers it. Of the turns that fit, it takes the one leaving the most room
+to the nearest edge, to the mm, smaller turn first; a model that already
+fits isn't turned, and one no turn can fit is left for Auto-resize. The
+wrench laid on its side is 266 mm long and lay across the plate's 195 mm
+depth; it's now turned -62°, 237 x 136 mm with about 57 mm to spare each
+way, and slices there.
+
 ### A real silently-overridden-orientation incident
 
 **What happened:** a model sliced lying on its side by default; the

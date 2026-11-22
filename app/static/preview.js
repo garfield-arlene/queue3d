@@ -320,6 +320,7 @@ function centroidXY(geometry) {
  * the same way by slicing/stl_to_3mf.build_3mf.
  */
 function renderGeometry(geometry, offset = { x: 0, y: 0 }) {
+    clearSnapTarget(); // it's drawn on the mesh being replaced
     if (currentMesh) {
         scene.remove(currentMesh);
         currentMesh.geometry.dispose();
@@ -697,6 +698,82 @@ export function autoFitScale(rotateX = 0, rotateY = 0, rotateZ = 0) {
     );
 }
 
+/** Convex hull of 2D points (flat [x0, y0, x1, y1, ...]), as [[x, y], ...]. */
+function convexHull2D(flat) {
+    const points = [];
+    for (let i = 0; i < flat.length; i += 2) points.push([flat[i], flat[i + 1]]);
+    points.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lower = [];
+    for (const p of points) {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+        lower.push(p);
+    }
+    const upper = [];
+    for (let i = points.length - 1; i >= 0; i--) {
+        const p = points[i];
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+        upper.push(p);
+    }
+    return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+/**
+ * A turn about the vertical (degrees, to add to rotateZ) that makes the
+ * model's footprint fit the plate when centered by its outline (see
+ * centerOnPlateOffset): 0 if it already fits, otherwise the one leaving
+ * the most room to the nearest edge, or null if no turn makes it fit (it
+ * needs shrinking - see autoFitScale). Snap to surface
+ * uses it: a face picked for how the model should lie says nothing about
+ * which way round it should point, and a long model - a 266 mm wrench -
+ * laid down across the 195 mm depth of the plate hangs off when turning
+ * it would fit it.
+ *
+ * Adding to rotateZ is the same as turning the placed model, since Z is
+ * the last rotation applied, about the fixed vertical axis.
+ */
+export function fitTurnOnPlate(transform = {}) {
+    if (!rawGeometry) return null;
+    const position = transformedGeometry(transform).attributes.position;
+    const flat = new Float64Array(position.count * 2);
+    for (let i = 0; i < position.count; i++) {
+        flat[i * 2] = position.getX(i);
+        flat[i * 2 + 1] = position.getY(i);
+    }
+    const hull = convexHull2D(flat);
+    const width = BED_WIDTH_MM - 2 * FIT_MARGIN_MM;
+    const depth = BED_DEPTH_MM - 2 * FIT_MARGIN_MM;
+    // mm to spare at the tightest edge after this turn; negative if it
+    // hangs off.
+    const room = (degrees) => {
+        const r = THREE.MathUtils.degToRad(degrees);
+        const cos = Math.cos(r), sin = Math.sin(r);
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const [x, y] of hull) {
+            const tx = x * cos - y * sin, ty = x * sin + y * cos;
+            minX = Math.min(minX, tx); maxX = Math.max(maxX, tx);
+            minY = Math.min(minY, ty); maxY = Math.max(maxY, ty);
+        }
+        return Math.min(width - (maxX - minX), depth - (maxY - minY));
+    };
+    if (room(0) >= 0) return 0;
+    // The turn that only just squeezes a long model in on the diagonal
+    // isn't the one to pick when lying it along the plate leaves plenty
+    // of room. A footprint turned half way round is the same size, so 90
+    // degrees either way covers every possibility; to the nearest mm of
+    // room, the smaller turn wins.
+    let best = null;
+    let bestRoom = 0;
+    for (let step = 1; step <= 90; step++) {
+        for (const turn of step < 90 ? [step, -step] : [step]) {
+            const exact = room(turn);
+            const r = Math.round(exact);
+            if (exact >= 0 && (best === null || r > bestRoom)) { best = turn; bestRoom = r; }
+        }
+    }
+    return best;
+}
+
 /**
  * "Snap to surface": given the currently-applied rotation (degrees,
  * same X/Y/Z-in-that-order convention as applyTransform above) and
@@ -729,22 +806,14 @@ export function autoFitScale(rotateX = 0, rotateY = 0, rotateZ = 0) {
 export function computeSnapRotation(currentRotateX, currentRotateY, currentRotateZ, clientX, clientY) {
     if (!rawGeometry || !currentMesh || !renderer || !camera) return null;
 
-    const rect = renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
-        ((clientX - rect.left) / rect.width) * 2 - 1,
-        -((clientY - rect.top) / rect.height) * 2 + 1
-    );
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(ndc, camera);
-    const hits = raycaster.intersectObject(currentMesh, false);
-    if (hits.length === 0 || !hits[0].face) return null;
-
-    // currentMesh's rotation and scale are baked into its vertex data
-    // (see renderGeometry above) and its own transform is only a
-    // translation, which doesn't change a normal - so the hit face's
-    // normal is already in the same space the rest of this function works
-    // in, no extra transform needed.
-    const clickedNormal = hits[0].face.normal.clone().normalize();
+    // The face that will sit on the plate - a whole flat face, not the one
+    // triangle under the pointer (see pickRestFace). Its normal is in
+    // currentMesh's own space, where rotation and scale are baked into the
+    // vertices and the only transform is a translation, which doesn't
+    // change a normal.
+    const picked = pickRestFace(clientX, clientY);
+    if (!picked) return null;
+    const clickedNormal = picked.normal.clone();
 
     const eulerToQuat = (xDeg, yDeg, zDeg) =>
         new THREE.Quaternion().setFromEuler(
@@ -772,6 +841,292 @@ export function computeSnapRotation(currentRotateX, currentRotateY, currentRotat
         y: THREE.MathUtils.radToDeg(result.y),
         z: THREE.MathUtils.radToDeg(result.z),
     };
+}
+
+/*
+ * Snap to surface lays the model on a whole flat face, not on the one
+ * triangle under the pointer. A model file is made of small triangles,
+ * and much of what looks like a flat side is really bevels, rounded rims
+ * and the walls of holes - on a real Voronoi-handle wrench only about half
+ * of its side, seen face on, was actually flat, so a click had close to
+ * even odds of tilting the model to whatever slope it landed on.
+ *
+ * "Rest faces" are the flat faces the model can actually lie on: a plane
+ * with a meaningful amount of the model's surface in it (real contact with
+ * the plate, not just a few edges) and nothing poking out past it. Found
+ * once per loaded model, in rawGeometry's space; their triangles are
+ * looked up in the displayed mesh, whose vertex order is the same, so they
+ * follow any rotation, scale or move.
+ */
+let restFaces = null;
+let restFacesFor = null;
+let displayFaces = null;
+let displayFacesFor = null;
+let hoverMesh = null;
+let hoverKey = null;
+// A plane holding less than this share of the model's surface isn't worth
+// resting on (a sliver of contact, or a curve's tiny flat facets).
+const REST_FACE_MIN_SHARE = 0.005;
+// Only the largest candidate planes are checked for "nothing past it".
+const REST_FACE_MAX_CANDIDATES = 64;
+
+function triangleCorners(position, index, tri, a, b, c) {
+    const i = tri * 3;
+    a.fromBufferAttribute(position, index ? index.getX(i) : i);
+    b.fromBufferAttribute(position, index ? index.getX(i + 1) : i + 1);
+    c.fromBufferAttribute(position, index ? index.getX(i + 2) : i + 2);
+}
+
+function findRestFaces() {
+    if (restFacesFor === rawGeometry) return restFaces;
+    const position = rawGeometry.attributes.position;
+    const index = rawGeometry.index;
+    const triCount = (index ? index.count : position.count) / 3;
+    rawGeometry.computeBoundingBox();
+    const diag = rawGeometry.boundingBox.getSize(new THREE.Vector3()).length();
+    // How far off a plane still counts as on it - relative, since a model
+    // in the wrong units can be 1000x off its real size.
+    const tol = Math.max(diag * 0.0005, 1e-6);
+
+    // Group triangles by plane: normal to about half a degree, distance
+    // from the origin to a few tolerances.
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const ab = new THREE.Vector3(), ac = new THREE.Vector3();
+    const buckets = new Map();
+    const triNormals = new Float32Array(triCount * 3);
+    let totalArea = 0;
+    for (let t = 0; t < triCount; t++) {
+        triangleCorners(position, index, t, a, b, c);
+        ab.subVectors(b, a);
+        ac.subVectors(c, a);
+        const n = ab.cross(ac);
+        const len = n.length();
+        if (!(len > 0)) continue;
+        const area = len / 2;
+        totalArea += area;
+        n.divideScalar(len);
+        n.toArray(triNormals, t * 3);
+        const d = n.dot(a);
+        const key = `${Math.round(n.x * 100)},${Math.round(n.y * 100)},${Math.round(n.z * 100)},${Math.round(d / (tol * 4))}`;
+        let bucket = buckets.get(key);
+        if (!bucket) {
+            bucket = { normal: new THREE.Vector3(), d: 0, area: 0, tris: [] };
+            buckets.set(key, bucket);
+        }
+        bucket.normal.addScaledVector(n, area);
+        bucket.d += d * area;
+        bucket.area += area;
+        bucket.tris.push(t);
+    }
+
+    // Rejoin planes the rounding split across neighbouring groups.
+    const minArea = totalArea * REST_FACE_MIN_SHARE;
+    const groups = [...buckets.values()]
+        .filter((g) => g.area >= minArea / 4)
+        .sort((g, h) => h.area - g.area)
+        .slice(0, 400);
+    const cosOneDegree = Math.cos(THREE.MathUtils.degToRad(1));
+    const planes = [];
+    for (const g of groups) {
+        const n = g.normal.clone().normalize();
+        const d = g.d / g.area;
+        const same = planes.find((p) => p.normal.dot(n) > cosOneDegree && Math.abs(p.d - d) < tol * 4);
+        if (same) {
+            same.tris.push(...g.tris);
+            same.area += g.area;
+        } else {
+            planes.push({ normal: n, d, area: g.area, tris: g.tris.slice() });
+        }
+    }
+    const candidates = planes
+        .filter((p) => p.area >= minArea)
+        .sort((p, q) => q.area - p.area)
+        .slice(0, REST_FACE_MAX_CANDIDATES);
+
+    // Keep only planes with nothing beyond them - the model can't lie on a
+    // face that something else sticks out past. One pass over every vertex.
+    const highest = candidates.map(() => -Infinity);
+    const lowest = candidates.map(() => Infinity);
+    const v = new THREE.Vector3();
+    for (let i = 0; i < position.count; i++) {
+        v.fromBufferAttribute(position, i);
+        for (let k = 0; k < candidates.length; k++) {
+            const s = candidates[k].normal.dot(v);
+            if (s > highest[k]) highest[k] = s;
+            if (s < lowest[k]) lowest[k] = s;
+        }
+    }
+    restFaces = [];
+    candidates.forEach((p, k) => {
+        // Normals follow the triangles' winding, which some exports get
+        // backwards - an outermost plane facing in is still outermost.
+        let flip;
+        if (highest[k] - p.d <= tol * 2) flip = false;
+        else if (p.d - lowest[k] <= tol * 2) flip = true;
+        else return;
+        restFaces.push({ normal: p.normal, tris: p.tris, side: [], flip, key: `face${restFaces.length}` });
+    });
+    // The rest of that side of the model: everything parallel to a rest
+    // face but set back from it - a wrench's thinner handle next to its
+    // thicker head. Pointing at it still means "lay it on this side"; it
+    // just won't touch the plate.
+    for (let t = 0; t < triCount; t++) {
+        const nx = triNormals[t * 3], ny = triNormals[t * 3 + 1], nz = triNormals[t * 3 + 2];
+        for (const face of restFaces) {
+            if (face.normal.x * nx + face.normal.y * ny + face.normal.z * nz > cosOneDegree) {
+                face.side.push(t);
+                break;
+            }
+        }
+    }
+    restFacesFor = rawGeometry;
+    return restFaces;
+}
+
+/**
+ * The rest faces in the displayed mesh's own space: outward normal, plane
+ * offset, and the face's extent within its plane, recomputed whenever the
+ * displayed mesh changes.
+ */
+function displayRestFaces() {
+    if (displayFacesFor === currentMesh) return displayFaces;
+    const geometry = currentMesh.geometry;
+    const position = geometry.attributes.position;
+    const index = geometry.index;
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const ab = new THREE.Vector3(), ac = new THREE.Vector3();
+    displayFaces = findRestFaces().map((face) => {
+        // Area-weighted normal over the whole face, so one sliver triangle
+        // can't skew it.
+        const normal = new THREE.Vector3();
+        for (const t of face.tris) {
+            triangleCorners(position, index, t, a, b, c);
+            normal.add(ab.subVectors(b, a).cross(ac.subVectors(c, a)));
+        }
+        normal.normalize();
+        if (face.flip) normal.negate();
+        const u = new THREE.Vector3(1, 0, 0);
+        if (Math.abs(normal.x) > 0.9) u.set(0, 1, 0);
+        u.sub(normal.clone().multiplyScalar(u.dot(normal))).normalize();
+        const w = new THREE.Vector3().crossVectors(normal, u);
+        let d = -Infinity, minU = Infinity, maxU = -Infinity, minW = Infinity, maxW = -Infinity;
+        for (const t of face.tris) {
+            triangleCorners(position, index, t, a, b, c);
+            for (const p of [a, b, c]) d = Math.max(d, normal.dot(p));
+        }
+        // Its extent covers the whole side (see findRestFaces), holes,
+        // bevels and all.
+        for (const t of face.side) {
+            triangleCorners(position, index, t, a, b, c);
+            for (const p of [a, b, c]) {
+                const pu = u.dot(p), pw = w.dot(p);
+                minU = Math.min(minU, pu); maxU = Math.max(maxU, pu);
+                minW = Math.min(minW, pw); maxW = Math.max(maxW, pw);
+            }
+        }
+        return { key: face.key, tris: face.tris, side: face.side, normal, d, u, w, minU, maxU, minW, maxW };
+    });
+    displayFacesFor = currentMesh;
+    return displayFaces;
+}
+
+/**
+ * What a Snap to surface click at (clientX, clientY) would lay the model
+ * on: {normal, tris, side, key}, in currentMesh's own space, or null when the
+ * pointer isn't over the model.
+ *
+ * Every rest face is on the outside of the model, so together they wrap it
+ * like a box. The pointer's line of sight enters that box through the
+ * face it's looking at - the last of the planes facing it to be crossed -
+ * whether it then lands on flat material, a bevel, or the wall of a hole.
+ * If it enters off the edge of any rest face (a rounded top, say, with no
+ * flat face to lie on), this falls back to the triangle actually under
+ * the pointer.
+ */
+function pickRestFace(clientX, clientY) {
+    if (!rawGeometry || !currentMesh || !renderer || !camera) return null;
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(ndc, camera);
+    const hits = raycaster.intersectObject(currentMesh, false);
+    if (hits.length === 0 || !hits[0].face) return null;
+
+    const origin = raycaster.ray.origin.clone().sub(currentMesh.position);
+    const dir = raycaster.ray.direction;
+    let best = null;
+    let bestT = -Infinity;
+    for (const face of displayRestFaces()) {
+        const facing = face.normal.dot(dir);
+        if (facing >= -1e-6) continue; // seen from behind or edge-on
+        const t = (face.d - face.normal.dot(origin)) / facing;
+        if (t > bestT) { bestT = t; best = face; }
+    }
+    if (best) {
+        const entry = origin.clone().addScaledVector(dir, bestT);
+        const pu = best.u.dot(entry), pw = best.w.dot(entry);
+        const slack = 0.02 * Math.max(best.maxU - best.minU, best.maxW - best.minW);
+        if (pu >= best.minU - slack && pu <= best.maxU + slack && pw >= best.minW - slack && pw <= best.maxW + slack) {
+            return { normal: best.normal.clone(), tris: best.tris, side: best.side, key: best.key };
+        }
+    }
+    const tri = hits[0].faceIndex;
+    return { normal: hits[0].face.normal.clone().normalize(), tris: [tri], side: [tri], key: `tri${tri}` };
+}
+
+/**
+ * Snap to surface's hover highlight: tints the side a click at (clientX,
+ * clientY) would lay the model on - bright where it will touch the plate,
+ * dimmer where it's parallel but set back - or clears it when the pointer
+ * is off the model.
+ */
+export function showSnapTarget(clientX, clientY) {
+    const picked = pickRestFace(clientX, clientY);
+    const key = picked ? picked.key : null;
+    if (key === hoverKey && (!hoverMesh || hoverMesh.parent === currentMesh)) return;
+    clearSnapTarget();
+    if (!picked) return;
+    const source = currentMesh.geometry;
+    const index = source.index;
+    const touching = new Set(picked.tris);
+    const setBack = picked.side.filter((t) => !touching.has(t));
+    const ordered = [...picked.tris, ...setBack];
+    const corners = new Float32Array(ordered.length * 9);
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    ordered.forEach((t, i) => {
+        triangleCorners(source.attributes.position, index, t, a, b, c);
+        a.toArray(corners, i * 9);
+        b.toArray(corners, i * 9 + 3);
+        c.toArray(corners, i * 9 + 6);
+    });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(corners, 3));
+    geometry.addGroup(0, picked.tris.length * 3, 0);
+    geometry.addGroup(picked.tris.length * 3, setBack.length * 3, 1);
+    // Drawn over the model's own surface, which it sits exactly on.
+    const tint = (color) => new THREE.MeshBasicMaterial({
+        color,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+    });
+    hoverMesh = new THREE.Mesh(geometry, [tint(0xffb000), tint(0xc08a20)]);
+    currentMesh.add(hoverMesh);
+    hoverKey = key;
+}
+
+export function clearSnapTarget() {
+    if (hoverMesh) {
+        hoverMesh.removeFromParent();
+        hoverMesh.geometry.dispose();
+        for (const material of hoverMesh.material) material.dispose();
+        hoverMesh = null;
+    }
+    hoverKey = null;
 }
 
 const SUPPORT_TUBE_RADIUS = 0.3; // mm - roughly a support strand's width
